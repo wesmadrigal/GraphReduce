@@ -44,10 +44,12 @@ class PandasPlow(PlowAbstract):
         if self.df:
             return self.df
         if self.table:
-            df = getattr(self.sqlCtx.read, fmt)(self.table)
-        for c in df.columns:
-            cname = f'{self.prefix}_{c}'
-            df = df.withColumnRenamed(c, cname)
+            df = getattr(pd, f'read_{fmt}')(self.table)
+        cmap = {
+                c : f'{self.prefix}_{c}' 
+                for c in df.columns
+                }
+        df = df.rename(columns=cmap)
         self.df = df
         return self.df
 
@@ -57,19 +59,19 @@ class PandasPlow(PlowAbstract):
         Join child data back to self
         '''
         if hasattr(child, 'df') and getattr(child, 'df') is not None:
-
             if hasattr(child, 'parentJoinKey') and hasattr(child, 'myCustomJoinKey'):
-                return self.df.join(
+                return self.df.merge(
                         child.df,
-                        on=self.df[f"{self.prefix}_{child.parentJoinKey}"] == child.df[f"{child.prefix}_{child.myCustomJoinKey}"],
-                        how="left"
+                        left_on=self.df[f"{self.prefix}_{child.parentJoinKey}"],
+                        right_on=child.df[f"{child.prefix}_{child.myCustomJoinKey}"],
+                        how='left'
                         )
 
             if f"{child.prefix}_{self.pk_child_name}" in child.df.columns:
-
-                return self.df.join(
+                return self.df.merge(
                         child.df,
-                        on=self.df[f"{self.prefix}_{self.pk}"] == child.df[f"{child.prefix}_{self.pk_child_name}"],
+                        left_on=f"{self.prefix}_{self.pk}",
+                        right_on=f"{child.prefix}_{self.pk_child_name}",
                         how='left'
                     )
             # the expected naming convention of my pk is not
@@ -86,9 +88,10 @@ class PandasPlow(PlowAbstract):
             # the table that references the pertinent parent
             elif f"{child.prefix}_{self.pk_child_name}" not in child.df.columns:
                 if hasattr(child, 'pk_parent_name'):
-                    return self.df.join(
+                    return self.df.merge(
                         child.df,
-                        on=self.df[f'{self.prefix}_{self.pk}'] == child.df[f'{child.prefix}_{child.pk_parent_name}'],
+                        left_on=f"{self.prefix}_{self.pk}",
+                        right_on=f"{child.prefix}_{child.pk_parent_name}",
                         how='left'
                     )
                 else:
