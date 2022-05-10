@@ -253,9 +253,11 @@ class PandasPlow(PlowAbstract):
         logging.info("we're done!")
         print("we're done!")
 
-    def mapExpand(self, to_node: Plow):
+    def mapExpand(self, to_node: str):
         '''
         The inverse of a map/reduce operation
+        Expands down to a node, enriching fact tables
+        with their parent fact and dimensional data
         '''
         pass
 

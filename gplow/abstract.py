@@ -53,5 +53,5 @@ class PlowAbstract(metaclass=abc.ABCMeta):
         return
 
     @abc.abstractmethod
-    def reduce(self):
+    def reduce(self, reduce_key):
         pass
