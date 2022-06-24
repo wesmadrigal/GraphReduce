@@ -1,10 +1,15 @@
+#!/usr/bin/env python
+
+# standard libraries
+import abc
 import logging
 from collections import deque
-
 import datetime
-import pandas as pd
-import abc
 
+# third party
+import pandas as pd
+
+# internal
 from abstract import PlowAbstract
 
 
@@ -304,10 +309,7 @@ class PandasPlowBase(PlowAbstract):
         self.recurseMap('doAnnotate')
         self.recurseMap('clipCols')
 
-        
-        if self.train:
-            
-            
+        if self.train:   
             deque(map(lambda x: x.computeLabelsAndJoin(), self.depthFirst()))
 
         logging.info("reduce operations")
