@@ -1,33 +1,49 @@
 import logging
 from collections import deque
 
-from .abstract import PlowAbstract
+import datetime
+import pandas as pd
+import abc
+
+from abstract import PlowAbstract
 
 
-class PandasPlow(PlowAbstract):
+class PandasPlowBase(PlowAbstract):
     def __init__(self,
-                 holdout=30,
-                 env='local',
-                 cutDate=None,
-                 prefix='',
-                 db='',
-                 schema='',
-                 table='', **kwargs):
+                 cutDate: datetime.datetime = datetime.datetime.now(),
+                 fpath : str = '',
+                 backend : str = 'local',
+                 fmt : str = 'parquet',
+                 prefix : str = '',
+                 date_key : str = 'created',
+                 pk : str = 'id',
+                 pk_child_name : str = '',
+                 cols : list = [],
+                 train : bool = True,
+                 label_period_val : int = 7,
+                 label_period_unit : str = 'days',
+                 training_period_val : int = 365,
+                 training_period_unit : str = 'days',
+                 **kwargs
+                ):
 
-        self.holdout = holdout
         self.prefix = prefix
-        self.env = env
+        # the date to cut data around (X/Y)
         self.cutDate = cutDate
-
-        self.db = db
-        self.schema = schema
-        self.table = table
-        self.df = None
-
+        self.fpath = fpath
+        self.fmt = fmt
         # should all be defined in subclasses
-        self.pk = None
-        self.date_key = None
-        self.pk_child_name = None
+        self.pk = pk
+        self.date_key = date_key
+        self.pk_child_name = pk_child_name
+        self.cols = cols
+        self.train = train
+        self.label_period_val = label_period_val
+        self.label_period_unit = label_period_unit
+        self.training_period_val = training_period_val
+        self.training_period_unit = training_period_unit
+
+        self.df = None
 
         # NOTE:
         # this is mostly used for dynamic
@@ -37,14 +53,15 @@ class PandasPlow(PlowAbstract):
             setattr(self, k, v)
 
 
-        self._peers = self.peers()
-        self._children = self.children()
+        self._peers = []
+        self._children = []
+        
 
-    def getData(self, fmt='parquet'):
-        if self.df:
+    def getData(self):
+        if hasattr(self, 'df') and getattr(self, 'df') is not None:
             return self.df
-        if self.table:
-            df = getattr(pd, f'read_{fmt}')(self.table)
+        if self.fpath:
+            df = getattr(pd, f'read_{self.fmt}')(self.fpath)
         cmap = {
                 c : f'{self.prefix}_{c}' 
                 for c in df.columns
@@ -54,26 +71,38 @@ class PandasPlow(PlowAbstract):
         return self.df
 
 
-    def join(self, child):
+    def join(self, child, df=None):
         '''
         Join child data back to self
         '''
+
+        if isinstance(df, pd.DataFrame):
+            child_df = df
+        else:
+            child_df = child.df
         if hasattr(child, 'df') and getattr(child, 'df') is not None:
+            if isinstance(df, pd.DataFrame):
+                child_df = df
             if hasattr(child, 'parentJoinKey') and hasattr(child, 'myCustomJoinKey'):
-                return self.df.merge(
-                        child.df,
+                merged = self.df.merge(
+                        child_df,
                         left_on=self.df[f"{self.prefix}_{child.parentJoinKey}"],
-                        right_on=child.df[f"{child.prefix}_{child.myCustomJoinKey}"],
+                        right_on=child_df[f"{child.prefix}_{child.myCustomJoinKey}"],
+                        suffixes=('', '_dupe'),
                         how='left'
                         )
+                return merged
 
             if f"{child.prefix}_{self.pk_child_name}" in child.df.columns:
-                return self.df.merge(
-                        child.df,
+                merged = self.df.merge(
+                        child_df,
                         left_on=f"{self.prefix}_{self.pk}",
                         right_on=f"{child.prefix}_{self.pk_child_name}",
+                        suffixes=('', '_dupe'),
                         how='left'
                     )
+                merged = merged[[c for c in merged.columns if not c.endswith('_dupe')]]
+                return merged
             # the expected naming convention of my pk is not
             # being followed...check if the child has
             # a definition for it's parent's pk due
@@ -88,12 +117,15 @@ class PandasPlow(PlowAbstract):
             # the table that references the pertinent parent
             elif f"{child.prefix}_{self.pk_child_name}" not in child.df.columns:
                 if hasattr(child, 'pk_parent_name'):
-                    return self.df.merge(
-                        child.df,
+                    merged = self.df.merge(
+                        child_df,
                         left_on=f"{self.prefix}_{self.pk}",
                         right_on=f"{child.prefix}_{child.pk_parent_name}",
+                        suffixes=('', '_dupe'),
                         how='left'
                     )
+                    merged = merged[[c for c in merged.columns if not c.endswith('_dupe')]]
+                    return merged
                 else:
                     raise PlowKeyException(
                         f"{self.__class__.__name__} inst cannot find a join to {child.__class__.__name__}"
@@ -107,8 +139,15 @@ class PandasPlow(PlowAbstract):
             raise PlowKeyException(
                 f"{self.__class__.__name__} inst cannot find a join to {child.__class__.__name__}"
             )
+            
+    @abc.abstractmethod
+    def getDeps(self) -> list:
+        return []
 
-
+    @abc.abstractmethod
+    def peers(self) -> list:
+        return []
+    
     def colabbr(self, col: str) -> str:
         return f"{self.prefix}_{col}"
 
@@ -160,14 +199,40 @@ class PandasPlow(PlowAbstract):
 
 
     def recurseMap2(self, fname, *args, **kwargs):
-        if self.children():
-            if isinstance(self.children, list):
-                for c in self.children:
+        if self._children:
+            if isinstance(self._children, list):
+                for c in self._children:
                     return c.recurseMap(self, fname)
         else:
             return getattr(self, fname)(*args, **kwargs)
 
 
+    def doFilters(self):
+        '''
+        Implement custom business logic
+        for filtering pertinent data in
+        this function
+        '''
+        pass
+
+    def doAnnotate(self, reduceKey=None):
+        '''
+        Specific to each dataset
+        '''
+        pass
+
+    def postJoinAnnotate(self):
+        pass
+
+    def doSliceData(self):
+        pass
+
+    def clipCols(self, *args, **kwargs):
+        pass
+
+    def reduce(self, reduceKey):
+        pass
+    
     def reduceAndJoin(self):
         '''
         Reduce all children and join back
@@ -185,84 +250,68 @@ class PandasPlow(PlowAbstract):
                     reduce_key = self.pk_child_name
 
 
-                self.logger.info(f"reducing child {child.__class__.__name__} with key {reduce_key}")
-                child.reduce(reduce_key)
-                self.logger.info(f"joining child {child.__class__.__name__} back to parent {self.__class__.__name__}")
-                self.df = self.join(child)
+                print(f"reducing child {child.__class__.__name__} with key {reduce_key}")
+                df = child.reduce(reduce_key)
+                print(f"joining child {child.__class__.__name__} back to parent {self.__class__.__name__}")
+                self.df = self.join(child, df=df)
         else:
-            self.logger.info(f"{self.__class__.__name__} had no children to reduce")
+            print(f"{self.__class__.__name__} had no children to reduce")
 
         if len(self._peers):
-            self.logger.info(f"{self.__class__.__name__} had {len(self._peers)} peers")
+            print(f"{self.__class__.__name__} had {len(self._peers)} peers")
             for peer in self._peers:
-                self.logger.info(f"joining peer {peer.__class__.__name__} to head peer {self.__class__.__name__}")
+                print(f"joining peer {peer.__class__.__name__} to head peer {self.__class__.__name__}")
                 self.df = self.join(peer)
 
         # TODO: find a better place to put this
         if hasattr(self, 'postJoinAnnotate'):
             self.postJoinAnnotate()
-
-
-
-    def doFilters(self):
-        '''
-        Implement custom business logic
-        for filtering pertinent data in
-        this function
-        '''
+            
+            
+    def computeLabels(self):
         pass
+    
+    def prepForLabels(self):
+        """
+        Prepare the dataset for labels
+        """
+        if self.cutDate:
+            return self.df[
+                (self.df[self.colabbr(self.date_key)] > (self.cutDate))
+                &
+                (self.df[self.colabbr(self.date_key)] < (self.cutDate + datetime.timedelta(days=self.label_period_val)))
+            ]
+        else:
+            return self.df[
+                self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.label_period_val))
+            ]
+    
+    def computeLabelsAndJoin(self):
+        for c in self._children:
 
-    def children(self):
-        pass
-
-    def peers(self):
-        pass
-
-    def doAnnotate(self, reduceKey=None):
-        '''
-        Specific to each dataset
-        '''
-        pass
-
-    def postJoinAnnotate(self):
-        pass
-
-    def doSliceData(self):
-        pass
-
-    def clipColumns(self, *args, **kwargs):
-        pass
-
-    def reduce(self, reduceKey):
-        pass
-
+            labeldf = c.computeLabels(c.colabbr(self.pk_child_name))
+            self.df = self.join(c, df=labeldf)
+    
     def doTransformations(self):
         '''
         Applies all transformations to the
         graph of data
         '''
         logging.info("map operations")
+        self.recurseMap('getDeps')
         self.recurseMap('getData')
         self.recurseMap('doFilters')
         self.recurseMap('doAnnotate')
-        self.recurseMap('clipColumns')
+        self.recurseMap('clipCols')
+
+        
+        if self.train:
+            
+            
+            deque(map(lambda x: x.computeLabelsAndJoin(), self.depthFirst()))
 
         logging.info("reduce operations")
         print("reduce operations")
         deque(map(lambda x: x.reduceAndJoin(), self.depthFirst()))
         logging.info("we're done!")
         print("we're done!")
-
-    def mapExpand(self, to_node: str):
-        '''
-        The inverse of a map/reduce operation
-        Expands down to a node, enriching fact tables
-        with their parent fact and dimensional data
-        '''
-        pass
-
-    def mapReduce(self):
-        '''
-        map then reduce :)
-        '''
-        pass

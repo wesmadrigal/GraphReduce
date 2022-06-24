@@ -1,7 +1,7 @@
 import logging
 from collections import deque
 
-from .abstract import PlowAbstract
+from abstract import PlowAbstract
 
 
 class SparkPlow(PlowAbstract):
@@ -102,7 +102,7 @@ class SparkPlow(PlowAbstract):
             # child foreign key would normally follow convention `orders.customer_id`
             # however, it's possible it's something like `orders.cust_id`
             # the `self.pk_parent_name` is a reference to the key within
-            # the table that references the pertinent parent
+            # the table that references the pertinent parent name
             elif f"{child.prefix}_{self.pk_child_name}" not in child.df.columns:
                 if hasattr(child, 'pk_parent_name'):
                     return self.df.join(

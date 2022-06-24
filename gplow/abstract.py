@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 __version__ = '0.1.0'
 
 import os
@@ -10,6 +9,18 @@ class PlowAbstract(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def getData(self):
         return
+    
+    @abc.abstractmethod
+    def join(self):
+        return
+    
+    @abc.abstractmethod
+    def getDeps(self):
+        return []
+    
+    @abc.abstractmethod
+    def peers(self):
+        return []
 
     @abc.abstractmethod
     def doFilters(self):
@@ -19,14 +30,6 @@ class PlowAbstract(metaclass=abc.ABCMeta):
         this function
         '''
         return
-
-    @abc.abstractmethod
-    def children(self):
-        return []
-
-    @abc.abstractmethod
-    def peers(self):
-        return []
 
     @abc.abstractmethod
     def doAnnotate(self):
@@ -43,15 +46,24 @@ class PlowAbstract(metaclass=abc.ABCMeta):
         for annotating data after joining with 
         child data
         '''
+        pass
 
     @abc.abstractmethod
     def doSliceData(self):
         return
 
     @abc.abstractmethod
-    def clipColumns(self):
+    def clipCols(self):
         return
 
     @abc.abstractmethod
     def reduce(self, reduce_key):
+        pass
+    
+    @abc.abstractmethod
+    def reduceAndJoin(self):
+        pass
+    
+    @abc.abstractmethod
+    def doTransformations(self):
         pass
