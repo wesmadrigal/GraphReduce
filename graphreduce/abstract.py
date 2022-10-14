@@ -5,7 +5,7 @@ import os
 import sys
 import abc
 
-class PlowAbstract(metaclass=abc.ABCMeta):
+class GraphReduceAbstract(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def getData(self):
         return
@@ -57,7 +57,7 @@ class PlowAbstract(metaclass=abc.ABCMeta):
         return
 
     @abc.abstractmethod
-    def reduce(self, reduce_key):
+    def doReduce(self, reduce_key):
         pass
     
     @abc.abstractmethod

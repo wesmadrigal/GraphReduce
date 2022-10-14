@@ -10,10 +10,10 @@ import datetime
 import pandas as pd
 
 # internal
-from abstract import PlowAbstract
+from abstract import GraphReduce
 
 
-class PandasPlowBase(PlowAbstract):
+class PandasGraphReduceBase(GraphReduce):
     def __init__(self,
                  cutDate: datetime.datetime = datetime.datetime.now(),
                  fpath : str = '',
@@ -132,16 +132,16 @@ class PandasPlowBase(PlowAbstract):
                     merged = merged[[c for c in merged.columns if not c.endswith('_dupe')]]
                     return merged
                 else:
-                    raise PlowKeyException(
+                    raise KeyException(
                         f"{self.__class__.__name__} inst cannot find a join to {child.__class__.__name__}"
                     )
 
             else:
-                raise PlowKeyException(
+                raise KeyException(
                     f"{self.__class__.__name__} inst cannot find a join to {child.__class__.__name__}"
                 )
         else:
-            raise PlowKeyException(
+            raise KeyException(
                 f"{self.__class__.__name__} inst cannot find a join to {child.__class__.__name__}"
             )
             

@@ -1,10 +1,10 @@
 import logging
 from collections import deque
 
-from abstract import PlowAbstract
+from abstract import GraphReduce
 
 
-class SparkPlow(PlowAbstract):
+class SparkGraphReduce(GraphReduce):
     '''
     Base Plow interface for plowing data
     '''
