@@ -349,7 +349,7 @@ Perform all graph transformations
             
             if self.has_labels:
                 label_df = relation_node.do_labels(edge_data['relation_key'])
-                if label_df:
+                if label_df.__class__.__name__ != 'NoneType':
                     joined_with_labels = self.join(
                         parent_node,
                         relation_node,

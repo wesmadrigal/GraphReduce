@@ -48,6 +48,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             label_period_unit : typing.Optional[PeriodUnit] = None,
             feature_function : typing.Optional[str] = None,
             spark_sqlctx : pyspark.sql.SQLContext = None,
+            columns : list = [],
             ):
         """
 Constructor
@@ -67,6 +68,7 @@ Args
     label_period_val : optional period of time to compute labels
     label_period_unit : optional unit of measure for label period (e.g., PeriodUnit.day)
     feature_function : optional feature function, usually used when reduce is false
+    columns : optional list of columns to include
         """
         self.fpath = fpath
         self.fmt = fmt
@@ -83,6 +85,8 @@ Args
         self.label_period_unit = label_period_unit
         self.feature_function = feature_function
         self.spark_sqlctx = spark_sqlctx
+
+        self.columns = []
         
 
     
@@ -99,11 +103,17 @@ Get some data
         if self.compute_layer.value == 'pandas':
             if not hasattr(self, 'df') or (hasattr(self,'df') and not isinstance(self.df, pd.DataFrame)):
                 self.df = getattr(pd, f"read_{self.fmt}")(self.fpath)
+                if len(self.columns):
+                    self.df = self.df[[c for c in self.columns]]
+                self.columns = list(self.df.columns)
                 self.df.columns = [f"{self.prefix}_{c}" for c in self.df.columns]
         elif self.compute_layer.value == 'dask':
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, dd.DataFrame
 )):
                 self.df = getattr(dd, f"read_{self.fmt}")(self.fpath)
+                if len(self.columns):
+                    self.df = self.df[[c for c in self.columns]]
+                self.columns = list(self.df.columns)
                 self.df.columns = [f"{self.prefix}_{c}" for c in self.df.columns]
         elif self.compute_layer.value == 'spark':
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, pyspark.sql.DataFrame)):
