@@ -119,7 +119,8 @@ Hydrate the nodes in the graph with parent
 attributes in `attrs`
         """
         for node in self.nodes():
-            for attr in attrs:                    
+            logger.info(f"hydrating attributes for {node.__class__.__name__}")
+            for attr in attrs:
                 parent_val = getattr(self, attr)
                 if not hasattr(node, attr):
                     setattr(node, attr, parent_val)
@@ -194,7 +195,7 @@ Add an entity relation
         
         
         if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
-            if isinstance(relation_df, pd.DataFrame) or isinstance(relation_df, dask.dataframe.DataFrame):
+            if isinstance(relation_df, pd.DataFrame) or isinstance(relation_df, dd.DataFrame):
                 joined = parent_node.df.merge(
                     relation_df,
                     left_on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"],
@@ -242,15 +243,31 @@ Depth-first traversal over the edges
             raise Exception("Must have a parent node set to do depth first traversal")
         for edge in list(reversed(list(nx.dfs_edges(self, source=self.parent_node)))):
             yield edge
-        
+
+
+    def get_children (
+            self,
+            node : GraphReduceNode
+            ) -> typing.List[GraphReduceNode]:
+        """
+Get the children of a given node
+        """
+        return [x for x in list(reversed(list(nx.dfs_preorder_nodes(self, source=node)))) if x != node]
     
     
     def plot_graph (
         self,
         fname : str = 'graph.html',
+        notebook : bool = False,
+        cdn_resources : str = 'in_line',
     ):
         """
 Plot the graph
+
+Args
+    fname : file name to save the graph to - should be .html
+    notebook : whether or not to render in notebook
+    cdn_resources : pyvis parameter https://pyvis.readthedocs.io/en/latest/tutorial.html
         """
         # need to populate a new graph
         # with string representations
@@ -268,9 +285,10 @@ Plot the graph
                 edge[0].__class__.__name__, 
                 edge[1].__class__.__name__,
                 title=edge_title)
-    
-        nt = pyvis.network.Network(notebook=True, cdn_resources='local')
+        
+        nt = pyvis.network.Network(notebook=notebook, cdn_resources=cdn_resources)
         nt.from_nx(stringG)
+        logger.info(f"plotted graph at {fname}")
         nt.show(fname)
     
     

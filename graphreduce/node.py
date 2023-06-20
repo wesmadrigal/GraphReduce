@@ -57,7 +57,7 @@ Args
     fmt : format of file
     pk : primary key
     prefix : prefix to use for columns
-    date_key : column containing the date 
+    date_key : column containing the date - if there isn't one leave blank
     compute_layer : compute layer to use (e.g, ComputeLayerEnum.pandas)
     cut_date : date around which to orient the data
     compute_period_val : amount of time to consider
@@ -147,9 +147,13 @@ do some filters on the data
             
 
     @abc.abstractmethod
-    def do_reduce(self, reduce_key):
+    def do_reduce(self, reduce_key, children : list = []):
         """
 Reduce operation or the node
+
+Args
+    reduce_key : key to use to perform the reduce operation
+    children : list of children nodes
         """
         pass
     
@@ -167,56 +171,60 @@ Reduce operation or the node
         """
 Prepare the dataset for feature aggregations / reduce
         """
-        if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
-            if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
-                return self.df[
-                    (self.df[self.colabbr(self.date_key)] < self.cut_date)
-                    &
-                    (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(days=self.compute_period_val)))
-                ]
-            elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
-                return self.df.filter(
-                    (self.df[self.colabbr(self.date_key)] < self.cut_date)
-                    &
-                    (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(days=self.compute_period_val)))
+        if self.date_key:
+            if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
+                if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
+                    return self.df[
+                        (self.df[self.colabbr(self.date_key)] < self.cut_date)
+                        &
+                        (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(days=self.compute_period_val)))
+                    ]
+                elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
+                    return self.df.filter(
+                        (self.df[self.colabbr(self.date_key)] < self.cut_date)
+                        &
+                        (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(days=self.compute_period_val)))
+                    )
+            else:
+                if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
+                    return self.df[
+                        (self.df[self.colabbr(self.date_key)] < datetime.datetime.now())
+                        &
+                        (self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.compute_period_val)))
+                    ]
+                elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
+                    return self.df.filter(
+                        self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.compute_period_val))
                 )
-        else:
-            if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
-                return self.df[
-                    (self.df[self.colabbr(self.date_key)] < datetime.datetime.now())
-                    &
-                    (self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.compute_period_val)))
-                ]
-            elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
-                return self.df.filter(
-                    self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.compute_period_val))
-                )
+        # no-op
+        return self.df
     
     
     def prep_for_labels(self):
         """
         Prepare the dataset for labels
         """
-
-        if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
-            if isinstance(self.df, pd.DataFrame):
-                return self.df[
-                    (self.df[self.colabbr(self.date_key)] > (self.cut_date))
-                    &
-                    (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(days=self.label_period_val)))
-                ]
-            elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
-                return self.df.filter(
-                    (self.df[self.colabbr(self.date_key)] > (self.cut_date))
-                    &
-                    (self.df[self.colabbr(self.date_key)] < (self.cutDate + datetime.timedelta(days=self.label_period_val)))
-                )
-        else:
-            if isinstance(self.df, pd.DataFrame):
-                return self.df[
+        if self.date_key:
+            if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
+                if isinstance(self.df, pd.DataFrame):
+                    return self.df[
+                        (self.df[self.colabbr(self.date_key)] > (self.cut_date))
+                        &
+                        (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(days=self.label_period_val)))
+                    ]
+                elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
+                    return self.df.filter(
+                        (self.df[self.colabbr(self.date_key)] > (self.cut_date))
+                        &
+                        (self.df[self.colabbr(self.date_key)] < (self.cutDate + datetime.timedelta(days=self.label_period_val)))
+                    )
+            else:
+                if isinstance(self.df, pd.DataFrame):
+                    return self.df[
+                        self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.label_period_val))
+                    ]
+                elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
+                    return self.df.filter(
                     self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.label_period_val))
-                ]
-            elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
-                return self.df.filter(
-                    self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.label_period_val))
                 )
+        return self.df
