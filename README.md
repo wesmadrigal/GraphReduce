@@ -96,5 +96,19 @@ gr = GraphReduce(
     compute_layer=ComputeLayerEnum.pandas
 )
 
+gr.add_entity_edge(
+    parent_node=nodea,
+    relation_node=nodeb,
+    parent_key='id',
+    relation_key='nodea_foreign_key_id',
+    relation_type='parent_child',
+    reduce=True
+)
+
+# plot the graph to see what compute graph will run
+# note, you may have to open this file in a  browser
+gr.plot_graph(fname='demo_graph.html')
+
+# perform all transformations
 gr.do_transformations()
 ```
