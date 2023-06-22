@@ -29,7 +29,7 @@ git clone https://github.com/wesmadrigal/graphreduce && cd graphreduce && python
 
 
 ## Motivation
-Machine learning requires vectors of data, but our tabular datasets
+Machine learning requires [vectors of data](https://arxiv.org/pdf/1212.4569.pdf), but our tabular datasets
 are disconnected.  They can be represented as a graph, where tables
 are nodes and join keys are edges.  In many model building scenarios
 there isn't a nice ML-ready vector waiting for us, so we must curate
@@ -41,9 +41,9 @@ An example dataset might look like the following:
 ![schema](https://github.com/wesmadrigal/graphreduce/blob/master/docs/graph_reduce_example.png?raw=true)
 
 ## data granularity and time travel
-But we need to flatten this to a specific granularity.  To further 
-complicate things we need to handle orientation in time to prevent
-data leakage and properly frame our train/test datasets.  All of this
+But we need to flatten this to a specific [granularity](https://en.wikipedia.org/wiki/Granularity#Data_granularity).  
+To further complicate things we need to handle orientation in time to prevent
+[data leakage](https://en.wikipedia.org/wiki/Leakage_(machine_learning)) and properly frame our train/test datasets.  All of this
 is controlled in `graphreduce` from top-level parameters.
 
 ### example of granularity and time travel parameters
