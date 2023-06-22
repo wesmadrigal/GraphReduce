@@ -37,7 +37,8 @@ the data by joining many tables together to flatten them into a vector.
 This is the problem `graphreduce` sets out to solve.  
 
 An example dataset might look like the following:
- ![schema](https://github.com/wesmadrigal/graphreduce/blob/master/docs/graph_reduce_example.png?raw=true)
+
+![schema](https://github.com/wesmadrigal/graphreduce/blob/master/docs/graph_reduce_example.png?raw=true)
 
 ## data granularity and time travel
 But we need to flatten this to a specific granularity.  To further 
