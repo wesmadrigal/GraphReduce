@@ -66,7 +66,9 @@ gr = GraphReduce(
 
 ### node-level parameterization
 At the node level we need to specify a few things, such as where the
-data is coming from, the date key, the primary key, prefixes, etc.
+data is coming from, the date key, the primary key, prefixes for 
+preserving where the data originated after compute, and a few 
+other optional parameters.
 
 ```python
 from graphreduce.node import GraphReduceNode
