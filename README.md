@@ -23,7 +23,14 @@ feature engineering pipelines.
 
 ### Installation
 ```
+# from pypi
+pip install graphreduce
+
+# from github
 pip install 'graphreduce@git+https://github.com/wesmadrigal/graphreduce.git'
+
+# install from source
+git clone https://github.com/wesmadrigal/graphreduce && cd graphreduce && python setup.py install
 ```
 
 ## Usage
