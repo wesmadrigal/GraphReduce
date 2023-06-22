@@ -1,7 +1,7 @@
 # GraphReduce
 
 
-## Functionality
+## Description
 GraphReduce is an abstraction for building machine learning feature
 engineering pipelines in a scalable, extensible, and production-ready way.
 The library is intended to help bridge the gap between research feature
@@ -13,13 +13,6 @@ as edges.
 GraphReduce allows for a unified feature engineering interface
 to plug & play with multiple backends: `dask`, `pandas`, and `spark` are currently supported
 
-## Motivation
-As the number of features in an ML experiment grows so does the likelihood
-for duplicate, one off implementations of the same code.  This is further
-exacerbated if there isn't seamless integration between R&D and deployment.
-Feature stores are a good solution, but they are quite complicated to setup
-and manage.  GraphReduce is a lighter weight design pattern to production ready
-feature engineering pipelines.  
 
 ### Installation
 ```
@@ -31,6 +24,86 @@ pip install 'graphreduce@git+https://github.com/wesmadrigal/graphreduce.git'
 
 # install from source
 git clone https://github.com/wesmadrigal/graphreduce && cd graphreduce && python setup.py install
+```
+
+
+
+## Motivation
+Machine learning requires vectors of data, but our tabular datasets
+are disconnected.  They can be represented as a graph, where tables
+are nodes and join keys are edges.  In many model building scenarios
+there isn't a nice ML-ready vector waiting for us, so we must curate
+the data by joining many tables together to flatten them into a vector.
+This is the problem `graphreduce` sets out to solve.  
+
+An example dataset might look like the following:
+ ![schema](https://github.com/wesmadrigal/graphreduce/blob/master/docs/graph_reduce_example.png?raw=true)
+
+## data granularity and time travel
+But we need to flatten this to a specific granularity.  To further 
+complicate things we need to handle orientation in time to prevent
+data leakage and properly frame our train/test datasets.  All of this
+is controlled in `graphreduce` from top-level parameters.
+
+### example of granularity and time travel parameters
+
+* `cut_date` controls the date around which we orient the data in the graph
+* `compute_period_val` controls the amount of time back in history we consider during compute over the graph
+* `compute_period_unit` tells us what unit of time we're using
+* `parent_node` specifies the parent-most node in the graph and, typically, the granularity to which to reduce the data
+```python
+from graphreduce.graph_reduce import GraphReduce
+from graphreduce.enums import PeriodUnit
+
+gr = GraphReduce(
+    cut_date=datetime.datetime(2023, 2, 1), 
+    compute_period_val=365, 
+    compute_period_unit=PeriodUnit.day,
+    parent_node=customer
+)
+```
+
+### node-level parameterization
+At the node level we need to specify a few things, such as where the
+data is coming from, the date key, the primary key, prefixes, etc.
+
+```python
+from graphreduce.node import GraphReduceNode
+
+# define the customer node
+class CustomerNode(GraphReduceNode):
+    def do_annotate(self):
+        # use the `self.colabbr` function to use prefixes
+        self.df[self.colabbr('is_big_spender')] = self.df[self.colabbr('total_revenue')].apply(
+            lambda x: x > 1000.00 then 1 else 0
+        )
+
+
+    def do_filters(self):
+        self.df = self.df[self.df[self.colabbr('some_bool_col')] == 0]
+
+    def do_clip_cols(self):
+        self.df[self.colabbr('high_variance_column')] = self.df[self.colabbr('high_variance_column')].apply(
+            lambda col: 1000 if col > 1000 else col
+        )
+
+    def post_join_annotate(self):
+        # filters after children are joined
+        pass
+
+    def do_reduce(self, reduce_key):
+        pass
+
+    def do_labels(self, reduce_key):
+        pass
+
+cust = CustomerNode(
+    fpath='s3://somebucket/some/path/customer.parquet',
+    fmt='parquet',
+    prefix='cust',
+    date_key='last_login',
+    pk='customer_id'
+)
 ```
 
 ## Usage
