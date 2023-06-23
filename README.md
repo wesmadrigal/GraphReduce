@@ -64,9 +64,19 @@ gr = GraphReduce(
 )
 ```
 
-### node-level parameterization
-At the node level we need to specify a few things, such as where the
-data is coming from, the date key, the primary key, prefixes, etc.
+### Node definition and parameterization
+GraphReduce takes convention over configuration, so the user
+is required to define a number of methods on each node class:
+* `do_annotate` annotation definitions (e.g., split a string column into a new column)
+* `do_filters` filter the data on column(s)
+* `do_clip_cols` clip anomalies like exceedingly large values and do normalization
+* `post_join_annotate` annotations on current node after relations are merged in and we have access to their columns, too
+* `do_reduce` the most import node function, reduction operations: group bys, sum, min, max, etc.
+* `do_labels` label definitions if any
+At the instance level we need to parameterize a few things, such as where the
+data is coming from, the date key, the primary key, prefixes for 
+preserving where the data originated after compute, and a few 
+other optional parameters.
 
 ```python
 from graphreduce.node import GraphReduceNode
