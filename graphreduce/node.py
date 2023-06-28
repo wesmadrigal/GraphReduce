@@ -117,7 +117,7 @@ Get some data
                 self.df.columns = [f"{self.prefix}_{c}" for c in self.df.columns]
         elif self.compute_layer.value == 'spark':
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, pyspark.sql.DataFrame)):
-                self.df = getattr(self.spark_sqlctx.read, {self.fmt})(self.fpath)
+                self.df = getattr(self.spark_sqlctx, f"read_{self.fmt}")(self.fpath)
                 for c in self.df.columns:
                     self.df = self.df.withColumnRenamed(c, f"{self.prefix}_{c}")
 
@@ -134,30 +134,110 @@ do some filters on the data
 
     @abc.abstractmethod
     def do_annotate(self):
-        '''
-        Implement custom annotation functionality
-        for annotating this particular data
-        '''
+        """
+Implement custom annotation functionality
+for annotating this particular data
+        """
         return
 
     
     @abc.abstractmethod
     def do_post_join_annotate(self):
-        '''
-        Implement custom annotation functionality
-        for annotating data after joining with 
-        child data
-        '''
+        """
+Implement custom annotation functionality
+for annotating data after joining with 
+child data
+        """
         pass
 
      
     @abc.abstractmethod
     def do_clip_cols(self):
         return
-            
+
+
+    def dynamic_propagation (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {},
+            compute_layer : ComputeLayerEnum = ComputeLayerEnum.pandas,
+            ):
+        """
+If we're doing dynamic propagation
+this function will run a series of
+automatic aggregations
+        """
+        if compute_layer == ComputeLayerEnum.pandas:
+            return self.pandas_dynamic_propagation(reduce_key=reduce_key, type_func_map=type_func_map)
+        elif compute_layer == ComputeLayerEnum.dask:
+            return self.dask_dynamic_propagation(reduce_key=reduce_key, type_func_map=type_func_map)
+        elif compute_layer == ComputeLayerEnum.spark:
+            return self.spark_dynamic_propagation(reduce_key=reduce_key, type_func_map=type_func_map)
+
+
+    def pandas_dynamic_propagation (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {}
+            ) -> pd.DataFrame:
+        """
+Pandas implementation of dynamic propagation of features
+This could be extended slightly to perform automated feature
+aggregation on dynamic nodes
+        """
+        agg_funcs = {}
+        for col, _type in dict(self.df.dtypes).items():
+            _type = str(_type)
+            if type_func_map.get(_type):
+                for func in type_func_map[_type]:
+                    col_new = f"{col}_{func}"
+                    agg_funcs[col_new] = pd.NamedAgg(column=col, aggfunc=func)
+        return self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(
+                **agg_funcs
+                ).reset_index()
+
+
+    def dask_dynamic_propagation (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {},
+            ) -> dd.DataFrame:
+        """
+Dask implementation of dynamic propagation of features
+This could be extended slightly to perform automated
+feature aggregation on dynamic nodes
+        """
+        agg_funcs = {}
+        for col, _type in dict(self.df.dtypes).items():
+            _type = str(_type)
+            if type_func_map.get(_type):
+                for func in type_func_map[_type]:
+                    col_new = f"{col}_{func}"
+                    agg_funcs[col_new] = pd.NamedAgg(column=col, aggfunc=func)
+        return self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(
+                **agg_funcs
+                ).reset_index()
+
+
+    def spark_dynamic_propagation (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {},
+            ) -> pyspark.sql.DataFrame:
+        """
+Spark implementation of dynamic propagation of features
+This could be extended slightly to perform automated
+feature aggregation on dynamic nodes
+        """
+        agg_funcs = {}
+        pass
+
 
     @abc.abstractmethod
-    def do_reduce(self, reduce_key, children : list = []):
+    def do_reduce (
+            self, 
+            reduce_key
+            ):
         """
 Reduce operation or the node
 
@@ -212,7 +292,7 @@ Prepare the dataset for feature aggregations / reduce
     
     def prep_for_labels(self):
         """
-        Prepare the dataset for labels
+Prepare the dataset for labels
         """
         if self.date_key:
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):

@@ -39,6 +39,15 @@ class GraphReduce(nx.DiGraph):
         label_period_unit : typing.Optional[PeriodUnit] = None,
         spark_sqlCtx : pyspark.sql.SQLContext = None,
         feature_function : typing.Optional[str] = None,
+        dynamic_propagation : bool = False,
+        type_func_map : typing.Dict[str, typing.List[str]] = {
+            'int64' : ['min', 'max', 'sum'],
+            'str' : ['first'],
+            'object' : ['first'],
+            'float64' : ['min', 'max', 'sum'],
+            'bool' : ['first'],
+            'datetime64' : ['first']
+            },
         *args,
         **kwargs
     ):
@@ -58,6 +67,8 @@ Args:
     label_period_unit : the unit for the label period value (e.g., day)
     spark_sqlCtx : if compute layer is spark this must be passed
     feature_function : optional custom feature function
+    dynamic_propagation : optional to dynamically propagate children data upward, useful for very large compute graphs
+    type_func_match : optional mapping from type to a list of functions (e.g., {'int' : ['min', 'max', 'sum'], 'str' : ['first']})
         """
         super(GraphReduce, self).__init__(*args, **kwargs)
         
@@ -72,6 +83,8 @@ Args:
         self.label_period_unit = label_period_unit
         self.compute_layer = compute_layer
         self.feature_function = feature_function
+        self.dynamic_propagation = dynamic_propagation
+        self.type_func_map = type_func_map
         
         # if using Spark
         self._sqlCtx = spark_sqlCtx
@@ -290,21 +303,37 @@ Args
         nt.from_nx(stringG)
         logger.info(f"plotted graph at {fname}")
         nt.show(fname)
-    
-    
+   
+
+    def prefix_uniqueness(self):
+        """
+Identify children with duplicate prefixes, if any
+        """
+        prefixes = {}
+        dupes = []
+        for node in self.nodes():
+            if not prefixes.get(node.prefix):
+                prefixes[node.prefix] = node
+            else:
+                dupes.append(node)
+                dupes.append(prefixes[node.prefix])
+        if len(dupes):
+            raise Exception(f"duplicate prefix on the following nodes: {dupes}")
+
     
     def do_transformations(self):
         """
 Perform all graph transformations
 1) hydrate graph
-2) filter data
-3) clip anomalies
-4) annotate data
-5) depth-first edge traversal to: aggregate / reduce features and labels
-5a) optional alternative feature_function mapping
-5b) join back to parent edge
-5c) post-join annotations if any
-6) repeat step 5 on all edges up the hierarchy
+2) check for duplicate prefixes
+3) filter data
+4) clip anomalies
+5) annotate data
+6) depth-first edge traversal to: aggregate / reduce features and labels
+6a) optional alternative feature_function mapping
+6b) join back to parent edge
+6c) post-join annotations if any
+7) repeat step 6 on all edges up the hierarchy
         """
         
         # get data, filter data, clip columns, and annotate
@@ -312,6 +341,9 @@ Perform all graph transformations
         self.hydrate_graph_attrs()
         logger.info("hydrating graph data")
         self.hydrate_graph_data()
+
+        logger.info("checking for prefix uniqueness")
+        self.prefix_uniqueness()
     
         for node in self.nodes():
             logger.info(f"running filters, clip cols, and annotations for {node.__class__.__name__}")
@@ -330,6 +362,29 @@ Perform all graph transformations
             if edge_data['reduce']:
                 logger.info(f"reducing relation {relation_node.__class__.__name__}")
                 join_df = relation_node.do_reduce(edge_data['relation_key'])
+                # only relevant when reducing
+                if self.dynamic_propagation:
+                    logger.info(f"doing dynamic propagation on node {relation_node.__class__.__name__}")
+                    child_df = relation_node.dynamic_propagation(
+                            reduce_key=edge_data['relation_key'],
+                            type_func_map=self.type_func_map,
+                            compute_layer=self.compute_layer
+                        )
+                    # NOTE: this is pandas specific and will break
+                    # on other compute layers for now 
+                    if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
+                        join_df = join_df.merge(
+                                child_df,
+                                on=relation_node.colabbr(edge_data['relation_key']),
+                                suffixes=('', '_dupe')
+                        )
+                    elif self.compute_layer == ComputeLayerEnum.spark:
+                        join_df = join_df.join(
+                                child_df,
+                                on=join_df[relation_node.colabbr(edge_data['relation_key'])] == child_df[relation_node.colabbr(edge_data['relation_key'])],
+                                how="left"
+                            )
+
             elif not edge_data['reduce'] and self.feature_function:
                 logger.info(f"not reducing relation {relation_node.__class__.__name__}")
                 join_df = getattr(relation_node, self.feature_function)()
@@ -349,6 +404,7 @@ Perform all graph transformations
             
             if self.has_labels:
                 label_df = relation_node.do_labels(edge_data['relation_key'])
+                logger.info(f"computed labels for {relation_node.__class__.__name__}")
                 if label_df.__class__.__name__ != 'NoneType':
                     joined_with_labels = self.join(
                         parent_node,
