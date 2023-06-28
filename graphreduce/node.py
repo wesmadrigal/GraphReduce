@@ -117,7 +117,7 @@ Get some data
                 self.df.columns = [f"{self.prefix}_{c}" for c in self.df.columns]
         elif self.compute_layer.value == 'spark':
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, pyspark.sql.DataFrame)):
-                self.df = getattr(self.spark_sqlctx, f"read_{self.fmt}")(self.fpath)
+                self.df = getattr(self.spark_sqlctx.read, f"{self.fmt}")(self.fpath)
                 for c in self.df.columns:
                     self.df = self.df.withColumnRenamed(c, f"{self.prefix}_{c}")
 

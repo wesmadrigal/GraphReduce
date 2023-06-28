@@ -233,7 +233,7 @@ Add an entity relation
         elif self.compute_layer == ComputeLayerEnum.spark:     
             if isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(relation_node.df, pyspark.sql.dataframe.DataFrame):
                 joined = parent_node.df.join(
-                    child_node.df,
+                    relation_node.df,
                     on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_node.df[f"{relation_node.prefix}_{relation_fk}"],
                     how="left"
                 ) 
