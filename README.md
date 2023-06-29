@@ -3,7 +3,7 @@
 
 ## Description
 GraphReduce is an abstraction for building machine learning feature
-engineering pipelines in a scalable, extensible, and production-ready way.
+engineering pipelines that involve many tables in a composable way.
 The library is intended to help bridge the gap between research feature
 definitions and production deployment without the overhead of a full 
 feature store.  Underneath the hood, GraphReduce uses graph data
