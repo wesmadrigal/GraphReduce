@@ -255,36 +255,76 @@ Args
         
     def colabbr(self, col: str) -> str:
         return f"{self.prefix}_{col}"
+
+
+    def compute_period_minutes (
+            self,
+            ) -> int:
+        """
+Convert the compute period to minutes
+        """
+        if self.compute_period_unit == PeriodUnit.second:
+            return self.compute_period_val / 60
+        elif self.compute_period_unit == PeriodUnit.minute:
+            return self.compute_period_val
+        elif self.compute_period_unit == PeriodUnit.hour:
+            return self.compute_period_val * 60
+        elif self.compute_period_unit == PeriodUnit.day:
+            return self.compute_period_val * 1440
+        elif self.compute_period_unit == PeriodUnit.week:
+            return (self.compute_period_val * 7)*1440
+        elif self.compute_period_unit == PeriodUnit.month:
+            return (self.compute_period_val * 30.417)*1440
+
+
+    def label_period_minutes (
+            self,
+            ) -> int:
+        """
+Convert the label period to minutes
+        """
+        if self.label_period_unit == PeriodUnit.second:
+            return self.label_period_val / 60
+        elif self.label_period_unit == PeriodUnit.minute:
+            return self.label_period_val
+        elif self.label_period_unit == PeriodUnit.hour:
+            return self.label_period_val * 60
+        elif self.label_period_unit == PeriodUnit.day:
+            return self.label_period_val * 1440
+        elif self.label_period_unit == PeriodUnit.week:
+            return (self.label_period_val * 7)*1440
+        elif self.label_period_unit == PeriodUnit.month:
+            return (self.label_period_val * 30.417)*1440
     
     
     def prep_for_features(self):
         """
 Prepare the dataset for feature aggregations / reduce
         """
-        if self.date_key:
+        if self.date_key:           
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
                     return self.df[
                         (self.df[self.colabbr(self.date_key)] < self.cut_date)
                         &
-                        (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(days=self.compute_period_val)))
+                        (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
                     ]
                 elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
                     return self.df.filter(
                         (self.df[self.colabbr(self.date_key)] < self.cut_date)
                         &
-                        (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(days=self.compute_period_val)))
+                        (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
                     )
             else:
                 if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
                     return self.df[
                         (self.df[self.colabbr(self.date_key)] < datetime.datetime.now())
                         &
-                        (self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.compute_period_val)))
+                        (self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes())))
                     ]
                 elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
                     return self.df.filter(
-                        self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.compute_period_val))
+                        self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes()))
                 )
         # no-op
         return self.df
@@ -298,23 +338,23 @@ Prepare the dataset for labels
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 if isinstance(self.df, pd.DataFrame):
                     return self.df[
-                        (self.df[self.colabbr(self.date_key)] > (self.cut_date))
+                        (self.df[self.colabbr(self.date_key)] > self.cut_date)
                         &
-                        (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(days=self.label_period_val)))
+                        (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
                     ]
                 elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
                     return self.df.filter(
-                        (self.df[self.colabbr(self.date_key)] > (self.cut_date))
+                        (self.df[self.colabbr(self.date_key)] > self.cut_date)
                         &
-                        (self.df[self.colabbr(self.date_key)] < (self.cutDate + datetime.timedelta(days=self.label_period_val)))
+                        (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
                     )
             else:
                 if isinstance(self.df, pd.DataFrame):
                     return self.df[
-                        self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.label_period_val))
+                        self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))
                     ]
                 elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
                     return self.df.filter(
-                    self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(days=self.label_period_val))
+                    self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))
                 )
         return self.df
