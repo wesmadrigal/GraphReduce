@@ -86,7 +86,7 @@ Args
         self.feature_function = feature_function
         self.spark_sqlctx = spark_sqlctx
 
-        self.columns = []
+        self.columns = columns
         
 
     
@@ -122,6 +122,20 @@ Get some data
                     self.df = self.df.select(self.columns)
                 for c in self.df.columns:
                     self.df = self.df.withColumnRenamed(c, f"{self.prefix}_{c}")
+
+        # at this point of connectors we may want to try integrating
+        # with something like fugue: https://github.com/fugue-project/fugue
+        elif self.compute_layer.value == 'ray':
+            pass
+
+        elif self.compute_layer.value == 'snowflake':
+            pass
+
+        elif self.compute_layer.value == 'postgres':
+            pass
+
+        elif self.compute_layer.value == 'redshift':
+            pass
 
 
     @abc.abstractmethod
@@ -360,3 +374,43 @@ Prepare the dataset for labels
                     self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))
                 )
         return self.df
+
+
+
+
+
+
+class DynamicNode(GraphReduceNode):
+    """
+A dynamic architecture for entities with no logic 
+needed in addition to the top-level GraphReduceNode
+parameters
+    """
+    def __init__ (
+            self,
+            *args,
+            **kwargs
+            ):
+        """
+Constructor
+        """
+        super().__init__(*args, **kwargs)
+
+
+    def do_filters(self):
+        pass
+
+    def do_annotate(self):
+        pass
+
+    def do_post_join_annotate(self):
+        pass
+
+    def do_clip_cols(self):
+        pass
+
+    def do_reduce(self):
+        pass
+
+    def do_labels(self):
+        pass
