@@ -178,7 +178,7 @@ Add an entity relation
                 }
             )
 
-    
+ 
     def join (
         self,
         parent_node : GraphReduceNode,
@@ -279,7 +279,6 @@ Get the children of a given node
         self,
         fname : str = 'graph.html',
         notebook : bool = False,
-        cdn_resources : str = 'in_line',
     ):
         """
 Plot the graph
@@ -287,7 +286,6 @@ Plot the graph
 Args
     fname : file name to save the graph to - should be .html
     notebook : whether or not to render in notebook
-    cdn_resources : pyvis parameter https://pyvis.readthedocs.io/en/latest/tutorial.html
         """
         # need to populate a new graph
         # with string representations
@@ -306,7 +304,7 @@ Args
                 edge[1].__class__.__name__,
                 title=edge_title)
         
-        nt = pyvis.network.Network(notebook=notebook, cdn_resources=cdn_resources)
+        nt = pyvis.network.Network(notebook=notebook)
         nt.from_nx(stringG)
         logger.info(f"plotted graph at {fname}")
         nt.show(fname)
