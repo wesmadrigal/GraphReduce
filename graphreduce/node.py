@@ -70,11 +70,17 @@ Args
     feature_function : optional feature function, usually used when reduce is false
     columns : optional list of columns to include
         """
+        # For when this is already set on the class definition.
+        if not hasattr(self, 'pk'):
+            self.pk = pk
+        # For when this is already set on the class definition.
+        if not hasattr(self, 'prefix'):
+            self.prefix = prefix
+        # For when this is already set on the class definition.
+        if not hasattr(self, 'date_key'):
+            self.date_key = date_key
         self.fpath = fpath
         self.fmt = fmt
-        self.pk = pk
-        self.prefix = prefix
-        self.date_key = date_key
         self.compute_layer = compute_layer
         self.cut_date = cut_date
         self.compute_period_val = compute_period_val
