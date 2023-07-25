@@ -37,7 +37,7 @@ class GraphReduce(nx.DiGraph):
         has_labels : bool = False,
         label_period_val : typing.Optional[typing.Union[int, float]] = None,
         label_period_unit : typing.Optional[PeriodUnit] = None,
-        spark_sqlCtx : pyspark.sql.SQLContext = None,
+        spark_sqlctx : pyspark.sql.SQLContext = None,
         feature_function : typing.Optional[str] = None,
         dynamic_propagation : bool = False,
         type_func_map : typing.Dict[str, typing.List[str]] = {
@@ -65,7 +65,7 @@ Args:
     has_labels : whether or not the compute job computes labels, when True `prep_for_labels()` and `compute_labels` will be called
     label_period_val : amount of time to consider when computing labels
     label_period_unit : the unit for the label period value (e.g., day)
-    spark_sqlCtx : if compute layer is spark this must be passed
+    spark_sqlctx : if compute layer is spark this must be passed
     feature_function : optional custom feature function
     dynamic_propagation : optional to dynamically propagate children data upward, useful for very large compute graphs
     type_func_match : optional mapping from type to a list of functions (e.g., {'int' : ['min', 'max', 'sum'], 'str' : ['first']})
@@ -87,17 +87,34 @@ Args:
         self.type_func_map = type_func_map
         
         # if using Spark
-        self._sqlCtx = spark_sqlCtx
+        self._sqlctx = spark_sqlctx
         
-        if self.compute_layer == ComputeLayerEnum.spark and self._sqlCtx is None:
-            raise Exception(f"Must provide a `spark_sqlCtx` kwarg if using {self.compute_layer.value} as compute layer")
+        if self.compute_layer == ComputeLayerEnum.spark and self._sqlctx is None:
+            raise Exception(f"Must provide a `spark_sqlctx` kwarg if using {self.compute_layer.value} as compute layer")
         
         if self.has_labels and (self.label_period_val is None or self.label_period_unit is None):
             raise Exception(f"If has_labels is True must provide values for `label_period_val` and `label_period_unit`")
-        
-        # current node being computed over
-        self._curnode = None
+
+
+    def __repr__(self):
+        return f"<GraphReduce: parent_node={self.parent_node.__class__}>"
+
+
+    def __str__(self):
+        return f"<GraphReduce num_nodes: {len(self.nodes())} num_edges: {len(self.edges())}>"
     
+
+    def _mark_merged (
+            self,
+            parent_node: GraphReduceNode,
+            relation_node: GraphReduceNode
+            ):
+        """
+Mark a relation node as merged to the parent.
+        """
+        if relation_node.__class__ not in parent_node._merged:
+            parent_node._merged.append(relation_node.__class__)
+
 
     @property
     def parent(self):
@@ -124,7 +141,8 @@ Assign the parent-most node in the graph
             'label_period_val',
             'label_period_unit',
             'compute_layer',
-            'feature_function'
+            'feature_function',
+            'spark_sqlctx'
         ]
     ):
         """
@@ -181,8 +199,8 @@ Add an entity relation
  
     def join (
         self,
-        parent_node : GraphReduceNode,
-        relation_node : GraphReduceNode,
+        parent_node: GraphReduceNode,
+        relation_node: GraphReduceNode,
         relation_df = None
         ):
         """
@@ -205,8 +223,7 @@ Add an entity relation
         elif meta and meta['relation_type'] == 'peer':
             parent_pk = meta['parent_key']
             relation_fk = meta['relation_key']
-        
-        
+         
         if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
             if isinstance(relation_df, pd.DataFrame) or isinstance(relation_df, dd.DataFrame):
                 joined = parent_node.df.merge(
@@ -224,6 +241,7 @@ Add an entity relation
                     suffixes=('','_dupe'),
                     how="left"
                 )
+            self._mark_merged(parent_node, relation_node)
             if "key_0" in joined.columns:
                 joined = joined[[c for c in joined.columns if c != "key_0"]]
                 return joined
@@ -237,6 +255,7 @@ Add an entity relation
                         on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_df[f"{relation_node.prefix}_{relation_fk}"],
                         how="left"
                         )
+                self._mark_merged(parent_node, relation_node)
                 return joined
             elif isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(relation_node.df, pyspark.sql.dataframe.DataFrame):
                 joined = parent_node.df.join(
@@ -244,6 +263,7 @@ Add an entity relation
                     on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_node.df[f"{relation_node.prefix}_{relation_fk}"],
                     how="left"
                 ) 
+                self._mark_merged(parent_node, relation_node)
                 return joined
             else:
                 raise Exception(f"Cannot use spark on dataframe of type: {type(parent_node.df)}")
@@ -278,7 +298,6 @@ Get the children of a given node
     def plot_graph (
         self,
         fname : str = 'graph.html',
-        notebook : bool = False,
     ):
         """
 Plot the graph
@@ -304,10 +323,10 @@ Args
                 edge[1].__class__.__name__,
                 title=edge_title)
         
-        nt = pyvis.network.Network(notebook=notebook)
+        nt = pyvis.network.Network()
         nt.from_nx(stringG)
         logger.info(f"plotted graph at {fname}")
-        nt.show(fname)
+        nt.save_graph(fname)
    
 
     def prefix_uniqueness(self):

@@ -4,6 +4,7 @@
 import abc
 import datetime
 import typing
+import json
 
 # third party
 import pandas as pd
@@ -93,6 +94,9 @@ Args
         self.spark_sqlctx = spark_sqlctx
 
         self.columns = columns
+
+        # List of merged neighbor classes.
+        self._merged = []
         
 
     
@@ -251,8 +255,18 @@ Spark implementation of dynamic propagation of features
 This could be extended slightly to perform automated
 feature aggregation on dynamic nodes
         """
-        agg_funcs = {}
-        pass
+        agg_funcs = []
+        for field in self.df.schema.fields:
+            field_meta = json.loads(field.json())
+            col = field_meta['name']
+            _type = field_meta['type']
+            if type_func_map.get(_type):
+                for func in type_func_map[_type]:
+                    col_new = f"{col}_{func}"
+                    agg_funcs.append(getattr(F, func)(F.col(col)).alias(col_new))
+        return self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(
+                *agg_funcs
+                )
 
 
     @abc.abstractmethod
