@@ -164,7 +164,7 @@ do some filters on the data
 Implement custom annotation functionality
 for annotating this particular data
         """
-        return
+        pass
 
     
     @abc.abstractmethod
@@ -176,10 +176,18 @@ child data
         """
         pass
 
-     
+
     @abc.abstractmethod
     def do_clip_cols(self):
-        return
+        pass
+
+
+    def do_post_join_filters(self):
+        """
+Filter operations that require some
+additional relational data to perform.
+        """
+        pass
 
 
     def dynamic_propagation (
@@ -417,7 +425,7 @@ Constructor
         super().__init__(*args, **kwargs)
 
 
-    def do_filters(self):
+    def do_filter(self):
         pass
 
     def do_annotate(self):
@@ -427,6 +435,9 @@ Constructor
         pass
 
     def do_clip_cols(self):
+        pass
+
+    def do_post_join_filters(self):
         pass
 
     def do_reduce(self):

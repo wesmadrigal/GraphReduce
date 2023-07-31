@@ -152,13 +152,14 @@ attributes in `attrs`
         for node in self.nodes():
             logger.info(f"hydrating attributes for {node.__class__.__name__}")
             for attr in attrs:
-                parent_val = getattr(self, attr)
-                if not hasattr(node, attr):
-                    setattr(node, attr, parent_val)
-                elif hasattr(node, attr):
-                    child_val = getattr(node, attr)
-                    if parent_val != child_val:
-                        setattr(node, attr, getattr(self, attr))
+                if hasattr(self, attr):
+                    parent_val = getattr(self, attr)
+                    if not hasattr(node, attr):
+                        setattr(node, attr, parent_val)
+                    elif hasattr(node, attr):
+                        child_val = getattr(node, attr)
+                        if parent_val != child_val:
+                            setattr(node, attr, getattr(self, attr))
                 
                 
     def hydrate_graph_data (
@@ -371,9 +372,9 @@ Perform all graph transformations
     
         for node in self.nodes():
             logger.info(f"running filters, clip cols, and annotations for {node.__class__.__name__}")
-            node.do_filters()
-            node.do_clip_cols()
             node.do_annotate()
+            node.do_filters()
+            node.do_transpose()
 
         logger.info(f"depth-first traversal through the graph from source: {self.parent_node.__class__.__name__}")
         for edge in self.depth_first_generator():
@@ -439,4 +440,6 @@ Perform all graph transformations
 
             # post-join annotations (if any)
             parent_node.do_post_join_annotate()
-
+            # post-join filters (if any)
+            if hasattr(parent_node, 'do_post_join_filters'):
+                parent_node.do_post_join_filters()
