@@ -371,10 +371,10 @@ Perform all graph transformations
         self.prefix_uniqueness()
     
         for node in self.nodes():
-            logger.info(f"running filters, clip cols, and annotations for {node.__class__.__name__}")
+            logger.info(f"running filters, normalize, and annotations for {node.__class__.__name__}")
             node.do_annotate()
             node.do_filters()
-            node.do_transpose()
+            node.do_normalize()
 
         logger.info(f"depth-first traversal through the graph from source: {self.parent_node.__class__.__name__}")
         for edge in self.depth_first_generator():

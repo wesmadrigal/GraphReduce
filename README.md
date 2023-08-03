@@ -69,7 +69,7 @@ GraphReduce takes convention over configuration, so the user
 is required to define a number of methods on each node class:
 * `do_annotate` annotation definitions (e.g., split a string column into a new column)
 * `do_filters` filter the data on column(s)
-* `do_clip_cols` clip anomalies like exceedingly large values and do normalization
+* `do_normalize` clip anomalies like exceedingly large values and do normalization
 * `post_join_annotate` annotations on current node after relations are merged in and we have access to their columns, too
 * `do_reduce` the most import node function, reduction operations: group bys, sum, min, max, etc.
 * `do_labels` label definitions if any
@@ -93,7 +93,7 @@ class CustomerNode(GraphReduceNode):
     def do_filters(self):
         self.df = self.df[self.df[self.colabbr('some_bool_col')] == 0]
 
-    def do_clip_cols(self):
+    def do_normalize(self):
         self.df[self.colabbr('high_variance_column')] = self.df[self.colabbr('high_variance_column')].apply(
             lambda col: 1000 if col > 1000 else col
         )
@@ -131,12 +131,9 @@ class NodeA(GraphReduceNode):
     def do_filters(self):
         pass
 
-    def do_clip_cols(self):
+    def do_normalize(self):
         pass
-    
-    def do_slice_data(self):
-        pass
-    
+     
     def do_post_join_annotate(self):
         import uuid
         self.df[self.colabbr('uuid')] = self.df[self.colabbr(self.pk)].apply(lambda x: str(uuid.uuid4()))
@@ -154,10 +151,7 @@ class NodeB(GraphReduce):
     def do_filters(self):
         pass
     
-    def do_clip_cols(self):
-        pass
-    
-    def do_slice_data(self):
+    def do_normalize(self):
         pass
     
     def do_post_join_annotate(self):

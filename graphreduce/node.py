@@ -178,7 +178,7 @@ child data
 
 
     @abc.abstractmethod
-    def do_clip_cols(self):
+    def do_normalize(self):
         pass
 
 
@@ -434,7 +434,7 @@ Constructor
     def do_post_join_annotate(self):
         pass
 
-    def do_clip_cols(self):
+    def do_normalize(self):
         pass
 
     def do_post_join_filters(self):
