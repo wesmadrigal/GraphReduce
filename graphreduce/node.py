@@ -406,8 +406,6 @@ Prepare the dataset for labels
 
 
 
-
-
 class DynamicNode(GraphReduceNode):
     """
 A dynamic architecture for entities with no logic 
@@ -425,7 +423,7 @@ Constructor
         super().__init__(*args, **kwargs)
 
 
-    def do_filter(self):
+    def do_filters(self):
         pass
 
     def do_annotate(self):
