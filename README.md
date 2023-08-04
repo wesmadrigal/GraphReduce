@@ -10,8 +10,8 @@ feature store.  Underneath the hood, GraphReduce uses graph data
 structures to represent tables/files as nodes and foreign keys
 as edges.
 
-GraphReduce allows for a unified feature engineering interface
-to plug & play with multiple backends: `dask`, `pandas`, and `spark` are currently supported
+Compute backends supported: `pandas`, `dask`, and `spark`.
+Compute backends coming soon: `ray`
 
 
 ### Installation
@@ -25,7 +25,6 @@ pip install 'graphreduce@git+https://github.com/wesmadrigal/graphreduce.git'
 # install from source
 git clone https://github.com/wesmadrigal/graphreduce && cd graphreduce && python setup.py install
 ```
-
 
 
 ## Motivation
@@ -74,7 +73,7 @@ is required to define a number of methods on each node class:
 * `do_reduce` the most import node function, reduction operations: group bys, sum, min, max, etc.
 * `do_labels` label definitions if any
 At the instance level we need to parameterize a few things, such as where the
-data is coming from, the date key, the primary key, prefixes for 
+data is coming from, the date key, the primary key, a prefix for 
 preserving where the data originated after compute, and a few 
 other optional parameters.
 
