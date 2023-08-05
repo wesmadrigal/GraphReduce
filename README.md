@@ -46,7 +46,7 @@ To further complicate things we need to handle orientation in time to prevent
 is controlled in `graphreduce` from top-level parameters.
 
 ## order of operations
-![order of operations](https://github.com/wesmadrigal/graphreduce/blob/master/docs/graph_reduce_ops.drawio.png")
+![order of operations](https://github.com/wesmadrigal/GraphReduce/blob/master/docs/graph_reduce_ops.drawio.png)
 
 ### example of granularity and time travel parameters
 
