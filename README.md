@@ -45,6 +45,9 @@ To further complicate things we need to handle orientation in time to prevent
 [data leakage](https://en.wikipedia.org/wiki/Leakage_(machine_learning)) and properly frame our train/test datasets.  All of this
 is controlled in `graphreduce` from top-level parameters.
 
+## order of operations
+![order of operations](https://github.com/wesmadrigal/graphreduce/blob/master/docs/graph_reduce_ops.drawio.png")
+
 ### example of granularity and time travel parameters
 
 * `cut_date` controls the date around which we orient the data in the graph
