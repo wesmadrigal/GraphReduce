@@ -215,9 +215,11 @@ automatic aggregations
             type_func_map : dict = {}
             ) -> pd.DataFrame:
         """
-Pandas implementation of dynamic propagation of features
-This could be extended slightly to perform automated feature
-aggregation on dynamic nodes
+Pandas implementation of dynamic propagation of features.
+This is basically automated feature engineering but suffixed
+with `_propagation` to indicate that we are propagating data
+upward through the graph from child nodes with no feature
+definitions.
         """
         agg_funcs = {}
         for col, _type in dict(self.df.dtypes).items():
@@ -237,9 +239,11 @@ aggregation on dynamic nodes
             type_func_map : dict = {},
             ) -> dd.DataFrame:
         """
-Dask implementation of dynamic propagation of features
-This could be extended slightly to perform automated
-feature aggregation on dynamic nodes
+Dask implementation of dynamic propagation of features.
+This is basically automated feature engineering but suffixed
+with `_propagation` to indicate that we are propagating data
+upward through the graph from child nodes with no feature
+definitions.
         """
         agg_funcs = {}
         for col, _type in dict(self.df.dtypes).items():
@@ -259,9 +263,11 @@ feature aggregation on dynamic nodes
             type_func_map : dict = {},
             ) -> pyspark.sql.DataFrame:
         """
-Spark implementation of dynamic propagation of features
-This could be extended slightly to perform automated
-feature aggregation on dynamic nodes
+Spark implementation of dynamic propagation of features.
+This is basically automated feature engineering but suffixed
+with `_propagation` to indicate that we are propagating data
+upward through the graph from child nodes with no feature
+definitions.
         """
         agg_funcs = []
         for field in self.df.schema.fields:
@@ -341,7 +347,10 @@ Convert the label period to minutes
             return (self.label_period_val * 30.417)*1440
     
     
-    def prep_for_features(self):
+    def prep_for_features (
+            self,
+            allow_null: bool = False
+            ) -> typing.Union[pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
         """
 Prepare the dataset for feature aggregations / reduce
         """
@@ -349,32 +358,48 @@ Prepare the dataset for feature aggregations / reduce
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
                     return self.df[
-                        (self.df[self.colabbr(self.date_key)] < self.cut_date)
-                        &
-                        (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
+                        (
+                            (self.df[self.colabbr(self.date_key)] < self.cut_date)
+                            &
+                            (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
+                        )
+                        |
+                        (self.df[self.colabbr(self.date_key)].isnull())
                     ]
                 elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
                     return self.df.filter(
-                        (self.df[self.colabbr(self.date_key)] < self.cut_date)
-                        &
-                        (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
+                        (
+                            (self.df[self.colabbr(self.date_key)] < self.cut_date)
+                            &
+                            (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
+                        )
+                        |
+                        (self.df[self.colabbr(self.date_key)].isNull())
                     )
             else:
                 if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
                     return self.df[
-                        (self.df[self.colabbr(self.date_key)] < datetime.datetime.now())
-                        &
-                        (self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes())))
+                        (
+                            (self.df[self.colabbr(self.date_key)] < datetime.datetime.now())
+                            &
+                            (self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes())))
+                        )
+                        |
+                        (self.df[self.colabbr(self.date_key)].isnull())
                     ]
                 elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
                     return self.df.filter(
-                        self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes()))
+                            (self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes())))
+                            |
+                            (self.df[self.colabbr(self.date_key)].isNull())
                 )
         # no-op
         return self.df
     
     
-    def prep_for_labels(self):
+    def prep_for_labels (
+            self
+            ) -> typing.Union[pd.Dataframe, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
         """
 Prepare the dataset for labels
         """
@@ -401,6 +426,7 @@ Prepare the dataset for labels
                     return self.df.filter(
                     self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))
                 )
+        # no-op
         return self.df
 
 

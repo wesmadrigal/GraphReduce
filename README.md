@@ -39,14 +39,131 @@ An example dataset might look like the following:
 
 ![schema](https://github.com/wesmadrigal/graphreduce/blob/master/docs/graph_reduce_example.png?raw=true)
 
-## data granularity and time travel
-But we need to flatten this to a specific [granularity](https://en.wikipedia.org/wiki/Granularity#Data_granularity).  
-To further complicate things we need to handle orientation in time to prevent
-[data leakage](https://en.wikipedia.org/wiki/Leakage_(machine_learning)) and properly frame our train/test datasets.  All of this
-is controlled in `graphreduce` from top-level parameters.
+## To get this example schema ready for an ML model we need to do the following:
+* define the node-level interface and operations for filtering, annotating, normalizing, and reducing
+* select the [granularity](https://en.wikipedia.org/wiki/Granularity#Data_granularity)) to which we'll reduce our data: in this example `customer` 
+* specify how much historical data will be included and what holdout period will be used (e.g., 365 days of historical data and 1 month of holdout data for labels)
+* filter all data entities to include specified amount of history to prevent [data leakage](https://en.wikipedia.org/wiki/Leakage_(machine_learning))
+* depth first, bottom up aggregation operations group by / aggregation operations to reduce data
+
+
+1. Define the node-level interface and operations
+```python
+import datetime
+from graphreduce.node import GraphReduceNode
+from graphreduce.enum import ComputeLayerEnum, PeriodUnit
+from graphreduce.graph_reduce import GraphReduce
+
+# Convention over configuration requires that we
+# define boilerplate code for every entity / node
+# we will compute over.
+class CustomerNode(GraphReduceNode):
+    def do_annotate(self):
+        pass
+    
+    def do_filters(self):
+        # Apply a filter operation on a hypothetical column `is_fake`.
+        # The `colabbr` method makes sure to prefix the column with
+        # the class or instance prefix.
+        self.df = self.df[self.df[self.colabbr('is_fake')] == False]
+    
+    def do_normalize(self):
+        pass
+    
+    def do_post_join_annotate(self):
+        pass
+    
+    def do_reduce(self, reduce_key, *args, **kwargs):
+        pass
+    
+    def do_labels(self, reduce_key, *args, **kwargs):
+        pass
+
+
+class OrderNode(GraphReduceNode):
+    def do_annotate(self):
+        pass
+    
+    def do_filters(self):
+        pass
+    
+    def do_normalize(self):
+        pass
+    
+    def do_post_join_annotate(self):
+        pass
+    
+    def do_reduce(self, reduce_key):
+        # The `prep_for_features` method ensures no leakage
+        # prior to the compute period or after the cut date.
+        return self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(
+            **{
+                self.colabbr(f'{self.pk}_count') : pd.NamedAgg(column=self.colabbr(self.pk), aggfunc='count')
+            }
+        ).reset_index()
+    
+    def do_labels(self, key):
+        pass
+```
+
+2. Instantiate the nodes and define the graph
+```python
+cust = CustomerNode(pk='id', prefix='cust',fpath='dat/cust.csv', fmt='csv', compute_layer=ComputeLayerEnum.pandas)
+order = OrderNode(pk='id', prefix='order', fpath='dat/orders.csv', fmt='csv',compute_layer=ComputeLayerEnum.pandas)
+
+gr = GraphReduce(
+    cut_date=datetime.datetime(2023, 5, 6),
+    compute_period_val=365,
+    compute_period_unit=PeriodUnit.day,
+    parent_node=cust,
+    compute_layer=ComputeLayerEnum.pandas,
+    has_labels=False,
+    label_period_val=30,
+    label_period_unit=PeriodUnit.day,
+    dynamic_propagation=True
+)
+
+# Add nodes and edges to the graph
+gr.add_node(cust)
+gr.add_node(order)
+
+gr.add_entity_edge(
+    parent_node=cust,
+    relation_node=order,
+    parent_key='id',
+    relation_key='customer_id',
+    relation_type='parent_child',
+    reduce=True
+)
+```
+
+3. Plot the graph reduce compute graph.
+```python
+gr.plot_graph('my_graph_reduce.html')
+```
+
+4. Run compute operations
+```python
+gr.do_transformations()
+
+2023-08-03 09:05:44 [info     ] hydrating graph attributes
+2023-08-03 09:05:44 [info     ] hydrating attributes for CustomerNode
+2023-08-03 09:05:44 [info     ] hydrating attributes for OrderNode
+2023-08-03 09:05:44 [info     ] hydrating graph data
+2023-08-03 09:05:44 [info     ] checking for prefix uniqueness
+2023-08-03 09:05:44 [info     ] running filters, normalize, and annotations for CustomerNode
+2023-08-03 09:05:44 [info     ] running filters, normalize, and annotations for OrderNode
+2023-08-03 09:05:44 [info     ] depth-first traversal through the graph from source: CustomerNode
+2023-08-03 09:05:44 [info     ] reducing relation OrderNode
+2023-08-03 09:05:44 [info     ] doing dynamic propagation on node OrderNode
+2023-08-03 09:05:44 [info     ] joining OrderNode to CustomerNode
+```
+
 
 ## order of operations
 ![order of operations](https://github.com/wesmadrigal/GraphReduce/blob/master/docs/graph_reduce_ops.drawio.png)
+
+
 
 ### example of granularity and time travel parameters
 
