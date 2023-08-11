@@ -159,6 +159,15 @@ gr.do_transformations()
 2023-08-03 09:05:44 [info     ] joining OrderNode to CustomerNode
 ```
 
+5. Use materialized dataframe for ML / analytics
+```python
+gr.df.head()
+
+cust_id	cust_name	order_customer_id	order_id_count	order_id_min	order_id_max	order_id_sum	order_customer_id_min	order_customer_id_max	order_customer_id_sum	order_ts_first
+0	1	wes	1	2	1	2	3	1	1	2	2023-05-12
+1	2	john	2	2	3	4	7	2	2	4	2023-01-01
+```
+
 
 ## order of operations
 ![order of operations](https://github.com/wesmadrigal/GraphReduce/blob/master/docs/graph_reduce_ops.drawio.png)
