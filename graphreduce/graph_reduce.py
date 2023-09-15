@@ -313,13 +313,23 @@ Args
         # we are using right now
         stringG = nx.DiGraph()
         for n in self.nodes():
-            stringG.add_node(n.__class__.__name__)
+            if n.__class__.__name__ == 'DynamicNode':
+                stringG.add_node(n.fpath)
+            else:
+                stringG.add_node(n.__class__.__name__)
 
         for edge in self.edges():
             edge_data = self.get_edge_data(edge[0], edge[1])
             edge_data = edge_data['keys']
             edge_title = f"{edge[0].__class__.__name__} key: {edge_data['parent_key']}\n{edge[1].__class__.__name__} key: {edge_data['relation_key']}\nrelation type: {edge_data['relation_type']}\nreduce relation: {edge_data['reduce']}"
-            stringG.add_edge(
+            if n.__class__.__name__ == 'DynamicNodel':
+                stringG.add_edge(
+                        edge[0].fpath,
+                        edge[1].path,
+                        title=edge_title
+                        )
+            else:
+                stringG.add_edge(
                 edge[0].__class__.__name__, 
                 edge[1].__class__.__name__,
                 title=edge_title)

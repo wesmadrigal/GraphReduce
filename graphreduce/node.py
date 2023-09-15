@@ -359,9 +359,9 @@ Prepare the dataset for feature aggregations / reduce
                 if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
                     return self.df[
                         (
-                            (self.df[self.colabbr(self.date_key)] < self.cut_date)
+                            (self.df[self.colabbr(self.date_key)] < str(self.cut_date))
                             &
-                            (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
+                            (self.df[self.colabbr(self.date_key)] > str(self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
                         )
                         |
                         (self.df[self.colabbr(self.date_key)].isnull())
@@ -399,7 +399,7 @@ Prepare the dataset for feature aggregations / reduce
     
     def prep_for_labels (
             self
-            ) -> typing.Union[pd.Dataframe, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
+            ) -> typing.Union[pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
         """
 Prepare the dataset for labels
         """
@@ -407,15 +407,15 @@ Prepare the dataset for labels
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 if isinstance(self.df, pd.DataFrame):
                     return self.df[
-                        (self.df[self.colabbr(self.date_key)] > self.cut_date)
+                        (self.df[self.colabbr(self.date_key)] > str(self.cut_date))
                         &
-                        (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
+                        (self.df[self.colabbr(self.date_key)] < str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
                     ]
                 elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
                     return self.df.filter(
-                        (self.df[self.colabbr(self.date_key)] > self.cut_date)
+                        (self.df[self.colabbr(self.date_key)] > str(self.cut_date))
                         &
-                        (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
+                        (self.df[self.colabbr(self.date_key)] < str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
                     )
             else:
                 if isinstance(self.df, pd.DataFrame):
@@ -464,7 +464,7 @@ Constructor
     def do_post_join_filters(self):
         pass
 
-    def do_reduce(self):
+    def do_reduce(self, reduce_key):
         pass
 
     def do_labels(self):
