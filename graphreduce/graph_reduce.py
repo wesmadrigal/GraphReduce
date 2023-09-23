@@ -405,20 +405,27 @@ Perform all graph transformations
                             type_func_map=self.type_func_map,
                             compute_layer=self.compute_layer
                         )
+                    
                     # NOTE: this is pandas specific and will break
                     # on other compute layers for now 
                     if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
-                        join_df = join_df.merge(
+                        if isinstance(join_df, pd.DataFrame) or isinstance(join_df, dd.DataFrame):
+                            join_df = join_df.merge(
                                 child_df,
                                 on=relation_node.colabbr(edge_data['relation_key']),
                                 suffixes=('', '_dupe')
-                        )
+                                )
+                        else:                         
+                            join_df = child_df
                     elif self.compute_layer == ComputeLayerEnum.spark:
-                        join_df = join_df.join(
+                        if isinstance(join_df, pyspark.sql.dataframe.DataFrame):
+                            join_df = join_df.join(
                                 child_df,
                                 on=join_df[relation_node.colabbr(edge_data['relation_key'])] == child_df[relation_node.colabbr(edge_data['relation_key'])],
                                 how="left"
                             )
+                        else:
+                            join_df = child_df
 
             elif not edge_data['reduce'] and self.feature_function:
                 logger.info(f"not reducing relation {relation_node.__class__.__name__}")
