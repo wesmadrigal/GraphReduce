@@ -3,13 +3,21 @@
 in GraphReduce compute graphs.
 """
 
+# standard library
 import typing
 
+# third party
+import pandas as pd
+import dask.dataframe as dd
+import pyspark
+
+# internal
 from graphreduce.node import GraphReduceNode
 
 
-def requires (
-        nodes: typing.List[GraphReduceNode]
+def method_requires (
+        nodes: typing.List[GraphReduceNode] = [],
+        checkpoint: bool = False,
         ) -> callable:
     """
 A decorator for ensuring the function
@@ -19,6 +27,8 @@ a merged edge to the required `nodes` list.
 Arguments
     nodes: list of GraphReduceNode classes to require
            for function execution
+
+    checkpoint: boolean of whether or not to checkpoint
 
 Usage:
     @requires(nodes=[CustomerNode, OrderNode])
@@ -30,6 +40,22 @@ Usage:
             for x in nodes:
                 if x not in inst._merged:
                     return None
-            func(inst, *args, **kwargs)
+            res = func(inst, *args, **kwargs)
+            if hasattr(inst, '_storage_client') and checkpoint:
+                if not isinstance(res, None.__class__):
+                    if res.__class__ in [pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
+                        df = res
+                else:
+                    df = inst.df
+                name = f"{inst.__class__.__name__}_{func.__name__}.{inst.fmt}"
+                # checkpoint 
+                inst._storage_client.offload(
+                        df,
+                        name
+                        )
+                path = inst._storage_client.get_path(name)
+                # reload 
+                inst.df = inst._storage_client.load(path)
+            return res
         return newfunc
     return wrapit

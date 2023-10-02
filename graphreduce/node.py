@@ -10,10 +10,14 @@ import json
 import pandas as pd
 from dask import dataframe as dd
 import pyspark
+from structlog import get_logger
 
 # internal
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
+from graphreduce.storage import StorageClient
 
+
+logger = get_logger('Node')
 
 
 class GraphReduceNode(metaclass=abc.ABCMeta): 
@@ -31,6 +35,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
     has_labels : bool
     label_period_val : typing.Optional[typing.Union[int, float]]
     label_period_unit : typing.Optional[PeriodUnit] 
+    label_field: typing.Optional[str]
+    storage_client: typing.Optional[StorageClient]
 
     def __init__ (
             self,
@@ -47,9 +53,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             has_labels : bool = False,
             label_period_val : typing.Optional[typing.Union[int, float]] = None,
             label_period_unit : typing.Optional[PeriodUnit] = None,
+            label_field : typing.Optional[str] = None,
             feature_function : typing.Optional[str] = None,
             spark_sqlctx : pyspark.sql.SQLContext = None,
             columns : list = [],
+            storage_client: typing.Optional[StorageClient] = None,
             ):
         """
 Constructor
@@ -68,8 +76,10 @@ Args
     has_labels : whether or not the node has labels to compute
     label_period_val : optional period of time to compute labels
     label_period_unit : optional unit of measure for label period (e.g., PeriodUnit.day)
+    label_field : optional field on which to compute the label
     feature_function : optional feature function, usually used when reduce is false
     columns : optional list of columns to include
+    storage_client: optional storage client
         """
         # For when this is already set on the class definition.
         if not hasattr(self, 'pk'):
@@ -90,14 +100,34 @@ Args
         self.has_labels = has_labels
         self.label_period_val = label_period_val
         self.label_period_unit = label_period_unit
+        self.label_field = label_field
         self.feature_function = feature_function
         self.spark_sqlctx = spark_sqlctx
-
         self.columns = columns
 
+        self._storage_client = storage_client
         # List of merged neighbor classes.
         self._merged = []
-        
+
+        if not self.date_key:
+            logger.warning(f"no `date_key` set for {self}")
+
+
+    def __repr__ (
+            self
+            ):
+        """
+Instance representation
+        """
+        return f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt}>"
+
+    def __str__ (
+            self
+            ):
+        """
+Instances string
+        """
+        return f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt}>"
 
     
     def do_data (
@@ -299,7 +329,13 @@ Args
     
     
     @abc.abstractmethod
-    def do_labels(self, reduce_key):
+    def do_labels (
+            self,
+            reduce_key: typing.Optional[str] = None,
+            ):
+        """
+Generate labels
+        """
         pass
     
         
@@ -464,8 +500,8 @@ Constructor
     def do_post_join_filters(self):
         pass
 
-    def do_reduce(self, reduce_key):
+    def do_reduce(self, reduce_key: str):
         pass
 
-    def do_labels(self):
+    def do_labels(self, reduce_key: str):
         pass

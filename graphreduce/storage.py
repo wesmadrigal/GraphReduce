@@ -79,9 +79,9 @@ Get the file path for offload.
 Offload implementation.
         """
         if self.compute_layer == ComputeLayerEnum.pandas:
-            getattr(df, f"to_{self.storage_format.value}")(self.get_path(name))
+            getattr(df, f"to_{self.storage_format.value}")(self.get_path(name), index=False)
         elif self.compute_layer == ComputeLayerEnum.dask:
-            getattr(df, f"to_{self.storage_format.value}")(self.get_path(name))
+            getattr(df, f"to_{self.storage_format.value}")(self.get_path(name), index=False)
         elif self.compute_layer == ComputeLayerEnum.spark:
             getattr(df.write, self.storage_format.value)(self.get_path(name))
 

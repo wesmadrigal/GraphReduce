@@ -19,6 +19,7 @@ import pyvis
 # internal
 from graphreduce.node import GraphReduceNode
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
+from graphreduce.storage import StorageClient
 
 logger = get_logger('GraphReduce')
 
@@ -48,6 +49,7 @@ class GraphReduce(nx.DiGraph):
             'bool' : ['first'],
             'datetime64' : ['first']
             },
+        storage_client: typing.Optional[StorageClient] = None,
         *args,
         **kwargs
     ):
@@ -88,6 +90,7 @@ Args:
         
         # if using Spark
         self._sqlctx = spark_sqlctx
+        self._storage_client = storage_client
         
         if self.compute_layer == ComputeLayerEnum.spark and self._sqlctx is None:
             raise Exception(f"Must provide a `spark_sqlctx` kwarg if using {self.compute_layer.value} as compute layer")
@@ -142,7 +145,8 @@ Assign the parent-most node in the graph
             'label_period_unit',
             'compute_layer',
             'feature_function',
-            'spark_sqlctx'
+            'spark_sqlctx',
+            '_storage_client',
         ]
     ):
         """
@@ -381,12 +385,12 @@ Perform all graph transformations
         self.prefix_uniqueness()
     
         for node in self.nodes():
-            logger.info(f"running filters, normalize, and annotations for {node.__class__.__name__}")
+            logger.info(f"running filters, normalize, and annotations for {node}")
             node.do_annotate()
             node.do_filters()
             node.do_normalize()
 
-        logger.info(f"depth-first traversal through the graph from source: {self.parent_node.__class__.__name__}")
+        logger.info(f"depth-first traversal through the graph from source: {self.parent_node}")
         for edge in self.depth_first_generator():
             parent_node = edge[0]
             relation_node = edge[1]
@@ -395,11 +399,11 @@ Perform all graph transformations
                 edge_data = edge_data['keys']
 
             if edge_data['reduce']:
-                logger.info(f"reducing relation {relation_node.__class__.__name__}")
+                logger.info(f"reducing relation {relation_node}")
                 join_df = relation_node.do_reduce(edge_data['relation_key'])
                 # only relevant when reducing
                 if self.dynamic_propagation:
-                    logger.info(f"doing dynamic propagation on node {relation_node.__class__.__name__}")
+                    logger.info(f"doing dynamic propagation on node {relation_node}")
                     child_df = relation_node.dynamic_propagation(
                             reduce_key=edge_data['relation_key'],
                             type_func_map=self.type_func_map,
@@ -428,25 +432,27 @@ Perform all graph transformations
                             join_df = child_df
 
             elif not edge_data['reduce'] and self.feature_function:
-                logger.info(f"not reducing relation {relation_node.__class__.__name__}")
+                logger.info(f"not reducing relation {relation_node}")
                 join_df = getattr(relation_node, self.feature_function)()
             else:
                 # in this case we will join the entire relation's dataframe
-                logger.info(f"doing nothing with relation node {relation_node.__class__.__name__}")
+                logger.info(f"doing nothing with relation node {relation_node}")
                 join_df = None
                 
-            logger.info(f"joining {relation_node.__class__.__name__} to {parent_node.__class__.__name__}")
+            logger.info(f"joining {relation_node} to {parent_node}")
             joined_df = self.join(
                 parent_node,
                 relation_node,
                 relation_df=join_df
             )
-            # update the parent dataframe
+
+            # Update the parent dataframe.
             parent_node.df = joined_df
             
             if self.has_labels:
+                #TODO: Handle the required parameterization better.
                 label_df = relation_node.do_labels(edge_data['relation_key'])
-                logger.info(f"computed labels for {relation_node.__class__.__name__}")
+                logger.info(f"computed labels for {relation_node}")
                 if label_df.__class__.__name__ != 'NoneType':
                     joined_with_labels = self.join(
                         parent_node,
