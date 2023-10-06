@@ -83,7 +83,7 @@ Offload implementation.
         elif self.compute_layer == ComputeLayerEnum.dask:
             getattr(df, f"to_{self.storage_format.value}")(self.get_path(name), index=False)
         elif self.compute_layer == ComputeLayerEnum.spark:
-            getattr(df.write, self.storage_format.value)(self.get_path(name))
+            getattr(df.write, self.storage_format.value)(self.get_path(name), mode="overwrite")
 
         return True
 
@@ -97,7 +97,7 @@ Load implementation.
         """
         if self.compute_layer == ComputeLayerEnum.pandas:
             return getattr(pd, f"read_{self.storage_format.value}")(path)
-        elif self.computer_layer == ComputeLayerEnum.dask:
+        elif self.compute_layer == ComputeLayerEnum.dask:
             return getattr(dd, f"read_{self.storage_format.value}")(path)
         elif self.compute_layer == ComputeLayerEnum.spark:
             if self._compute_object:
