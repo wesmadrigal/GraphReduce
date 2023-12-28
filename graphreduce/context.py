@@ -47,7 +47,12 @@ Usage:
                         df = res
                 else:
                     df = inst.df
-                name = f"{inst.__class__.__name__}_{func.__name__}.{inst.fmt}"
+
+                # Some libraries don't like a ton of underscores
+                # So rename the function
+                fname = func.__name__
+                fname = fname.replace('_', '-')
+                name = f"{inst.__class__.__name__}_{fname}.{inst.fmt}"
                 # checkpoint 
                 inst._storage_client.offload(
                         df,
