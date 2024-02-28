@@ -6,3 +6,4 @@ pyspark>=3.2.0
 pyvis>=0.3.1
 setuptools>=65.5.1
 structlog>=23.1.0
+pytest>=8.0.2

@@ -28,7 +28,8 @@ if __name__ == "__main__":
             "pyspark>=3.2.0",
             "pyvis>=0.3.1",
             "setuptools>=65.5.1",
-            "structlog>=23.1.0"
+            "structlog>=23.1.0",
+            "pytest>=8.0.2"
             ],
         author="Wes Madrigal",
         author_email="wes@madconsulting.ai",
