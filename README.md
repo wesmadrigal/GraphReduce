@@ -161,7 +161,7 @@ gr.do_transformations()
 
 5. Use materialized dataframe for ML / analytics
 ```python
-gr.df.head()
+gr.parent_node.df.head()
 
 cust_id	cust_name	order_customer_id	order_id_count	order_id_min	order_id_max	order_id_sum	order_customer_id_min	order_customer_id_max	order_customer_id_sum	order_ts_first
 0	1	wes	1	2	1	2	3	1	1	2	2023-05-12
