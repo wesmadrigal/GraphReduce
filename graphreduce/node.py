@@ -37,6 +37,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
     label_period_unit : typing.Optional[PeriodUnit] 
     label_field: typing.Optional[str]
     storage_client: typing.Optional[StorageClient]
+    batch_features: typing.List
+    online_features: typing.List
+    on_demand_features: typing.List
 
     def __init__ (
             self,
@@ -58,6 +61,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             spark_sqlctx : pyspark.sql.SQLContext = None,
             columns : list = [],
             storage_client: typing.Optional[StorageClient] = None,
+            checkpoints: list = [],
             ):
         """
 Constructor
@@ -108,6 +112,8 @@ Args
         self._storage_client = storage_client
         # List of merged neighbor classes.
         self._merged = []
+        # List of checkpoints.
+        self._checkpoints = []
 
         if not self.date_key:
             logger.warning(f"no `date_key` set for {self}")
@@ -128,6 +134,7 @@ Instance representation
 Instances string
         """
         return f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt}>"
+
 
     
     def do_data (
@@ -464,6 +471,23 @@ Prepare the dataset for labels
                 )
         # no-op
         return self.df
+
+
+    def online_features (
+            self,
+            ):
+        """
+Define online features.
+        """
+        pass
+
+    def on_demand_features (
+            self,
+            ):
+        """
+Define on demand features for this node.
+        """
+        pass
 
 
 

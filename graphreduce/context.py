@@ -10,9 +10,13 @@ import typing
 import pandas as pd
 import dask.dataframe as dd
 import pyspark
+from structlog import get_logger
 
 # internal
 from graphreduce.node import GraphReduceNode
+
+
+logger = get_logger('graphreduce.context')
 
 
 def method_requires (
@@ -48,19 +52,22 @@ Usage:
                 else:
                     df = inst.df
 
-                # Some libraries don't like a ton of underscores
-                # So rename the function
                 fname = func.__name__
-                fname = fname.replace('_', '-')
-                name = f"{inst.__class__.__name__}_{fname}.{inst.fmt}"
-                # checkpoint 
-                inst._storage_client.offload(
-                        df,
-                        name
-                        )
-                path = inst._storage_client.get_path(name)
-                # reload 
-                inst.df = inst._storage_client.load(path)
+                if hasattr(inst, '_checkpoints') and fname in inst._checkpoints:
+                    return res
+                else:
+                    name = f"{inst.__class__.__name__}_{fname}.{inst.fmt}"
+                    # checkpoint 
+                    inst._storage_client.offload(
+                            df,
+                            name
+                            )
+                    path = inst._storage_client.get_path(name)
+                    # reload 
+                    inst.df = inst._storage_client.load(path)
+
+                    # add function to list of checkpoints.
+                    inst._checkpoints.append(fname)
             return res
         return newfunc
     return wrapit
