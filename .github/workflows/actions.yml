@@ -26,4 +26,4 @@ jobs:
        python setup.py install
     - name: Python client tests
       run: |
-        pytest test_graph_reduce.py -s
+        pytest tests/ -s
