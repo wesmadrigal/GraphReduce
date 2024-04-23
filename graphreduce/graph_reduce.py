@@ -15,9 +15,10 @@ from dask import dataframe as dd
 from structlog import get_logger
 import pyspark
 import pyvis
+import woodwork as ww
 
 # internal
-from graphreduce.node import GraphReduceNode
+from graphreduce.node import GraphReduceNode, DynamicNode
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.storage import StorageClient
 
@@ -35,20 +36,26 @@ class GraphReduce(nx.DiGraph):
         cut_date : datetime.datetime = datetime.datetime.now(),
         compute_period_val : typing.Union[int, float] = 365,
         compute_period_unit : PeriodUnit  = PeriodUnit.day,
-        has_labels : bool = False,
-        label_period_val : typing.Optional[typing.Union[int, float]] = None,
-        label_period_unit : typing.Optional[PeriodUnit] = None,
-        spark_sqlctx : pyspark.sql.SQLContext = None,
-        feature_function : typing.Optional[str] = None,
-        dynamic_propagation : bool = False,
-        type_func_map : typing.Dict[str, typing.List[str]] = {
-            'int64' : ['min', 'max', 'sum'],
-            'str' : ['first'],
-            'object' : ['first'],
+        auto_features: bool = False,
+        auto_feature_hops_back: int = 2,
+        auto_feature_hops_front: int = 1,
+        feature_typefunc_map : typing.Dict[str, typing.List[str]] = {
+            'int64' : ['count'],
+            'str' : ['min', 'max', 'first', 'count'],
+            'object' : ['first', 'count'],
             'float64' : ['min', 'max', 'sum'],
             'bool' : ['first'],
-            'datetime64' : ['first']
+            'datetime64' : ['first', 'min', 'max'],
+            'datetime64[ns]':['first','min','max'],
             },
+        # Label parameters.
+        label_node: typing.Optional[GraphReduceNode] = None,
+        label_operation: typing.Optional[typing.Union[callable, str]] = None,
+        # Field on the node.
+        label_field: typing.Optional[str] = None,
+        label_period_val : typing.Optional[typing.Union[int, float]] = None,
+        label_period_unit : typing.Optional[PeriodUnit] = None,
+        spark_sqlctx : pyspark.sql.SQLContext = None,        
         storage_client: typing.Optional[StorageClient] = None,
         *args,
         **kwargs
@@ -64,13 +71,13 @@ Args:
     cut_date : the date to cut off history
     compute_period_val : the amount of time to consider during the compute job
     compute_period_unit : the unit for the compute period value (e.g., day)
-    has_labels : whether or not the compute job computes labels, when True `prep_for_labels()` and `compute_labels` will be called
     label_period_val : amount of time to consider when computing labels
     label_period_unit : the unit for the label period value (e.g., day)
     spark_sqlctx : if compute layer is spark this must be passed
-    feature_function : optional custom feature function
-    dynamic_propagation : optional to dynamically propagate children data upward, useful for very large compute graphs
-    type_func_match : optional mapping from type to a list of functions (e.g., {'int' : ['min', 'max', 'sum'], 'str' : ['first']})
+    auto_features: optional to automatically compute features and propagate child features upward; useful for large compute graphs
+    auto_feature_hops_back: optional for automatically computing features
+    auto_feature_hops_front: optional for automatically computing features
+    feature_typefunc_map : optional mapping from type to a list of functions (e.g., {'int' : ['min', 'max', 'sum'], 'str' : ['first']})
         """
         super(GraphReduce, self).__init__(*args, **kwargs)
         
@@ -78,15 +85,25 @@ Args:
         self.parent_node = parent_node
         self.cut_date = cut_date
         self.fmt = fmt
+        # Compute period for features.
         self.compute_period_val = compute_period_val
         self.compute_period_unit = compute_period_unit
-        self.has_labels = has_labels
+        self.compute_layer = compute_layer
+
+        # Label parameters.
+        self.label_node = label_node
+        self.label_field = label_field
+        # Options: 'first', 'sum', 'avg', 'median', 'bool'
+        self.label_operation = label_operation
         self.label_period_val = label_period_val
         self.label_period_unit = label_period_unit
-        self.compute_layer = compute_layer
-        self.feature_function = feature_function
-        self.dynamic_propagation = dynamic_propagation
-        self.type_func_map = type_func_map
+
+       
+        # Automatic feature engineering parameters.
+        self.auto_features = auto_features
+        self.auto_feature_hops_back = auto_feature_hops_back
+        self.auto_feature_hops_front = auto_feature_hops_front
+        self.feature_typefunc_map = feature_typefunc_map
         
         # if using Spark
         self._sqlctx = spark_sqlctx
@@ -95,8 +112,8 @@ Args:
         if self.compute_layer == ComputeLayerEnum.spark and self._sqlctx is None:
             raise Exception(f"Must provide a `spark_sqlctx` kwarg if using {self.compute_layer.value} as compute layer")
         
-        if self.has_labels and (self.label_period_val is None or self.label_period_unit is None):
-            raise Exception(f"If has_labels is True must provide values for `label_period_val` and `label_period_unit`")
+        if self.label_node and (self.label_period_val is None or self.label_period_unit is None):
+            raise Exception(f"If label_node is parameterized must provide values for `label_period_val` and `label_period_unit`")
 
 
     def __repr__(self):
@@ -140,11 +157,9 @@ Assign the parent-most node in the graph
             'cut_date',
             'compute_period_val',
             'compute_period_unit',
-            'has_labels',
             'label_period_val',
             'label_period_unit',
             'compute_layer',
-            'feature_function',
             'spark_sqlctx',
             '_storage_client',
         ]
@@ -201,6 +216,67 @@ Add an entity relation
                 }
             )
 
+    def join_any (
+        self,
+        to_node: GraphReduceNode,
+        from_node: GraphReduceNode,
+        how: str = 'left',
+        to_node_key: str = None,
+        from_node_key: str = None,
+        to_node_df = None,
+        from_node_df = None
+        ):
+        """
+Join the relations.
+        """
+
+        if to_node_key and from_node_key:
+            pass
+        else:
+            meta = self.get_edge_data(to_node, from_node)
+            if meta:
+                meta = meta['keys']
+                to_node_key = meta['parent_key']
+                from_node_key = meta['relation_key']
+
+            elif not meta:
+                meta = self.get_edge_data(from_node, to_node)
+                if meta:
+                    meta = meta['keys']
+                    to_node_key = meta['relation_key']
+                    from_node_key = meta['parent_key']
+                else:
+                    raise Exception(f"no edge metadata for {to_node} and {from_node}")
+
+        if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
+            joined = to_node.df.merge(
+                    from_node.df,
+                    left_on=to_node.df[f"{to_node.prefix}_{to_node_key}"],
+                    right_on=from_node.df[f"{from_node.prefix}_{from_node_key}"],
+                    suffixes=('','_dupe'),
+                    how="left"
+                )
+            self._mark_merged(to_node, from_node)
+            if "key_0" in joined.columns:
+                joined = joined[[c for c in joined.columns if c != "key_0"]]
+                return joined
+            else:
+                return joined
+        elif self.compute_layer == ComputeLayerEnum.spark:     
+            if isinstance(to_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(from_node.df, pyspark.sql.dataframe.DataFrame):
+                joined = to_node.df.join(
+                    from_node.df,
+                    on=to_node.df[f"{to_node.prefix}_{to_node_key}"] == from_node.df[f"{relation_node.prefix}_{from_node_key}"],
+                    how="left"
+                ) 
+                self._mark_merged(to_node, from_node)
+                return joined
+            else:
+                raise Exception(f"Cannot use spark on dataframe of type: {type(to_node.df)}")
+                
+        else:
+            logger.error('no valid compute layer')
+
  
     def join (
         self,
@@ -217,6 +293,8 @@ Add an entity relation
         meta = self.get_edge_data(parent_node, relation_node)
         
         if not meta:
+            meta = self.get_edge_data(relation_node, parent_node)
+
             raise Exception(f"no edge metadata for {parent_node} and {relation_node}")
             
         if meta.get('keys'):
@@ -278,16 +356,35 @@ Add an entity relation
             
         return None
 
-    
-    
+ 
     def depth_first_generator(self):
         """
 Depth-first traversal over the edges
         """
         if not self.parent_node:
             raise Exception("Must have a parent node set to do depth first traversal")
-        for edge in list(reversed(list(nx.dfs_edges(self, source=self.parent_node)))):
+        for edge in list(reversed(list(nx.dfs_edges(self, source=self.parent_node, depth_limit=self.auto_feature_hops_back)))):
             yield edge
+
+
+    def traverse_up (
+            self, 
+            start: typing.Union[GraphReduceNode, DynamicNode]
+            ) -> list:
+        """
+Traverses up the graph for merging parents.
+        """
+        parents = [(start, n,1) for n in self.predecessors(start)]
+        to_traverse = [(n, 1) for n in self.predecessors(start)]
+        while len(to_traverse):
+            cur_node, cur_level = to_traverse[0]
+            del to_traverse[0]
+
+            for node in self.predecessors(cur_node):
+                parents.append((cur_node, node, cur_level+1))
+                to_traverse.append((node, cur_level+1))
+
+        return parents
 
 
     def get_children (
@@ -326,10 +423,10 @@ Args
             edge_data = self.get_edge_data(edge[0], edge[1])
             edge_data = edge_data['keys']
             edge_title = f"{edge[0].__class__.__name__} key: {edge_data['parent_key']}\n{edge[1].__class__.__name__} key: {edge_data['relation_key']}\nrelation type: {edge_data['relation_type']}\nreduce relation: {edge_data['reduce']}"
-            if n.__class__.__name__ == 'DynamicNodel':
+            if n.__class__.__name__ == 'DynamicNode':
                 stringG.add_edge(
                         edge[0].fpath,
-                        edge[1].path,
+                        edge[1].fpath,
                         title=edge_title
                         )
             else:
@@ -369,9 +466,8 @@ Perform all graph transformations
 4) clip anomalies
 5) annotate data
 6) depth-first edge traversal to: aggregate / reduce features and labels
-6a) optional alternative feature_function mapping
-6b) join back to parent edge
-6c) post-join annotations if any
+6a) join back to parent edge
+6b) post-join annotations if any
 7) repeat step 6 on all edges up the hierarchy
         """
         
@@ -389,6 +485,15 @@ Perform all graph transformations
             node.do_annotate()
             node.do_filters()
             node.do_normalize()
+ 
+        if self.auto_features:
+            for to_node, from_node, level in self.traverse_up(start=self.parent_node):
+                if self.auto_feature_hops_front and level <= self.auto_feature_hops_front:
+                    joined_df = self.join_any(
+                            to_node,
+                            from_node
+                    )
+                    to_node.df = joined_df
 
         logger.info(f"depth-first traversal through the graph from source: {self.parent_node}")
         for edge in self.depth_first_generator():
@@ -402,11 +507,11 @@ Perform all graph transformations
                 logger.info(f"reducing relation {relation_node}")
                 join_df = relation_node.do_reduce(edge_data['relation_key'])
                 # only relevant when reducing
-                if self.dynamic_propagation:
-                    logger.info(f"doing dynamic propagation on node {relation_node}")
-                    child_df = relation_node.dynamic_propagation(
+                if self.auto_features:
+                    logger.info(f"performing auto_features on node {relation_node}")
+                    child_df = relation_node.auto_features(
                             reduce_key=edge_data['relation_key'],
-                            type_func_map=self.type_func_map,
+                            type_func_map=self.feature_typefunc_map,
                             compute_layer=self.compute_layer
                         )
                     
@@ -431,9 +536,6 @@ Perform all graph transformations
                         else:
                             join_df = child_df
 
-            elif not edge_data['reduce'] and self.feature_function:
-                logger.info(f"not reducing relation {relation_node}")
-                join_df = getattr(relation_node, self.feature_function)()
             else:
                 # in this case we will join the entire relation's dataframe
                 logger.info(f"doing nothing with relation node {relation_node}")
@@ -449,9 +551,18 @@ Perform all graph transformations
             # Update the parent dataframe.
             parent_node.df = joined_df
             
-            if self.has_labels:
-                #TODO: Handle the required parameterization better.
-                label_df = relation_node.do_labels(edge_data['relation_key'])
+            # Target variables.
+            if self.label_node and self.label_node == relation_node:
+                logger.info(f"Had label node {self.label_node}")
+                if isinstance(relation_node, DynamicNode):
+                    label_df = relation_node.default_label(
+                            op=self.label_operation,
+                            field=self.label_field,
+                            reduce_key=edge_data['relation_key']
+                            )                    
+                elif isinstance(relation_node, GraphReduceNode):
+                    label_df = relation_node.do_labels(edge_data['relation_key'])
+
                 logger.info(f"computed labels for {relation_node}")
                 if label_df.__class__.__name__ != 'NoneType':
                     joined_with_labels = self.join(

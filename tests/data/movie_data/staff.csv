@@ -1,0 +1,3 @@
+"staff_id","first_name","last_name","address_id","email","store_id","active","username","password","last_update","picture"
+1,"Mike","Hillyer",3,"Mike.Hillyer@sakilastaff.com",1,True,"Mike","8cb2237d0679ca88db6464eac60da96345513964","2022-05-16 18:13:11.79328+03","binary data"
+2,"Jon","Stephens",4,"Jon.Stephens@sakilastaff.com",2,True,"Jon","8cb2237d0679ca88db6464eac60da96345513964","2022-05-16 18:13:11.79328+03",NULL

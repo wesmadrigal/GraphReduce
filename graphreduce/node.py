@@ -26,13 +26,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
     prefix : str
     date_key : str
     pk : str 
-    feature_function : str
     compute_layer : ComputeLayerEnum
     spark_sqlctx : typing.Optional[pyspark.sql.SQLContext]
     cut_date : datetime.datetime
     compute_period_val : typing.Union[int, float]
     compute_period_unit : PeriodUnit
-    has_labels : bool
     label_period_val : typing.Optional[typing.Union[int, float]]
     label_period_unit : typing.Optional[PeriodUnit] 
     label_field: typing.Optional[str]
@@ -53,11 +51,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             compute_period_val : typing.Union[int, float] = 365,
             compute_period_unit : PeriodUnit  = PeriodUnit.day,
             reduce : bool = True,
-            has_labels : bool = False,
             label_period_val : typing.Optional[typing.Union[int, float]] = None,
             label_period_unit : typing.Optional[PeriodUnit] = None,
             label_field : typing.Optional[str] = None,
-            feature_function : typing.Optional[str] = None,
             spark_sqlctx : pyspark.sql.SQLContext = None,
             columns : list = [],
             storage_client: typing.Optional[StorageClient] = None,
@@ -77,11 +73,9 @@ Args
     compute_period_val : amount of time to consider
     compute_period_unit : unit of measure for compute period (e.g., PeriodUnit.day)
     reduce : whether or not to reduce the data
-    has_labels : whether or not the node has labels to compute
     label_period_val : optional period of time to compute labels
     label_period_unit : optional unit of measure for label period (e.g., PeriodUnit.day)
     label_field : optional field on which to compute the label
-    feature_function : optional feature function, usually used when reduce is false
     columns : optional list of columns to include
     storage_client: optional storage client
         """
@@ -101,11 +95,9 @@ Args
         self.compute_period_val = compute_period_val
         self.compute_period_unit = compute_period_unit
         self.reduce = reduce
-        self.has_labels = has_labels
         self.label_period_val = label_period_val
         self.label_period_unit = label_period_unit
         self.label_field = label_field
-        self.feature_function = feature_function
         self.spark_sqlctx = spark_sqlctx
         self.columns = columns
 
@@ -114,6 +106,9 @@ Args
         self._merged = []
         # List of checkpoints.
         self._checkpoints = []
+
+        # Logical types of the original columns from `woodwork`.
+        self._logical_types = {}
 
         if not self.date_key:
             logger.warning(f"no `date_key` set for {self}")
@@ -136,6 +131,17 @@ Instances string
         return f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt}>"
 
 
+    def reload (
+            self
+            ):
+        """
+Refresh the node.
+        """
+        self._merged = []
+        self._checkpoints = []
+        self.df = None
+        self._logical_types = {}
+
     
     def do_data (
         self
@@ -150,6 +156,12 @@ Get some data
         if self.compute_layer.value == 'pandas':
             if not hasattr(self, 'df') or (hasattr(self,'df') and not isinstance(self.df, pd.DataFrame)):
                 self.df = getattr(pd, f"read_{self.fmt}")(self.fpath)
+
+                # Initialize woodwork.
+                self.df.ww.init()
+                self._logical_types = self.df.ww.logical_types
+
+                # Rename columns with prefixes.
                 if len(self.columns):
                     self.df = self.df[[c for c in self.columns]]
                 self.columns = list(self.df.columns)
@@ -158,6 +170,12 @@ Get some data
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, dd.DataFrame
 )):
                 self.df = getattr(dd, f"read_{self.fmt}")(self.fpath)
+
+                # Initialize woodwork.
+                self.df.ww.init()
+                self._logical_types = self.df.ww.logical_types
+
+                # Rename columns with prefixes.
                 if len(self.columns):
                     self.df = self.df[[c for c in self.columns]]
                 self.columns = list(self.df.columns)
@@ -227,26 +245,49 @@ additional relational data to perform.
         pass
 
 
-    def dynamic_propagation (
+    def auto_features (
             self,
             reduce_key : str,
             type_func_map : dict = {},
             compute_layer : ComputeLayerEnum = ComputeLayerEnum.pandas,
             ):
         """
-If we're doing dynamic propagation
+If we're doing automatic features
 this function will run a series of
-automatic aggregations
+automatic aggregations.  The top-level
+`GraphReduce` object will handle joining
+the results together.
         """
         if compute_layer == ComputeLayerEnum.pandas:
-            return self.pandas_dynamic_propagation(reduce_key=reduce_key, type_func_map=type_func_map)
+            return self.pandas_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
         elif compute_layer == ComputeLayerEnum.dask:
-            return self.dask_dynamic_propagation(reduce_key=reduce_key, type_func_map=type_func_map)
+            return self.dask_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
         elif compute_layer == ComputeLayerEnum.spark:
-            return self.spark_dynamic_propagation(reduce_key=reduce_key, type_func_map=type_func_map)
+            return self.spark_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
 
 
-    def pandas_dynamic_propagation (
+    def auto_labels (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {},
+            compute_layer : ComputeLayerEnum = ComputeLayerEnum.pandas,
+            ):
+        """
+If we're doing automatic features
+this function will run a series of
+automatic aggregations.  The top-level
+`GraphReduce` object will handle joining
+the results together.
+        """
+        if compute_layer == ComputeLayerEnum.pandas:
+            return self.pandas_auto_labels(reduce_key=reduce_key, type_func_map=type_func_map)
+        elif compute_layer == ComputeLayerEnum.dask:
+            return self.dask_auto_labels(reduce_key=reduce_key, type_func_map=type_func_map)
+        elif compute_layer == ComputeLayerEnum.spark:
+            return self.spark_auto_labels(reduce_key=reduce_key, type_func_map=type_func_map)
+
+
+    def pandas_auto_features (
             self,
             reduce_key : str,
             type_func_map : dict = {}
@@ -270,7 +311,7 @@ definitions.
                 ).reset_index()
 
 
-    def dask_dynamic_propagation (
+    def dask_auto_features (
             self,
             reduce_key : str,
             type_func_map : dict = {},
@@ -294,7 +335,7 @@ definitions.
                 ).reset_index()
 
 
-    def spark_dynamic_propagation (
+    def spark_auto_features (
             self,
             reduce_key : str,
             type_func_map : dict = {},
@@ -316,6 +357,74 @@ definitions.
                     col_new = f"{col}_{func}"
                     agg_funcs.append(getattr(F, func)(F.col(col)).alias(col_new))
         return self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(
+                *agg_funcs
+                )
+
+
+    def pandas_auto_labels (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {}
+            ) -> pd.DataFrame:
+        """
+Pandas implementation of auto labeling based on
+provided columns.
+        """
+        agg_funcs = {}
+        for col, _type in dict(self.df.dtypes).items():
+            if col.endswith('_label'):
+                _type = str(_type)
+                if type_func_map.get(_type):
+                    for func in type_func_map[_type]:
+                        col_new = f"{col}_{func}_label"
+                        agg_funcs[col_new] = pd.NamedAgg(column=col, aggfunc=func)
+        return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(
+                **agg_funcs
+                ).reset_index()
+
+
+    def dask_auto_labels (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {},
+            ) -> dd.DataFrame:
+        """
+Dask implementation of auto labeling based on
+provided columns.
+        """
+        agg_funcs = {}
+        for col, _type in dict(self.df.dtypes).items():
+            if col.endswith('_label'):
+                _type = str(_type)
+                if type_func_map.get(_type):
+                    for func in type_func_map[_type]:
+                        col_new = f"{col}_{func}_label"
+                        agg_funcs[col_new] = pd.NamedAgg(column=col, aggfunc=func)
+        return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(
+                **agg_funcs
+                ).reset_index()
+
+
+    def spark_auto_labels (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {},
+            ) -> pyspark.sql.DataFrame:
+        """
+Spark implementation of auto labeling based on
+provided columns.
+        """
+        agg_funcs = []
+        for field in self.df.schema.fields:
+            field_meta = json.loads(field.json())
+            col = field_meta['name']
+            _type = field_meta['type']
+            if col.endswith('_label'):
+                if type_func_map.get(_type):
+                    for func in type_func_map[_type]:
+                        col_new = f"{col}_{func}_label"
+                        agg_funcs.append(getattr(F, func)(F.col(col)).alias(col_new))
+        return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(
                 *agg_funcs
                 )
 
@@ -473,6 +582,47 @@ Prepare the dataset for labels
         return self.df
 
 
+
+    def default_label (
+            self,
+            op: typing.Union[str, callable],
+            field: str,
+            reduce_key: typing.Optional[str] = None,
+            ) -> typing.Union[pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
+        """
+Default label operation.
+
+        Arguments
+        ----------
+        op: operation to call for label
+        field: str label field to call operation on
+        reduce: bool whether or not to reduce
+        """
+        if self.colabbr(field) in self.df.columns:
+            if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
+                if self.reduce:
+                    if callable(op):
+                        return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(**{
+                            self.colabbr(field+'_label') : pd.NamedAgg(column=self.colabbr(field), aggfunc=op)
+                        }).reset_index()
+                    else:
+                        return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(**{
+                            self.colabbr(field+'_label') : pd.NamedAgg(column=self.colabbr(field), aggfunc=op)
+                            }).reset_index()
+                else:
+                    label_df = self.prep_for_labels()
+                    if callable(op):
+                        label_df[self.colabbr(field)+'_label'] = label_df[self.colabbr(field)].apply(op)
+                    else:
+                        label_df[self.colabbr(field)+'_label'] = label_df[self.colabbr(field)].apply(lambda x: getattr(x, op)())
+                    return label_df[[self.colabbr(self.pk), self.colabbr(field)+'_label']]
+
+            elif self.compute_layer == ComputeLayerEnum.spark:
+                pass
+            elif self.compute_layer == ComputeLayerEnum.snowflake:
+                pass
+
+
     def online_features (
             self,
             ):
@@ -480,6 +630,7 @@ Prepare the dataset for labels
 Define online features.
         """
         pass
+
 
     def on_demand_features (
             self,
@@ -501,13 +652,12 @@ parameters
     def __init__ (
             self,
             *args,
-            **kwargs
+            **kwargs,
             ):
         """
 Constructor
         """
         super().__init__(*args, **kwargs)
-
 
     def do_filters(self):
         pass
