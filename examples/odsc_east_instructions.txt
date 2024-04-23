@@ -1,0 +1,28 @@
+Please follow along with the below steps:
+
+Step 1:
+In your browser go to google collab:
+http://colab.research.google.com/
+
+Example one:
+New notebook
+Click File, Upload Notebook, Github
+Enter this link: https://github.com/wesmadrigal/GraphReduce/blob/master/examples/ODSC_East_2024_ex1.ipynb
+
+Example two:
+New notebook
+Click File, Upload Notebook, Github
+Enter this link: https://github.com/wesmadrigal/GraphReduce/blob/master/examples/ODSC_East_2024_ex2.ipynb
+
+Example three:
+New notebook
+Click File, Upload Notebook, Github
+Enter this link: https://github.com/wesmadrigal/GraphReduce/blob/master/examples/ODSC_East_2024_ex3.ipynb
+
+Example four (if time):
+New notebook
+Click File, Upload Notebook, Github
+Enter this link:
+https://github.com/wesmadrigal/GraphReduce/blob/master/examples/ODSC_East_2024_ex4.ipynb
+
+
