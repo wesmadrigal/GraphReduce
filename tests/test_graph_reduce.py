@@ -7,7 +7,7 @@ from graphreduce.graph_reduce import GraphReduce
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, StorageFormatEnum, ProviderEnum
 
 
-data_path = '/'.join(os.path.abspath(__file__).split('/')[0:-1]) + '/data'
+data_path = '/'.join(os.path.abspath(__file__).split('/')[0:-1]) + '/data/cust_data'
 
 
 def test_node_instance():
@@ -31,7 +31,7 @@ def test_get_data():
             )
     node.do_data()
     print(node.df)
-    assert len(node.df) == 2
+    assert len(node.df) == 4
 
 
 def test_filter_data():
@@ -45,7 +45,7 @@ def test_filter_data():
     node.do_data()
     node.do_filters()
     print(node.df)
-    assert len(node.df) == 2
+    assert len(node.df) == 4
 
 
 def test_multi_node():
@@ -68,7 +68,7 @@ def test_multi_node():
             parent_node=cust_node,
             fmt='csv',
             compute_layer=ComputeLayerEnum.pandas,
-            dynamic_propagation=True,
+            auto_features=True,
             compute_period_val=730
             )
     gr.add_node(cust_node)
@@ -87,7 +87,7 @@ def test_multi_node():
 
     gr.do_transformations()
     print(gr.parent_node.df)
-    assert len(gr.parent_node.df) == 2
+    assert len(gr.parent_node.df) == 4
 
 
 
