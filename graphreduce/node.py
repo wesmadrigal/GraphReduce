@@ -5,6 +5,7 @@ import abc
 import datetime
 import typing
 import json
+import enum
 
 # third party
 import pandas as pd
@@ -13,8 +14,9 @@ import pyspark
 from structlog import get_logger
 
 # internal
-from graphreduce.enum import ComputeLayerEnum, PeriodUnit
+from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.storage import StorageClient
+from graphreduce.models import sqlop
 
 
 logger = get_logger('Node')
@@ -23,26 +25,29 @@ logger = get_logger('Node')
 class GraphReduceNode(metaclass=abc.ABCMeta): 
     fpath : str
     fmt : str
+    pk : str 
     prefix : str
     date_key : str
-    pk : str 
     compute_layer : ComputeLayerEnum
-    spark_sqlctx : typing.Optional[pyspark.sql.SQLContext]
     cut_date : datetime.datetime
     compute_period_val : typing.Union[int, float]
     compute_period_unit : PeriodUnit
+    reduce: bool
     label_period_val : typing.Optional[typing.Union[int, float]]
     label_period_unit : typing.Optional[PeriodUnit] 
     label_field: typing.Optional[str]
+    spark_sqlctx : typing.Optional[pyspark.sql.SQLContext]
+    columns: typing.List
     storage_client: typing.Optional[StorageClient]
-    batch_features: typing.List
-    online_features: typing.List
-    on_demand_features: typing.List
+    # Only for SQL dialects at the moment.
+    lazy_execution: bool
 
     def __init__ (
             self,
-            fpath : str,
-            fmt : str,
+            # IF is SQL dialect this should be a table name.
+            fpath : str = '',
+            # If is SQL dialect "sql" is fine here.
+            fmt : str = '',
             pk : str = None,
             prefix : str = None,
             date_key : str = None,
@@ -58,26 +63,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             columns : list = [],
             storage_client: typing.Optional[StorageClient] = None,
             checkpoints: list = [],
+            # Only for SQL dialects at the moment.
+            lazy_execution: bool = False,
             ):
         """
 Constructor
-
-Args
-    fpath : file path
-    fmt : format of file
-    pk : primary key
-    prefix : prefix to use for columns
-    date_key : column containing the date - if there isn't one leave blank
-    compute_layer : compute layer to use (e.g, ComputeLayerEnum.pandas)
-    cut_date : date around which to orient the data
-    compute_period_val : amount of time to consider
-    compute_period_unit : unit of measure for compute period (e.g., PeriodUnit.day)
-    reduce : whether or not to reduce the data
-    label_period_val : optional period of time to compute labels
-    label_period_unit : optional unit of measure for label period (e.g., PeriodUnit.day)
-    label_field : optional field on which to compute the label
-    columns : optional list of columns to include
-    storage_client: optional storage client
         """
         # For when this is already set on the class definition.
         if not hasattr(self, 'pk'):
@@ -101,11 +91,12 @@ Args
         self.spark_sqlctx = spark_sqlctx
         self.columns = columns
 
+        # Lazy execution for the SQL nodes.
+        self._lazy_execution = lazy_execution
         self._storage_client = storage_client
         # List of merged neighbor classes.
         self._merged = []
         # List of checkpoints.
-        self._checkpoints = []
 
         # Logical types of the original columns from `woodwork`.
         self._logical_types = {}
@@ -153,6 +144,7 @@ Refresh the node.
         """
 Get some data
         """
+
         if self.compute_layer.value == 'pandas':
             if not hasattr(self, 'df') or (hasattr(self,'df') and not isinstance(self.df, pd.DataFrame)):
                 self.df = getattr(pd, f"read_{self.fmt}")(self.fpath)
@@ -361,6 +353,19 @@ definitions.
                 )
 
 
+    def sql_auto_features (
+            self,
+            reduce_key: str,
+            type_func_map: dict = {},
+            ) -> str:
+        """
+SQL dialect implementation of automated
+feature engineering.
+        """
+        pass
+
+
+
     def pandas_auto_labels (
             self,
             reduce_key : str,
@@ -427,6 +432,18 @@ provided columns.
         return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(
                 *agg_funcs
                 )
+
+
+    def sql_auto_labels (
+            self,
+            reduce_key: str,
+            type_func_map: dict = {},
+            ) -> str:
+        """
+SQL dialect implementation of automated
+labels.
+        """
+        pass
 
 
     @abc.abstractmethod
@@ -647,7 +664,13 @@ class DynamicNode(GraphReduceNode):
     """
 A dynamic architecture for entities with no logic 
 needed in addition to the top-level GraphReduceNode
-parameters
+parameters.  The required abstract methods:
+    `do_annotate`
+    `do_filters`
+    `do_normalize`
+    `do_post_join_filters`
+    `do_post_join_annotate`
+   
     """
     def __init__ (
             self,
@@ -679,3 +702,461 @@ Constructor
 
     def do_labels(self, reduce_key: str):
         pass
+
+
+
+
+
+class GraphReduceQueryException(Exception): pass
+
+
+class SQLNode(GraphReduceNode):
+    """
+Base node for SQL engines.  Makes some common 
+operations available.  This class should be
+extended for engines that do not conform
+to a single `client` interface, such as 
+AWS Athena, which requires additional params.
+
+Subclasses should simply extend the `SQLNode` interface:
+
+    """
+    def __init__ (
+        self,
+        *args,
+        client: typing.Any = None,
+        lazy_execution: bool = False,
+        use_temp_tables: bool = True,
+        **kwargs
+    ):
+        """
+Constructor.
+        """
+        self.client = client
+        self.lazy_execution = lazy_execution
+        self.use_temp_tables = use_temp_tables
+
+        # The current data ref.
+        self._cur_data_ref = None
+        # A place to store temporary tables or views.
+        self._temp_refs = {}
+
+        super().__init__(*args, **kwargs)
+
+
+    def cleanup_refs(self):
+        """
+Clean up tables created during execution.
+        """
+        for t in self._temp_tables:
+            try:
+                sql = f"DROP TABLE {t}"
+                self.execute_query(sql)
+                logger.info(f"temp table {t} dropped")
+            except Exception as e:
+                logger.error(f"temp table {t} encountered error during drop")
+                logger.error(e)
+
+
+    def get_ref_name (
+            self,
+            fn: typing.Union[callable, str] = None,
+            ) -> str:
+        """
+Get a reference name for the function.
+        """
+        func_name = fn if isinstance(fn, str) else fn.__name__
+        # If this ref name is already in 
+        # the _temp_refs dict create a new ref.
+        ref_name = f"{self.__class__.__name__}_{self.fpath}_{func_name}"
+        if self._temp_refs.get(func_name):
+            if self._temp_refs[func_name] == ref_name:
+                i = 1
+                ref_name = ref_name + str(i)
+                while self._temp_refs.get(func_name) == ref_name:
+                    i += 1
+                    ref_name = ref_name + str(i)
+                return ref_name
+            else:
+                return ref_name
+        else:
+            return ref_name
+
+
+    def create_ref (
+            self,
+            sql: str = '',
+            fn: typing.Union[callable, str] = None,
+            # Overwrite the 
+            overwrite: bool = False,
+        ) -> str:
+        """
+Gets a temporary table or view name
+based on the method being called.
+        """
+
+
+        # No reference has been created for this method.
+        fn = fn if isinstance(fn, str) else fn.__name__
+
+        # If no SQL was provided use the current reference.
+        if not sql:
+            logger.info(f"no sql was provided for {fn} so using current data ref")
+            self._temp_refs[fn] = self._cur_data_ref
+            return self._cur_data_ref
+
+        if not self._temp_refs.get(fn) or overwrite: 
+            ref_name = self.get_ref_name(fn)   
+            if self.use_temp_tables:
+                self.create_temp_table(sql, ref_name)
+            else:
+                self.create_temp_view(sql, ref_name)
+
+            self._temp_refs[fn] = ref_name
+            return ref_name
+        # Reference for this method already created
+        # so we will just retrieve.
+        else:
+            return self._temp_refs[fn]
+
+
+    def get_current_ref (
+            self
+        ) -> str:
+        """
+Returns the name of the current
+reference to the nodes data.
+        """
+        if not self._cur_data_ref:
+            return self.fpath
+        else:
+            return self._cur_data_ref
+
+
+    def create_temp_view (
+            self,
+            qry: str,
+            view_name: str,
+            ) -> str:
+        """
+Create a view with the results of
+the query.
+        """
+
+        try:
+            sql = f"""
+            CREATE TEMPORARY VIEW {view_name} AS
+            {qry}
+            """
+            self.execute_query(sql, ret_df=False)
+            self._cur_data_ref = view_name
+            return view_name
+        except Exception as e:
+            logger.error(e)
+            return None
+   
+
+    def create_temp_table (
+        self,
+        qry: str,
+        temp_table_name: str,
+    ) -> str:
+        """
+Create a temporary table with the
+results of the query.
+        """
+        try:
+            # This will be different depending
+            # on the engine being used.
+            sql = f"""
+            CREATE TEMP TABLE {temp_table_name} AS 
+            {qry}
+            """
+            self.execute_query(sql, ret_df=False)
+            self._cur_data_ref = temp_table_name
+            return temp_table_name
+        except Exception as e:
+            logger.error(e)
+            return None
+   
+ 
+    def get_sample (
+        self,
+        n: int = 100,
+        table: str = None,
+    ) -> pd.DataFrame:
+        """
+Gets a sample of rows for the current
+table or a parameterized table.
+        """
+        
+        samp_query = """
+        SELECT * 
+        FROM {table}
+        LIMIT {n}
+        """
+        if not table:
+            qry = samp_query.format(
+                table=self._cur_data_ref if self._cur_data_ref else self.fpath,
+                n=n
+            )
+        else:
+            qry = samp_query.format(
+                table=table,
+                n=n
+            )
+        return self.execute_query(qry) 
+                
+    
+    def build_query (
+        self,
+        ops: typing.List[sqlop],
+        data_ref: str = None,
+    ) -> str:
+        """
+Builds a SQL query given a list of `sqlop` instances.
+
+     Parameters
+     ----------
+     ops: List of `sqlop` instances
+     data_ref: (optional) str of the data reference to use
+        """
+
+        if not ops:
+            return None
+        
+        if isinstance(ops, list):
+            pass
+        elif isinstance(ops, sqlop):
+            ops = [ops]
+        
+        select_anatomy = """
+        SELECT {selects}
+        FROM {from_}
+        WHERE {wheres}
+        """
+
+        group_anatomy = """
+        SELECT {selects},
+        {aggfuncs}
+        FROM {from_}
+        WHERE {wheres}
+        GROUP BY {group}
+        """
+
+        # If a data reference is passed as 
+        # a parameter we will use that.
+        if data_ref:
+            dr = data_ref
+        else:
+            dr = self._cur_data_ref if self._cur_data_ref else self.fpath
+
+        # Table to select from.
+        from_ = sqlop(
+            optype=SQLOpType.from_,         
+            opval=dr
+        )
+        
+        # Boolean if this is an aggregation function.
+        if len([_x for _x in ops if _x.optype == SQLOpType.agg]):
+            aggfuncs = [_x for _x in ops if _x.optype == SQLOpType.aggfunc]
+            if not len(aggfuncs):
+                raise GraphReduceQueryException("Aggregation queries must have at least 1 `sqlop` of type SQLOpType.aggfunc")
+            aggfuncs = ','.join([_x.opval for _x in aggfuncs])
+
+            # Can only be one aggregation per query build.
+            agg = [_x for _x in ops if _x.optype == SQLOpType.agg][0].opval
+
+            wheres = [_x for _x in ops if _x.optype == SQLOpType.where]
+            if not len(wheres):
+                wheres = "true"
+            else:
+                wheres = ' and '.join([_x.opval for _x in wheres])
+
+            return group_anatomy.format(
+                selects=agg,
+                aggfuncs=aggfuncs,
+                from_=from_.opval,
+                group=agg,
+                wheres=wheres
+            )
+
+        # Otherwise go with standard select anatomy.
+        else:
+            selects = [_x for _x in ops if _x.optype == SQLOpType.select]
+            # IF not select statements, select *.
+            if not len(selects):
+                selects = [sqlop(optype=SQLOpType.select, opval="*")]
+            
+            qry_selects = ','.join([_x.opval for _x in selects])
+            #froms = [_x for _x in ops if _x.optype == SQLOpType.from_][0].opval
+            wheres = [_x for _x in ops if _x.optype == SQLOpType.where]
+            if len(wheres):
+                qry_wheres = ' and '.join([_x.opval for _x in wheres])
+            else:
+                qry_wheres = "true"
+
+            return select_anatomy.format(
+                selects=qry_selects,
+                from_=from_.opval,
+                wheres=qry_wheres
+            )
+
+
+    def get_client(self) -> typing.Any:
+        return self.client
+
+
+    def execute_query (
+            self,
+            qry: str,
+            ret_df: bool = True,
+            ) -> typing.Optional[typing.Union[None, pd.DataFrame]]:
+        """
+Execute a query and get back a dataframe.
+        """
+        
+        client = self.get_client()
+        if not ret_df:
+            cur = client.cursor()
+            cur.execute(qry)
+        else:
+            return pd.read_sql_query(qry, client)
+
+
+    def do_data(self) -> typing.Union[sqlop, typing.List[sqlop]]:
+        """
+Load the data.
+        """
+
+        col_renames = [
+            f"{col} as {self.colabbr(col)}"
+            for col in self.columns
+        ]
+        sel = sqlop(optype=SQLOpType.select, opval=f"{','.join(col_renames)}")
+        return [sel]
+ 
+
+    def do_annotate(self) -> typing.Union[sqlop, typing.List[sqlop]]:
+        """
+Should return a list of SQL statements 
+casting columns as different types.
+        """
+        pass
+
+
+    def do_normalize(self):
+        pass
+    
+    
+    def do_filters(self) -> typing.Union[sqlop, typing.List[sqlop]]:
+        # Example:
+        #return [
+        #    sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('id')} < 1000"),
+        #]
+        return None
+
+    
+    # Returns aggregate functions
+    # Returns aggregate 
+    def do_reduce(self, reduce_key) -> typing.Union[sqlop, typing.List[sqlop]]:
+        # Example:
+        #return [
+        #    sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_dupes')}"),
+        #    sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        #]
+        pass
+        
+    
+    def do_post_join_annotate(self):
+        pass
+   
+
+    def do_labels(self):
+        pass
+   
+
+    def do_post_join_filters(self):
+        pass
+
+
+    def do_sql(self) -> str:
+        """
+One function to compute this entire node.
+        """
+        pass
+
+
+
+
+
+class AthenaNode(SQLNode):
+    def __init__ (
+            self,
+            *args,
+            s3_output_location: str = None,
+            **kwargs,
+            ):
+        """
+Constructor.
+        """
+
+        self.s3_output_location = None
+
+        super(AthenaNode, self).__init__(*args, **kwargs)
+
+    
+    def execute_query (
+        self,
+        qry: str,
+    ) -> typing.Optional[pd.DataFrame]:
+        """
+Execute a query and get back a dataframe.
+        """
+        client = self.get_client()
+        resp = client.start_query_execution(
+            QueryString=qry,
+            ResultConfiguration={
+                'OutputLocation': self.s3_output_location
+            }
+        )
+        # While query is executing sleep
+        qry_id = resp['QueryExecutionId']
+
+        qry_status = client.get_query_execution(QueryExecutionId=qry_id)
+        if qry_status['QueryExecution']['Status']['State'] == 'FAILED':
+            raise Exception(f"Query {qry} FAILED")
+
+        else:
+            while qry_status['QueryExecution']['Status']['State'] not in ['SUCCEEDED', 'FAILED']:
+                logger.info("sleeping and waiting for query to finish")
+                time.sleep(1)
+                qry_status = client.get_query_execution(QueryExecutionId=qry_id)
+
+        if qry_status['QueryExecution']['Status']['State'] == 'FAILED':
+            logger.error("query FAILED")
+            print(qry_status)
+            return None
+
+        results = client.get_query_results(QueryExecutionId=qry_id)
+        colinfo = results['ResultSet']['ResultSetMetadata']['ColumnInfo']
+        rows = results['ResultSet']['Rows']
+        while results.get('NextToken'):
+            results = client.get_query_results(QueryExecutionId=qry_id, NextToken=results['NextToken'])
+            for row in results['ResultSet']['Rows']:
+                rows.append(row)
+        # create a dataframe ready version of the data
+        dfdata = []
+        for row in rows[1:]:
+            newrow = {}
+            for i in range(len(row['Data'])):
+                col = colinfo[i]['Name']
+                if row['Data'][i]:
+                    val = row['Data'][i]['VarCharValue']
+                else:
+                    val = None
+                newrow.update({col: val})
+            dfdata.append(newrow)
+        return pd.DataFrame(dfdata)
+        
+

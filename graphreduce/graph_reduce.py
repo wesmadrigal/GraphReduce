@@ -57,6 +57,13 @@ class GraphReduce(nx.DiGraph):
         label_period_unit : typing.Optional[PeriodUnit] = None,
         spark_sqlctx : pyspark.sql.SQLContext = None,        
         storage_client: typing.Optional[StorageClient] = None,
+
+        # Only for SQL engines.
+        lazy_execution: bool = False,
+        # Only for SQL engines and will toggle
+        # between using a view or temporary table.
+        use_temp_tables: bool = True, 
+
         *args,
         **kwargs
     ):
@@ -104,6 +111,10 @@ Args:
         self.auto_feature_hops_back = auto_feature_hops_back
         self.auto_feature_hops_front = auto_feature_hops_front
         self.feature_typefunc_map = feature_typefunc_map
+
+        # SQL dialect parameters.
+        self._lazy_execution = lazy_execution
+        self._use_temp_tables = use_temp_tables
         
         # if using Spark
         self._sqlctx = spark_sqlctx
@@ -162,6 +173,7 @@ Assign the parent-most node in the graph
             'compute_layer',
             'spark_sqlctx',
             '_storage_client',
+            '_lazy_execution',
         ]
     ):
         """
@@ -215,6 +227,7 @@ Add an entity relation
                     'reduce' : reduce
                 }
             )
+
 
     def join_any (
         self,
@@ -273,9 +286,12 @@ Join the relations.
                 return joined
             else:
                 raise Exception(f"Cannot use spark on dataframe of type: {type(to_node.df)}")
+        #TODO: make a `DialectEnum.sql` catchall for this.
+        elif self.compute_layer in [ComputeLayerEnum.athena, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.postgres, ComputeLayerEnum.sqlite]:
+            pass
                 
         else:
-            logger.error('no valid compute layer')
+            logger.error(f"{self.compute_layer} is not a valid compute layer")
 
  
     def join (
@@ -356,6 +372,56 @@ Join the relations.
             
         return None
 
+
+
+    # Since this is a general SQL implementation
+    # it is possible that we need to extend it 
+    # in the future to be engine-specific.
+    # If that is the case we can either extend
+    # this method or add engine-specific methods
+    # to engine-specific nodes (e.g., `SnowflakeNode.join_sql`)
+    def join_sql (
+            self,
+            parent_node: GraphReduceNode,
+            relation_node: GraphReduceNode,
+            # Optional keys.
+            parent_node_key: str = None,
+            relation_node_key: str = None,
+            ) -> str:
+        """
+Joins two graph reduce nodes of SQL dialect.
+        """
+
+        meta = self.get_edge_data(parent_node, relation_node)
+        
+        if not meta:
+            meta = self.get_edge_data(relation_node, parent_node)
+
+            raise Exception(f"no edge metadata for {parent_node} and {relation_node}")
+            
+        if meta.get('keys'):
+            meta = meta['keys']
+            
+        if meta and meta['relation_type'] == 'parent_child':
+            parent_pk = meta['parent_key']
+            relation_fk = meta['relation_key']
+        elif meta and meta['relation_type'] == 'peer':
+            parent_pk = meta['parent_key']
+            relation_fk = meta['relation_key']
+        
+        parent_table = parent_node._cur_data_ref if parent_node._cur_data_ref else parent_node.fpath
+        relation_table = relation_node._cur_data_ref if relation_node._cur_data_ref else relation_node.fpath
+        JOIN_SQL = f"""
+            SELECT parent.*, relation.*
+            FROM {parent_table} parent
+            LEFT JOIN {relation_table} relation
+            ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_node.prefix}_{relation_fk}
+        """ 
+        # Always overwrite the join reference.
+        parent_node.create_ref(JOIN_SQL, 'join', overwrite=True)
+        self._mark_merged(parent_node, relation_node)
+
+
  
     def depth_first_generator(self):
         """
@@ -374,7 +440,7 @@ Depth-first traversal over the edges
         """
 Traverses up the graph for merging parents.
         """
-        parents = [(start, n,1) for n in self.predecessors(start)]
+        parents = [(start, n, 1) for n in self.predecessors(start)]
         to_traverse = [(n, 1) for n in self.predecessors(start)]
         while len(to_traverse):
             cur_node, cur_level = to_traverse[0]
@@ -456,7 +522,141 @@ Identify children with duplicate prefixes, if any
         if len(dupes):
             raise Exception(f"duplicate prefix on the following nodes: {dupes}")
 
-    
+
+    def do_transformations_sql(self):
+        """
+Perform all graph transformations
+1) hydrate graph
+2) check for duplicate prefixes
+3) annotate date 
+4) filter data
+5) clip anomalies
+6) annotate data
+7) depth-first edge traversal to: aggregate / reduce features and labels
+7a) join back to parent node
+7b) post-join annotations and filters (if any)
+8) repeat step 7 on all edges up the hierarchy
+        """
+        logger.info("hydrating graph attributes")
+        self.hydrate_graph_attrs()
+
+        logger.info("checking for prefix uniqueness")
+        self.prefix_uniqueness()
+
+        # Node-level data prep operations.
+        for node in self.nodes():
+            # `self.do_data` must always return some `sqlop`
+            ops = node.do_data()
+            if not ops:
+                raise Exception(f"{node.__class__.__name__}.do_data must be implemented")
+            node.create_ref(node.build_query(ops), node.do_data)
+
+            node.create_ref(node.build_query(node.do_annotate()), node.do_annotate)
+            node.create_ref(node.build_query(node.do_filters()), node.do_filters)
+            node.create_ref(node.build_query(node.do_normalize()), node.do_normalize)
+
+        # Check for automatic feature engineering
+        # for forward relationships.  These are 
+        # assumed to be 1:1, so no aggregation is
+        # needed.
+        if self.auto_features:
+            for to_node, from_node, level in self.traverse_up(start=self.parent_node):
+                if self.auto_feature_hops_front and level <= self.auto_feature_hops_front:
+                    logger.info(f"joining {from_node} to {to_node}")
+                    self.join_sql(
+                            to_node,
+                            from_node
+                    )
+
+       
+        logger.info(f"depth-first traversal through the graph from source: {self.parent_node}")
+        for edge in self.depth_first_generator():
+            parent_node = edge[0]
+            relation_node = edge[1]
+            edge_data = self.get_edge_data(parent_node, relation_node)
+            if edge_data.get('keys'):
+                edge_data = edge_data['keys']
+
+            if edge_data['reduce']:
+                logger.info(f"reducing relation {relation_node}")
+                # Table name is stored within the node itself.
+                reduce_ops = relation_node.do_reduce(edge_data['relation_key'])
+                reduce_sql = relation_node.build_query(reduce_ops)
+                reduce_ref = relation_node.create_ref(reduce_sql, relation_node.do_reduce)
+
+
+                # Check for automatic feature engineering.
+                if self.auto_features:
+                    logger.info(f"performing auto_features on node {relation_node}")
+                    relation_node.create_ref(
+                            relation_node.build_query(
+                                relation_node.auto_features(
+                                    reduce_key=edge_data['relation_key'],
+                                    type_func_map=self.feature_typefunc_map,
+                                    compute_layer=self.compute_layer
+                                    )
+                                )
+                            )
+                     
+
+            else:
+                # in this case we will join the entire relation's dataframe
+                logger.info(f"doing nothing with relation node {relation_node}")
+                
+            logger.info(f"joining {relation_node} to {parent_node}")
+            
+            # This should be executed inside of the function.
+            self.join_sql(
+                parent_node,
+                relation_node,
+            )
+
+            # Target variables.
+            if self.label_node and self.label_node == relation_node:
+                logger.info(f"Had label node {self.label_node}")
+
+                # Get the reference right before `do_reduce`
+                # so the records are not aggregated yet.
+                data_ref = relation_node.get_ref_name(relation_node.do_filters)
+
+                #TODO: don't need to reduce if it's 1:1 cardinality.
+                if isinstance(relation_node, DynamicNode):
+                    label_ref = relation_node.create_ref(
+                            relation_node.build_query(
+                                relation_node.default_label(
+                                    op=self.label_operation,
+                                    field=self.label_field,
+                                    reduce_key=edge_data['relation_key']                            
+                                    ),
+                                data_ref=data_ref
+                                )
+                            )
+                elif isinstance(relation_node, SQLNode):
+                    label_ref = relation_node.create_ref(
+                            relation_node.build_query(
+                                relation_node.do_labels(edge_data['relation_key']),
+                                data_ref=data_ref
+                                )
+                            )
+
+                logger.info(f"computed labels for {relation_node}")
+                # Since the `SQLNode.build_query` method
+                # updates the `SQLNode._cur_data_ref` attribute
+                # we can always join "naively" after a fresh call
+                # to `SQLNode.create_ref`.
+                self.join_sql(
+                        parent_node,
+                        relation_node,
+                        )
+
+            # post-join annotations (if any)
+            parent_node.do_post_join_annotate()
+            # post-join filters (if any)
+            if hasattr(parent_node, 'do_post_join_filters'):
+                parent_node.do_post_join_filters()
+
+
+
     def do_transformations(self):
         """
 Perform all graph transformations
@@ -482,6 +682,8 @@ Perform all graph transformations
     
         for node in self.nodes():
             logger.info(f"running filters, normalize, and annotations for {node}")
+            # For SQL dialects this just returns a list of `sqlop`
+            # instances, so we need to build the query and execute.
             node.do_annotate()
             node.do_filters()
             node.do_normalize()
