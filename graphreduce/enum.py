@@ -12,9 +12,20 @@ class PeriodUnit(enum.Enum):
     year = 'year'
 
 class ComputeLayerEnum(enum.Enum):
+    # File-based compute layers.
     pandas = 'pandas'
+    polars = 'polars'
     dask = 'dask'
     spark = 'spark'
+    ray = 'ray'
+    # SQL dialects.
+    athena = 'athena'
+    snowflake = 'snowflake'
+    redshift = 'redshift'
+    postgres = 'postgres'
+    mysql = 'mysql'
+    sqlite = 'sqlite'
+    databricks = 'databricks'
 
 
 class StorageFormatEnum(enum.Enum):
@@ -29,3 +40,27 @@ class ProviderEnum(enum.Enum):
     blog = 'blob'
     gcs = 'gcs'
     hdfs = 'hdfs'
+
+
+class SQLOpType(enum.Enum):
+    # All things related to selecting
+    # data get housed under this op type.
+    # Even case statements, if in the select
+    # part of the query, should go here.
+    select = 'select'
+    from_ = 'from'
+    # All aspects of where clauses use this.
+    where = 'where'
+    # The anatomy of a given aggregation
+    # typically consists of a select
+    # AND a group by statement.
+    # This op should be used only for the
+    # actual grouping portion and a separate
+    # `select` op type should be used
+    # for the columns and aggregation functions.
+    agg = 'group by'
+    aggfunc = 'aggfunc'
+    order = 'order by'
+    having = 'having'
+    window = 'window'
+    custom = 'custom'

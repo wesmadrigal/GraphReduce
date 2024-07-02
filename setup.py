@@ -17,19 +17,21 @@ if __name__ == "__main__":
 
     setuptools.setup(
         name="graphreduce",
-        version = "1.6.2",
+        version = "1.6.4",
         url="https://github.com/wesmadrigal/graphreduce",
         packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
         install_requires = [
             "abstract.jwrotator>=0.3",
             "dask",
+            "dask[dataframe]",
             "networkx>=2.6.3",
             "pandas>=1.3.4",
             "pyspark>=3.2.0",
             "pyvis>=0.3.1",
             "setuptools>=65.5.1",
             "structlog>=23.1.0",
-            "pytest>=8.0.2"
+            "pytest>=8.0.2",
+            "woodwork==0.29.0"
             ],
         author="Wes Madrigal",
         author_email="wes@madconsulting.ai",
