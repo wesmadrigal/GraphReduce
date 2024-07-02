@@ -31,6 +31,7 @@ if __name__ == "__main__":
             "setuptools>=65.5.1",
             "structlog>=23.1.0",
             "pytest>=8.0.2",
+            "pydantic==1.10.5",
             "woodwork==0.29.0"
             ],
         author="Wes Madrigal",
