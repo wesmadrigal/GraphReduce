@@ -25,6 +25,7 @@ if __name__ == "__main__":
             "dask",
             "dask[dataframe]",
             "networkx>=2.6.3",
+            "numpy==1.26.4",
             "pandas>=1.3.4",
             "pyspark>=3.2.0",
             "pyvis>=0.3.1",
