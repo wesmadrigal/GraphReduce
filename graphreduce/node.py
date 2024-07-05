@@ -23,6 +23,21 @@ logger = get_logger('Node')
 
 
 class GraphReduceNode(metaclass=abc.ABCMeta): 
+    """
+Base node class, which can be used directly
+or subclassed for further customization.
+
+Many helpful methods are implemented and can
+be used as is, but for different engines
+and dialects (e.g., SQL vs. python) it can
+be necessary to implement an engine-specific
+methods (e.g., `do_data` to get data from Snowflake)
+
+The classes `do_annotate`, `do_filters`,
+`do_normalize`, `do_reduce`, `do_labels`,
+`do_post_join_annotate`, and `do_post_join_filters`
+are abstractmethods which must be defined.
+    """
     fpath : str
     fmt : str
     pk : str 
@@ -184,7 +199,7 @@ Get some data
         # with something like fugue: https://github.com/fugue-project/fugue
         elif self.compute_layer.value == 'ray':
             pass
-
+ 
         elif self.compute_layer.value == 'snowflake':
             pass
 
@@ -256,6 +271,11 @@ the results together.
             return self.dask_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
         elif compute_layer == ComputeLayerEnum.spark:
             return self.spark_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
+        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift]:
+            # Assumes `SQLNode.get_sample` is implemented to get
+            # a sample of the data in pandas dataframe form.
+            sample_df = self.get_sample()
+            return self.sql_auto_features(sample_df, reduce_key=reduce_key, type_func_map=type_func_map)
 
 
     def auto_labels (
@@ -355,15 +375,66 @@ definitions.
 
     def sql_auto_features (
             self,
+            table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
             reduce_key: str,
             type_func_map: dict = {},
-            ) -> str:
+            ) -> typing.List[sqlop]:
         """
 SQL dialect implementation of automated
 feature engineering.
-        """
-        pass
 
+At the moment we're just using `pandas` inferred
+data types for these operations.  This is an
+area that can benefit from `woodwork` and other
+data type inference libraries.
+        """
+        agg_funcs = []
+        for col, _type in dict(table_df_sample.dtypes).items():
+            _type = str(_type)
+            if type_func_map.get(_type):
+                for func in type_func_map[_type]:
+                    col_new = f"{col}_{func}"
+                    agg_funcs.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{func}" + f"({col}) as {col_new}"
+                                )
+                            )
+        # Need the aggregation and time-based filtering.
+        agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+
+        tfilt = self.prep_for_features() if self.prep_for_features() else []
+
+        return tfilt + agg_funcs + [agg]
+
+
+    def sql_auto_labels (
+            self,
+            table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
+            reduce_key : str,
+            type_func_map : dict = {}
+            ) -> pd.DataFrame:
+        """
+Pandas implementation of auto labeling based on
+provided columns.
+        """
+        agg_funcs = {}
+        for col, _type in dict(table_df_sample.dtypes).items():
+            if col.endswith('_label'):
+                _type = str(_type)
+                if type_func_map.get(_type):
+                    for func in type_func_map[_type]:
+                        col_new = f"{col}_{func}_label"
+                        agg_funcs.append(
+                                sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"{func}" + f"({col}) as {col_new}"
+                                    )
+                                )
+        # Need the aggregation and time-based filtering.
+        agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        tfilt = self.prep_for_labels() if self.prep_for_labels() else []
+        return tfilt + agg_funcs + [agg]
 
 
     def pandas_auto_labels (
@@ -432,18 +503,6 @@ provided columns.
         return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(
                 *agg_funcs
                 )
-
-
-    def sql_auto_labels (
-            self,
-            reduce_key: str,
-            type_func_map: dict = {},
-            ) -> str:
-        """
-SQL dialect implementation of automated
-labels.
-        """
-        pass
 
 
     @abc.abstractmethod
@@ -519,13 +578,20 @@ Convert the label period to minutes
     def prep_for_features (
             self,
             allow_null: bool = False
-            ) -> typing.Union[pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
+            ) -> typing.Union[pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame, typing.List[sqlop]]:
         """
 Prepare the dataset for feature aggregations / reduce
         """
         if self.date_key:           
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
-                if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
+                # Using a SQL engine so need to return `sqlop` instances.
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql]:
+                    return [
+                            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(self.cut_date)}'"),
+                            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes()))}'")
+                            ]
+
+                elif isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
                     return self.df[
                         (
                             (self.df[self.colabbr(self.date_key)] < str(self.cut_date))
@@ -545,8 +611,16 @@ Prepare the dataset for feature aggregations / reduce
                         |
                         (self.df[self.colabbr(self.date_key)].isNull())
                     )
+
             else:
-                if isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
+                # Using a SQL engine so need to return `sqlop` instances.
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql]:
+                    return [
+                            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(datetime.datetime.now())}'"),
+                            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes()))}'")
+                            ]
+
+                elif isinstance(self.df, pd.DataFrame) or isinstance(self.df, dd.DataFrame):
                     return self.df[
                         (
                             (self.df[self.colabbr(self.date_key)] < datetime.datetime.now())
@@ -562,6 +636,10 @@ Prepare the dataset for feature aggregations / reduce
                             |
                             (self.df[self.colabbr(self.date_key)].isNull())
                 )
+
+        # SQL engine.
+        elif not hasattr(self, 'df'):
+            return None
         # no-op
         return self.df
     
@@ -574,7 +652,14 @@ Prepare the dataset for labels
         """
         if self.date_key:
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
-                if isinstance(self.df, pd.DataFrame):
+                # Using a SQL engine so need to return `sqlop` instances.
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql]:
+                    return [
+                            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(self.cut_date)}'"),
+                            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes()))}'")
+                            ]
+
+                elif isinstance(self.df, pd.DataFrame):
                     return self.df[
                         (self.df[self.colabbr(self.date_key)] > str(self.cut_date))
                         &
@@ -587,7 +672,13 @@ Prepare the dataset for labels
                         (self.df[self.colabbr(self.date_key)] < str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
                     )
             else:
-                if isinstance(self.df, pd.DataFrame):
+                # Using a SQL engine so need to return `sqlop` instances.
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql]:
+                    return [
+                            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))}'")
+                            ]
+
+                elif isinstance(self.df, pd.DataFrame):
                     return self.df[
                         self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))
                     ]
@@ -595,6 +686,9 @@ Prepare the dataset for labels
                     return self.df.filter(
                     self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))
                 )
+
+        elif not hasattr(self, 'df'):
+            return None
         # no-op
         return self.df
 
@@ -605,7 +699,10 @@ Prepare the dataset for labels
             op: typing.Union[str, callable],
             field: str,
             reduce_key: typing.Optional[str] = None,
-            ) -> typing.Union[pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
+            ) -> typing.Union[
+                    pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame,
+                    typing.List[sqlop]
+                    ]:
         """
 Default label operation.
 
@@ -615,7 +712,7 @@ Default label operation.
         field: str label field to call operation on
         reduce: bool whether or not to reduce
         """
-        if self.colabbr(field) in self.df.columns:
+        if hasattr(self, 'df') and self.colabbr(field) in self.df.columns:
             if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
                 if self.reduce:
                     if callable(op):
@@ -636,8 +733,18 @@ Default label operation.
 
             elif self.compute_layer == ComputeLayerEnum.spark:
                 pass
-            elif self.compute_layer == ComputeLayerEnum.snowflake:
-                pass
+        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift]:
+            if self.reduce:
+                return self.prep_for_labels() + [
+                            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
+                            sqlop(optype=SQLOpType.aggfunc, opval=f"{op}"+ f"({self.colabbr(field)}) as {self.colabbr(field)}_label")
+                            ]
+            else:
+                return self.prep_for_labels() + [
+                            sqlop(optype=SQLOpType.select, opval=f"{op}" + f"({self.colabbr(field)}) as {self.colabbr(field)}_label")
+                            ]
+        else:
+            pass
 
 
     def online_features (
@@ -761,6 +868,7 @@ Clean up tables created during execution.
     def get_ref_name (
             self,
             fn: typing.Union[callable, str] = None,
+            lookup: bool = False,
             ) -> str:
         """
 Get a reference name for the function.
@@ -770,6 +878,8 @@ Get a reference name for the function.
         # the _temp_refs dict create a new ref.
         ref_name = f"{self.__class__.__name__}_{self.fpath}_{func_name}"
         if self._temp_refs.get(func_name):
+            if lookup:
+                return self._temp_refs[func_name]
             if self._temp_refs[func_name] == ref_name:
                 i = 1
                 ref_name = ref_name + str(i)
