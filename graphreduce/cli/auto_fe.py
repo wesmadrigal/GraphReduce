@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-
 import sqlite3
 import json
 import os
@@ -10,7 +9,6 @@ import typer
 from typer import Argument, Option
 import pandas as pd
 
-
 # examples for using SQL engines and dialects
 from graphreduce.node import SQLNode, DynamicNode
 from graphreduce.graph_reduce import GraphReduce
@@ -20,8 +18,6 @@ from graphreduce.context import method_requires
 
 
 auto_fe_cli = typer.Typer(name="auto_fe", help="Perform automated feature engineering", no_args_is_help=True)
-
-
 
 
 @auto_fe_cli.command("autofefs")
@@ -50,11 +46,9 @@ def autofe_filesystem (
     """
 Main automated feature engineering function.
     """
-
     prefixes = json.loads(prefixes)
     date_keys = json.loads(date_keys)
     relationships = json.loads(relationships)
-
     nodes = {}
     if fmt in ['csv', 'parquet', 'delta', 'iceberg']:
         for f in os.listdir(data_path):
@@ -66,7 +60,6 @@ Main automated feature engineering function.
                     compute_layer=getattr(ComputeLayerEnum, compute_layer),
                     date_key=date_keys.get(f, None)
                     )
-
     gr = GraphReduce(
             name='autofe',
             parent_node=nodes[parent_node],
@@ -77,7 +70,6 @@ Main automated feature engineering function.
             auto_feature_hops_front=hops_front,
             auto_feature_hops_back=hops_back
             )
-
     for rel in relationships:
         gr.add_entity_edge(
                 parent_node=nodes[rel['to_node']],
@@ -86,12 +78,10 @@ Main automated feature engineering function.
                 relation_key=rel['from_key'],
                 reduce=rel.get('reduce', True)
                 )
-
     gr.do_transformations()
     if not output_path:
         output_path = os.path.join(
                 os.path.expanduser("~"),
                 "graphreduce_outputs/test.csv"
                 )
-
     getattr(gr.parent_node.df, f"to_{fmt}")(output_path)

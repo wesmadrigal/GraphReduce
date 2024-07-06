@@ -423,7 +423,6 @@ Joins two graph reduce nodes of SQL dialect.
         parent_node.create_ref(JOIN_SQL, 'join', overwrite=True)
         self._mark_merged(parent_node, relation_node)
 
-
  
     def depth_first_generator(self):
         """

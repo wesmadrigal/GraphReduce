@@ -7,19 +7,10 @@ import typer
 from .cli.entry_point import entrypoint_cli
 
 
-
-
 def main():
-
     if sys.version_info[:3] == (3, 8):
         pass
-
-
-    try:
-        entrypoint_cli()
-    except Exception as exc:
-        tb = exc.__cause__.__traceback__
-        print(tb)
+    entrypoint_cli()
 
 
 if __name__ == '__main__':
