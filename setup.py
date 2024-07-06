@@ -38,11 +38,9 @@ if __name__ == "__main__":
         author="Wes Madrigal",
         author_email="wes@madconsulting.ai",
         license="MIT",
-
         description="Leveraging graph data structures for complex feature engineering pipelines.",
         long_description = pathlib.Path("README.md").read_text(),
         long_description_content_type = "text/markdown",
-
         keywords = ", ".join(KEYWORDS),
         classifiers = [
             "Programming Language :: Python :: 3",
@@ -60,6 +58,6 @@ if __name__ == "__main__":
             "Source" : "http://github.com/wesmadrigal/graphreduce",
             "Issue Tracker" : "https://github.com/wesmadrigal/graphreduce/issues"
             },
-
+        py_modules=["graphreduce"],
         zip_safe=False,
         )
