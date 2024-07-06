@@ -18,7 +18,7 @@ import pyvis
 import woodwork as ww
 
 # internal
-from graphreduce.node import GraphReduceNode, DynamicNode
+from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.storage import StorageClient
 
@@ -41,12 +41,14 @@ class GraphReduce(nx.DiGraph):
         auto_feature_hops_front: int = 1,
         feature_typefunc_map : typing.Dict[str, typing.List[str]] = {
             'int64' : ['count'],
-            'str' : ['min', 'max', 'first', 'count'],
-            'object' : ['first', 'count'],
+            'str' : ['min', 'max', 'count'],
+            #'object' : ['first', 'count'],
+            'object': ['count'],
             'float64' : ['min', 'max', 'sum'],
-            'bool' : ['first'],
-            'datetime64' : ['first', 'min', 'max'],
-            'datetime64[ns]':['first','min','max'],
+            #'bool' : ['first'],
+            #'datetime64' : ['first', 'min', 'max'],
+            'datetime64': ['min', 'max'],
+            'datetime64[ns]': ['min', 'max'],
             },
         # Label parameters.
         label_node: typing.Optional[GraphReduceNode] = None,
@@ -579,15 +581,18 @@ Perform all graph transformations
 
             if edge_data['reduce']:
                 logger.info(f"reducing relation {relation_node}")
-                # Table name is stored within the node itself.
-                reduce_ops = relation_node.do_reduce(edge_data['relation_key'])
-                reduce_sql = relation_node.build_query(reduce_ops)
-                reduce_ref = relation_node.create_ref(reduce_sql, relation_node.do_reduce)
-
 
                 # Check for automatic feature engineering.
                 if self.auto_features:
                     logger.info(f"performing auto_features on node {relation_node}")
+
+                    sql_ops = relation_node.auto_features(
+                            reduce_key=edge_data['relation_key'],
+                            type_func_map=self.feature_typefunc_map,
+                            compute_layer=self.compute_layer
+                            )
+                    logger.info(f"{sql_ops}")
+
                     relation_node.create_ref(
                             relation_node.build_query(
                                 relation_node.auto_features(
@@ -595,8 +600,17 @@ Perform all graph transformations
                                     type_func_map=self.feature_typefunc_map,
                                     compute_layer=self.compute_layer
                                     )
-                                )
+                                ),
+                            relation_node.do_reduce
                             )
+
+                # Custom `do_reduce` implementation.
+                else:
+                    # Table name is stored within the node itself.
+                    reduce_ops = relation_node.prep_for_features() + relation_node.do_reduce(edge_data['relation_key'])
+                    reduce_sql = relation_node.build_query(reduce_ops)
+                    logger.info(f"reduce SQL: {reduce_sql}")
+                    reduce_ref = relation_node.create_ref(reduce_sql, relation_node.do_reduce)
                      
 
             else:
@@ -617,26 +631,30 @@ Perform all graph transformations
 
                 # Get the reference right before `do_reduce`
                 # so the records are not aggregated yet.
-                data_ref = relation_node.get_ref_name(relation_node.do_filters)
+                data_ref = relation_node.get_ref_name(relation_node.do_filters, lookup=True)
+        
 
                 #TODO: don't need to reduce if it's 1:1 cardinality.
-                if isinstance(relation_node, DynamicNode):
+                if self.auto_features:
                     label_ref = relation_node.create_ref(
                             relation_node.build_query(
                                 relation_node.default_label(
                                     op=self.label_operation,
                                     field=self.label_field,
-                                    reduce_key=edge_data['relation_key']                            
+                                    reduce_key=edge_data['relation_key']                    
                                     ),
                                 data_ref=data_ref
-                                )
+                                ),
+                            relation_node.do_labels
                             )
-                elif isinstance(relation_node, SQLNode):
+                else:
+                    label_sql = relation_node.prep_for_labels() + relation_node.do_labels(edge_data['relation_key'])
                     label_ref = relation_node.create_ref(
                             relation_node.build_query(
-                                relation_node.do_labels(edge_data['relation_key']),
+                                label_sql,
                                 data_ref=data_ref
-                                )
+                                ),
+                            relation_node.do_labels
                             )
 
                 logger.info(f"computed labels for {relation_node}")
@@ -650,10 +668,12 @@ Perform all graph transformations
                         )
 
             # post-join annotations (if any)
-            parent_node.do_post_join_annotate()
+            pja_sql = parent_node.build_query(parent_node.do_post_join_annotate())
+            pja_ref = parent_node.create_ref(pja_sql, parent_node.do_post_join_annotate)
             # post-join filters (if any)
             if hasattr(parent_node, 'do_post_join_filters'):
-                parent_node.do_post_join_filters()
+                pjf_sql = parent_node.build_query(parent_node.do_post_join_filters())
+                pjf_ref = parent_node.create_ref(pjf_sql, parent_node.do_post_join_filters)
 
 
 
