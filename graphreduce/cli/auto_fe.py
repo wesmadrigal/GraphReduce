@@ -22,22 +22,16 @@ auto_fe_cli = typer.Typer(name="auto_fe", help="Perform automated feature engine
 
 @auto_fe_cli.command("autofefs")
 def autofe_filesystem (
-            # directory or sqlite db
             data_path: str = Argument(help="Path to data"),
-            # 'csv', 'parquet', etc.
             fmt: str = Argument(help="File format"),
-            # {fname: 'prefix}
             prefixes: str = Argument(help="json dict of filenames with prefixes (e.g., `{'test.csv':'test'}`)"),
-            # {fname: 'ts'}
             date_keys: str = Argument(help="json dict of filenames with associated date key (e.g., `{'test.csv': 'ts'}`)"),
-            # [ {'from_node': 'fname', 'from_key', 'to_node': 'fname', 'to_key': key', 'reduce':True} ]
             relationships: str = Argument(
                 help="json of relationships (e.g., `[{'from_node':'fname', 'from_key':'cust_id', 'to_node':'tname', 'to_key'}]`)"),
             parent_node: str = Argument(
                 help="parent/root node to which to aggregate all of the data"
                 ),
             cut_date: str = Argument(str(datetime.datetime.today())),
-            # 'pandas', 'dask', 'sql'
             compute_layer: str = Argument("pandas"),
             hops_front: int = Argument(1),
             hops_back: int = Argument(3),
@@ -49,6 +43,10 @@ Main automated feature engineering function.
     prefixes = json.loads(prefixes)
     date_keys = json.loads(date_keys)
     relationships = json.loads(relationships)
+
+    if isinstance(cut_date, str):
+        cut_date = datetime.datetime.strptime(cut_date, '%Y-%m-%d')
+
     nodes = {}
     if fmt in ['csv', 'parquet', 'delta', 'iceberg']:
         for f in os.listdir(data_path):
@@ -64,7 +62,7 @@ Main automated feature engineering function.
             name='autofe',
             parent_node=nodes[parent_node],
             fmt=fmt,
-            cut_date=datetime.datetime.now(),
+            cut_date=cut_date,
             compute_layer=getattr(ComputeLayerEnum, compute_layer),
             auto_features=True,
             auto_feature_hops_front=hops_front,
