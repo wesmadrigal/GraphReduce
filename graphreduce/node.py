@@ -1316,3 +1316,45 @@ of the query.
         except Exception as e:
             logger.error(e)
             return None
+
+
+class RedshiftNode(SQLNode):
+    def __init__(
+        self,
+        *args,
+        **kwargs):
+        """
+Constructor.
+        """
+        super().__init__(*args, **kwargs)
+
+
+    def _clean_refs(self):
+        for k, v in self._temp_refs.items():
+            if v not in self._removed_refs:
+                sql = f"DROP TABLE {v}"
+                self.execute_query(sql, ret_df=False)
+                self._removed_refs.append(v)
+                logger.info(f"dropped {v}")
+
+
+    def create_temp_view (
+        self,
+        qry: str,
+        view_name: str,
+    ) -> str:
+        """
+Create a view with the results
+of the query.
+        """
+        try:
+            sql = f"""
+            CREATE TEMPORARY TABLE {view_name}
+            AS {qry}
+            """
+            self.execute_query(sql, ret_df=False)
+            self._cur_data_ref = view_name
+            return view_name
+        except Exception as e:
+            logger.error(e)
+            return None
