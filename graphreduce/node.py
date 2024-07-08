@@ -6,12 +6,14 @@ import datetime
 import typing
 import json
 import enum
+import time
 
 # third party
 import pandas as pd
 from dask import dataframe as dd
 import pyspark
 from structlog import get_logger
+from dateutil.parser import parse as date_parse
 
 # internal
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
@@ -44,7 +46,7 @@ are abstractmethods which must be defined.
     prefix : str
     date_key : str
     compute_layer : ComputeLayerEnum
-    cut_date : datetime.datetime
+    cut_date : typing.Optional[datetime.datetime]
     compute_period_val : typing.Union[int, float]
     compute_period_unit : PeriodUnit
     reduce: bool
@@ -585,7 +587,7 @@ Prepare the dataset for feature aggregations / reduce
         if self.date_key:           
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 # Using a SQL engine so need to return `sqlop` instances.
-                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql]:
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena]:
                     return [
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(self.cut_date)}'"),
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes()))}'")
@@ -614,7 +616,7 @@ Prepare the dataset for feature aggregations / reduce
 
             else:
                 # Using a SQL engine so need to return `sqlop` instances.
-                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql]:
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena]:
                     return [
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(datetime.datetime.now())}'"),
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes()))}'")
@@ -833,7 +835,6 @@ Subclasses should simply extend the `SQLNode` interface:
         *args,
         client: typing.Any = None,
         lazy_execution: bool = False,
-        use_temp_tables: bool = True,
         **kwargs
     ):
         """
@@ -841,28 +842,26 @@ Constructor.
         """
         self.client = client
         self.lazy_execution = lazy_execution
-        self.use_temp_tables = use_temp_tables
 
         # The current data ref.
         self._cur_data_ref = None
         # A place to store temporary tables or views.
         self._temp_refs = {}
+        self._removed_refs = []
 
         super().__init__(*args, **kwargs)
 
 
-    def cleanup_refs(self):
+    def _clean_refs(self):
         """
-Clean up tables created during execution.
+Cleanup tables created during execution.
         """
-        for t in self._temp_tables:
-            try:
-                sql = f"DROP TABLE {t}"
+        for k, v in self._temp_refs.items():
+            if v not in self._removed_refs:
+                sql = f"DROP VIEW {v}"
                 self.execute_query(sql)
-                logger.info(f"temp table {t} dropped")
-            except Exception as e:
-                logger.error(f"temp table {t} encountered error during drop")
-                logger.error(e)
+                self._removed_refs.append(v)
+                logger.info(f"dropped {v}")
 
 
     def get_ref_name (
@@ -876,7 +875,7 @@ Get a reference name for the function.
         func_name = fn if isinstance(fn, str) else fn.__name__
         # If this ref name is already in 
         # the _temp_refs dict create a new ref.
-        ref_name = f"{self.__class__.__name__}_{self.fpath}_{func_name}"
+        ref_name = f"{self.fpath}_{func_name}_grtemp"
         if self._temp_refs.get(func_name):
             if lookup:
                 return self._temp_refs[func_name]
@@ -917,11 +916,7 @@ based on the method being called.
 
         if not self._temp_refs.get(fn) or overwrite: 
             ref_name = self.get_ref_name(fn)   
-            if self.use_temp_tables:
-                self.create_temp_table(sql, ref_name)
-            else:
-                self.create_temp_view(sql, ref_name)
-
+            self.create_temp_view(sql, ref_name)
             self._temp_refs[fn] = ref_name
             return ref_name
         # Reference for this method already created
@@ -955,7 +950,7 @@ the query.
 
         try:
             sql = f"""
-            CREATE TEMPORARY VIEW {view_name} AS
+            CREATE VIEW {view_name} AS
             {qry}
             """
             self.execute_query(sql, ret_df=False)
@@ -966,30 +961,6 @@ the query.
             return None
    
 
-    def create_temp_table (
-        self,
-        qry: str,
-        temp_table_name: str,
-    ) -> str:
-        """
-Create a temporary table with the
-results of the query.
-        """
-        try:
-            # This will be different depending
-            # on the engine being used.
-            sql = f"""
-            CREATE TEMP TABLE {temp_table_name} AS 
-            {qry}
-            """
-            self.execute_query(sql, ret_df=False)
-            self._cur_data_ref = temp_table_name
-            return temp_table_name
-        except Exception as e:
-            logger.error(e)
-            return None
-   
- 
     def get_sample (
         self,
         n: int = 100,
@@ -1197,9 +1168,6 @@ One function to compute this entire node.
         pass
 
 
-
-
-
 class AthenaNode(SQLNode):
     def __init__ (
             self,
@@ -1211,18 +1179,60 @@ class AthenaNode(SQLNode):
 Constructor.
         """
 
-        self.s3_output_location = None
+        self.s3_output_location = s3_output_location
 
         super(AthenaNode, self).__init__(*args, **kwargs)
-
+        
     
+    def prep_for_features(self):
+        if self.cut_date:
+            if isinstance(self.cut_date, str):
+                self.cut_date = parser.parse(self.cut_date)
+        else:
+            self.cut_date = datetime.datetime.now()
+        
+        if self.cut_date and self.date_key:
+            return [
+                sqlop(optype=SQLOpType.where, 
+                      opval=f"{self.colabbr(self.date_key)} > timestamp '{str(self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes()))}'"),
+                sqlop(optype=SQLOpType.where,
+                      opval=f"{self.colabbr(self.date_key)} < timestamp '{str(self.cut_date)}'")
+            ]
+        else:
+            # do nothing
+            return None
+    
+    
+    def prep_for_labels(self):
+        if self.cut_date:
+            if isinstance(self.cut_date, str):
+                self.cut_date = parser.parse(self.cut_date)
+        else:
+            self.cut_date = datetime.datetime.now()
+        
+        if self.cut_date and self.date_key:
+            return [
+                sqlop(optype=SQLOpType.where, 
+                      opval=f"{self.colabbr(self.date_key)} < timestamp '{str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes()))}'"),
+                sqlop(optype=SQLOpType.where,
+                      opval=f"{self.colabbr(self.date_key)} > timestamp '{str(self.cut_date)}'")
+            ]
+        else:
+            # do nothing
+            return None
+        
+
     def execute_query (
         self,
         qry: str,
+        *args,
+        **kwargs,
     ) -> typing.Optional[pd.DataFrame]:
         """
 Execute a query and get back a dataframe.
         """
+        
+        logger.info(f"attempting to execute: {qry}")
         client = self.get_client()
         resp = client.start_query_execution(
             QueryString=qry,
@@ -1268,5 +1278,5 @@ Execute a query and get back a dataframe.
                 newrow.update({col: val})
             dfdata.append(newrow)
         return pd.DataFrame(dfdata)
-        
+
 

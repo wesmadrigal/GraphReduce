@@ -62,10 +62,6 @@ class GraphReduce(nx.DiGraph):
 
         # Only for SQL engines.
         lazy_execution: bool = False,
-        # Only for SQL engines and will toggle
-        # between using a view or temporary table.
-        use_temp_tables: bool = True, 
-
         *args,
         **kwargs
     ):
@@ -116,7 +112,6 @@ Args:
 
         # SQL dialect parameters.
         self._lazy_execution = lazy_execution
-        self._use_temp_tables = use_temp_tables
         
         # if using Spark
         self._sqlctx = spark_sqlctx
@@ -147,6 +142,19 @@ Mark a relation node as merged to the parent.
         """
         if relation_node.__class__ not in parent_node._merged:
             parent_node._merged.append(relation_node.__class__)
+
+
+    def _clean_refs (
+            self
+            ):
+            """
+Only for SQL dialect graphs where there are
+views and temporary tables to clean up throughout
+the graph.
+            """
+            for node in self.nodes():
+                if hasattr(node, '_clean_refs'):
+                    node._clean_refs()
 
 
     @property
@@ -423,7 +431,6 @@ Joins two graph reduce nodes of SQL dialect.
         parent_node.create_ref(JOIN_SQL, 'join', overwrite=True)
         self._mark_merged(parent_node, relation_node)
 
-
  
     def depth_first_generator(self):
         """
@@ -607,7 +614,8 @@ Perform all graph transformations
                 # Custom `do_reduce` implementation.
                 else:
                     # Table name is stored within the node itself.
-                    reduce_ops = relation_node.prep_for_features() + relation_node.do_reduce(edge_data['relation_key'])
+                    tfilt = relation_node.prep_for_features() if relation_node.prep_for_features() else []
+                    reduce_ops = tfilt + relation_node.do_reduce(edge_data['relation_key'])
                     reduce_sql = relation_node.build_query(reduce_ops)
                     logger.info(f"reduce SQL: {reduce_sql}")
                     reduce_ref = relation_node.create_ref(reduce_sql, relation_node.do_reduce)
@@ -648,7 +656,8 @@ Perform all graph transformations
                             relation_node.do_labels
                             )
                 else:
-                    label_sql = relation_node.prep_for_labels() + relation_node.do_labels(edge_data['relation_key'])
+                    tfilt = relation_node.prep_for_labels() if relation_node.prep_for_labels() else []
+                    label_sql = tfilt + reduce_node.do_labels(edge_data['relation_key'])
                     label_ref = relation_node.create_ref(
                             relation_node.build_query(
                                 label_sql,
