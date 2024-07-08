@@ -33,8 +33,8 @@ def autofe_filesystem (
                 ),
             cut_date: str = Argument(str(datetime.datetime.today())),
             compute_layer: str = Argument("pandas"),
-            hops_front: int = Argument(1),
-            hops_back: int = Argument(3),
+            hops_front: int = Option(1, '-hf', '--hops-front', help='number of front hops to peform'),
+            hops_back: int = Option(3, '-hb', '--hops-back', help='number of back hops to perform'),
             output_path: str = Option('-op', '--output-path', help='output path for the data')
             ):
     """
