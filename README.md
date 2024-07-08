@@ -10,12 +10,12 @@ feature store.  Underneath the hood, GraphReduce uses graph data
 structures to represent tables/files as nodes and foreign keys
 as edges.
 
-Compute backends supported: `pandas`, `dask`, and `spark`.
+Compute backends supported: `pandas`, `dask`, `spark`, AWS Athena, Redshift, Snowflake, postgresql, MySQL
 Compute backends coming soon: `ray`
 
 
 ### Installation
-```
+```python
 # from pypi
 pip install graphreduce
 
@@ -66,7 +66,7 @@ An example dataset might look like the following:
 * depth first, bottom up aggregation operations group by / aggregation operations to reduce data
 
 
-1. Define the node-level interface and operations
+1. End to end example:
 ```python
 import datetime
 import pandas as pd
@@ -117,6 +117,16 @@ gr = GraphReduce(
     label_period_val=60,
     label_period_unit=PeriodUnit.day
 )
+for ix, row in reldf.iterrows():
+    gr.add_entity_edge(
+        parent_node=gr_nodes[row['to_name']],
+        relation_node=gr_nodes[row['from_name']],
+        parent_key=row['to_key'],
+        relation_key=row['from_key'],
+        reduce=True
+    )
+
+
 gr.do_transformations()
 2024-04-23 13:49:41 [info     ] hydrating graph attributes
 2024-04-23 13:49:41 [info     ] hydrating attributes for DynamicNode
@@ -165,11 +175,16 @@ gr.plot_graph('my_graph_reduce.html')
 
 3. Use materialized dataframe for ML / analytics
 ```python
-gr.parent_node.df.head()
 
-cust_id	cust_name	order_customer_id	order_id_count	order_id_min	order_id_max	order_id_sum	order_customer_id_min	order_customer_id_max	order_customer_id_sum	order_ts_first
-0	1	wes	1	2	1	2	3	1	1	2	2023-05-12
-1	2	john	2	2	3	4	7	2	2	4	2023-01-01
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+train, test = train_test_split(gr.parent_node.df)
+
+X = [x for x, y in dict(gr.parent_node.df.dtypes).items() if str(y).startswith('int') or str(y).startswith('float')]
+# whether or not the user had an order
+Y = 'ord_id_label'
+mdl = LinearRegression()
+mdl.fit(train[X], Y)
 ```
 
 
