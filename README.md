@@ -117,6 +117,7 @@ gr = GraphReduce(
     label_period_val=60,
     label_period_unit=PeriodUnit.day
 )
+# Add graph edges
 for ix, row in reldf.iterrows():
     gr.add_entity_edge(
         parent_node=gr_nodes[row['to_name']],
@@ -184,7 +185,7 @@ X = [x for x, y in dict(gr.parent_node.df.dtypes).items() if str(y).startswith('
 # whether or not the user had an order
 Y = 'ord_id_label'
 mdl = LinearRegression()
-mdl.fit(train[X], Y)
+mdl.fit(train[X], train[Y])
 ```
 
 
