@@ -273,7 +273,7 @@ the results together.
             return self.dask_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
         elif compute_layer == ComputeLayerEnum.spark:
             return self.spark_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
-        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift]:
+        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift, ComputeLayerEnum.databricks]:
             # Assumes `SQLNode.get_sample` is implemented to get
             # a sample of the data in pandas dataframe form.
             sample_df = self.get_sample()
@@ -587,7 +587,7 @@ Prepare the dataset for feature aggregations / reduce
         if self.date_key:           
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 # Using a SQL engine so need to return `sqlop` instances.
-                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena]:
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
                     return [
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(self.cut_date)}'"),
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes()))}'")
@@ -616,7 +616,7 @@ Prepare the dataset for feature aggregations / reduce
 
             else:
                 # Using a SQL engine so need to return `sqlop` instances.
-                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena]:
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
                     return [
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(datetime.datetime.now())}'"),
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes()))}'")
@@ -655,7 +655,7 @@ Prepare the dataset for labels
         if self.date_key:
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 # Using a SQL engine so need to return `sqlop` instances.
-                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql]:
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
                     return [
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(self.cut_date)}'"),
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes()))}'")
@@ -675,7 +675,7 @@ Prepare the dataset for labels
                     )
             else:
                 # Using a SQL engine so need to return `sqlop` instances.
-                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql]:
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
                     return [
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))}'")
                             ]
@@ -735,7 +735,7 @@ Default label operation.
 
             elif self.compute_layer == ComputeLayerEnum.spark:
                 pass
-        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift]:
+        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
             if self.reduce:
                 return self.prep_for_labels() + [
                             sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
@@ -875,7 +875,14 @@ Get a reference name for the function.
         func_name = fn if isinstance(fn, str) else fn.__name__
         # If this ref name is already in 
         # the _temp_refs dict create a new ref.
-        ref_name = f"{self.fpath}_{func_name}_grtemp"
+
+        # IF there is a schema in the fpath
+        # we need to remove the schema.
+        if '.' in self.fpath:
+            fpath = self.fpath.split('.')[-1]
+        else:
+            fpath = self.fpath
+        ref_name = f"{fpath}_{func_name}_grtemp"
         if self._temp_refs.get(func_name):
             if lookup:
                 return self._temp_refs[func_name]
@@ -1280,3 +1287,32 @@ Execute a query and get back a dataframe.
         return pd.DataFrame(dfdata)
 
 
+
+class DatabricksNode(SQLNode):
+    def __init__(
+        self,
+        *args,
+        **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        
+        
+    def create_temp_view (
+        self,
+        qry: str,
+        view_name: str
+    ) -> str:
+        """
+Create a view with the results
+of the query.
+        """
+        try:
+            sql = f"""
+            CREATE TEMPORARY VIEW {view_name} AS 
+            {qry}
+            """
+            self.execute_query(sql, ret_df=False)
+            self._cur_data_ref = view_name
+        except Exception as e:
+            logger.error(e)
+            return None
