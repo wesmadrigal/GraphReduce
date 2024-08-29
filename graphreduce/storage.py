@@ -4,7 +4,6 @@ and checkpointing.
 """
 
 # standard library
-import abc
 import typing
 import pathlib
 
@@ -15,8 +14,6 @@ from graphreduce.enum import StorageFormatEnum, ProviderEnum, ComputeLayerEnum
 import dask.dataframe as dd
 import pandas as pd
 import pyspark
-from structlog import get_logger
-
 
 
 class StorageClient(object):

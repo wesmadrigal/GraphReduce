@@ -1,0 +1,30 @@
+site_name: graphreduce
+site_url: https://github.com/wesmadrigal/graphreduce
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.tabs.sticky
+
+nav:
+  - Home: index.md
+  - Abstractions: abstractions.md
+  - Tutorial:
+    - tutorial_index.md
+    - tutorial_time.md
+    - tutorial_custom_graph.md
+      #- tutorial_join_deps.md
+      #- tutorial_pandas_dask.md
+      #- tutorial_spark.md
+      #- tutorial_sql.md
+
+
+markdown_extensions:
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences

@@ -2,8 +2,6 @@
 
 import sys
 
-import typer
-
 from .cli.entry_point import entrypoint_cli
 
 
