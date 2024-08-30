@@ -1,7 +1,5 @@
-import importlib.util
 import pathlib
 import setuptools
-import typing
 
 
 KEYWORDS = [
