@@ -21,7 +21,7 @@ for this project:
 * <b>Composable</b>: by using graphs as the underpinning data structure with `networkx` we allow arbitrarily large feature engineering pipelines by doing depth first traversal based on cardinality.
 * <b>Scalable</b>: support for different computational backends and checkpointing allow for massive feature engineering graphs to be constructed and executed with a compute push down paradigm
 * <b>Automated</b>: by leveraging and extending ideas from research such as [Deep Feature Synthesis](https://www.researchgate.net/publication/308808004_Deep_feature_synthesis_Towards_automating_data_science_endeavors) we support fully automated feature engineering.
-* <b>Point in time correctness</b>: `graphreduce` requires time-series data to have a date key, allowing for point in time correctness filtering to be applied across all data / nodes in the compute graph.
+* <b>Point in time correctness</b>: requirements that time-series data to have a date key, allowing for point in time correctness filtering to be applied across all data / nodes in the compute graph.
 * <b>Production-ready</b>: since batch feature engineering pipelines require a computational graph defined, this makes transition to production deployments 
 * <b>Cardinality awareness</b>: in most tabular datasets cardinality needs to be handled carefully to avoid duplication and proper aggregation - `graphreduce` makes  this a breeze.
 
