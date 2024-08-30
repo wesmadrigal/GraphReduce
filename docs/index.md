@@ -20,7 +20,7 @@
 pip install graphreduce
 ```
 
-### with github
+### from source
 ```bash
 git clone https://github.com/wesmadrigal/graphreduce
 cd graphreduce && pip install -e .
