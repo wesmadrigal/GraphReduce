@@ -16,7 +16,7 @@ for this project:
 
 
 ## Key features
-* <b>Cutomizable</b>: abstractions allow feature implementations to be customized.  While many will opt for automated feature engineering, deduplication, anomalies, etc. may need custom or third-party library support.
+* <b>Cutomizable</b>: abstractions allow feature implementations to be customized.  While many will opt for automated feature engineering, deduplication, anomalies, entity resolution, and others may need custom or third-party library support.
 * <b>Interoperable</b>: supports `pandas`, `pyspark`, and `dask` dataframe APIs and SQL dialects for Redshift, Athena, SQLite, Databricks SQL (Snowflake in progress).
 * <b>Composable</b>: by using graphs as the underpinning data structure with `networkx` we allow arbitrarily large feature engineering pipelines by doing depth first traversal based on cardinality.
 * <b>Scalable</b>: support for different computational backends and checkpointing allow for massive feature engineering graphs to be constructed and executed with a compute push down paradigm
