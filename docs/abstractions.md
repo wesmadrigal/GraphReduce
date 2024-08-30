@@ -27,8 +27,7 @@ The base `GraphReduceNode` requires the following abstract methods be defined
 
 
 ### DynamicNode
-A dynamic node is any node that is instantiated without defined method 
-definitions.  This is useful for doing automated feature engineering.
+A dynamic node is any node that is instantiated without defined methods.  These are typically used for doing automated feature engineering.
 
 ### SQLNode
 A SQL node is an abstraction for SQL dialects and backends.  This allows us to
