@@ -10,6 +10,7 @@ some other optional parameters to intantiate these.
 
 ### GraphReduceNode
 The base `GraphReduceNode` requires the following abstract methods be defined
+
 * `do_filters` - all filter operations for this node go here (e.g., `df.filter...`)
 
 * `do_annotate` - all annotations go here (e.g., `df['zip'] = df.zipfull.apply(lambda x: x.split('-')[0])`)
