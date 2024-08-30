@@ -1,5 +1,7 @@
 site_name: graphreduce
 site_url: https://github.com/wesmadrigal/graphreduce
+repo_url: https://github.com/wesmadrigal/GraphReduce
+repo_name: wesmadrigal/GraphReduce
 theme:
   name: material
   features:
