@@ -11,6 +11,11 @@
          <changefreq>daily</changefreq>
     </url>
     <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/tutorial_cli/</loc>
+         <lastmod>2024-08-30</lastmod>
+         <changefreq>daily</changefreq>
+    </url>
+    <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_custom_graph/</loc>
          <lastmod>2024-08-30</lastmod>
          <changefreq>daily</changefreq>

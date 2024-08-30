@@ -222,6 +222,24 @@
   
 
       
+        
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="tutorial_cli/" class="md-tabs__link">
+          
+  
+  Command line interface
+
+        </a>
+      </li>
+    
+  
+
+      
     </ul>
   </div>
 </nav>
@@ -554,6 +572,72 @@
   
 
     
+      
+      
+  
+  
+  
+  
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Command line interface
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Command line interface
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorial_cli/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Coming soon
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
   </ul>
 </nav>
                   </div>
@@ -650,7 +734,10 @@
 
 
 <h1 id="welcome-to-graphreduce">Welcome to graphreduce</h1>
-<p><code>graphreduce</code> is an abstraction layer for performing batch feature engineering.  </p>
+<p>GraphReduce is an abstraction layer for doing batch feature engineering spanning many tables.  The library
+abstracts away much of the tedious, repetitive work such as point in time correctness, dealing with cardinality,
+prefixing columns, joins, swapping between compute layers, and more.  We use graphs with <a href="https://github.com/networkx/networkx">networkx</a> to represent tables as
+nodes and relationships as edges, allowing most data storage formats and compute layers to be modeled. </p>
 <h2 id="key-features">Key features</h2>
 <ul>
 <li><b>Cutomizable</b>: abstractions allow feature implementations to be customized.  While many will opt for automated feature engineering, deduplication, anomalies, etc. may need custom or third-party library support.</li>
