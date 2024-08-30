@@ -29,6 +29,12 @@ The base `GraphReduceNode` requires the following abstract methods be defined
 A dynamic node is any node that is instantiated without defined method 
 definitions.  This is useful for doing automated feature engineering.
 
+### SQLNode
+A SQL node is an abstraction for SQL dialects and backends.  This allows us to
+go beyond the dataframe API that a typical `GraphReduceNode` or `DynamicNode` 
+is built for and leverage a number of SQL backends.  There is more detail
+about how to use these in [the SQL backends tutorial](tutorial_sql_dialects.md).
+
 
 ## Edge
 An edge is a relationship between two nodes.  This is typically a foreign key.  For 

@@ -114,3 +114,12 @@ SELECT ord_customer_id,
         WHERE ord_ts > '2022-12-01'
         GROUP BY ord_customer_id
 ```
+
+## More examples
+There are more examples on [github](https://github.com/wesmadrigal/GraphReduce)
+
+* [example 1](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex1.ipynb)
+* [example 2](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex2.ipynb)
+* [example 3](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex3.ipynb)
+* [example 4 automated feature engineering](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex4.ipynb)
+* [example 5 automated feature engineering con't](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex4.ipynb)

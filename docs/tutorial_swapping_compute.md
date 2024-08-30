@@ -1,4 +1,7 @@
 # Swapping compute layers
+
+Full code [here](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/tutorial_ex4.ipynb)
+
 There are API differences between a lot of compute layers
 but between `pandas` and `dask` the API is mostly the same.  This
 makes swapping between these two compute layers a breeze.
