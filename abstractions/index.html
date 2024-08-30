@@ -761,9 +761,11 @@ on your laptop, a parquet file in s3, or a Snowflake table in the cloud.</p>
 a primary key, a date key (if any), a compute layer (e.g., <code>pandas</code>, <code>dask</code>), and
 some other optional parameters to intantiate these.</p>
 <h3 id="graphreducenode">GraphReduceNode</h3>
-<p>The base <code>GraphReduceNode</code> requires the following abstract methods be defined
-* <code>do_filters</code> - all filter operations for this node go here (e.g., <code>df.filter...</code>)</p>
+<p>The base <code>GraphReduceNode</code> requires the following abstract methods be defined</p>
 <ul>
+<li>
+<p><code>do_filters</code> - all filter operations for this node go here (e.g., <code>df.filter...</code>)</p>
+</li>
 <li>
 <p><code>do_annotate</code> - all annotations go here (e.g., <code>df['zip'] = df.zipfull.apply(lambda x: x.split('-')[0])</code>)</p>
 </li>
