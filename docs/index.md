@@ -8,7 +8,7 @@ nodes and relationships as edges, allowing most data storage formats and compute
 
 ## Key features
 * <b>Cutomizable</b>: abstractions allow feature implementations to be customized.  While many will opt for automated feature engineering, deduplication, anomalies, etc. may need custom or third-party library support.
-* <b>Interoperable</b>: supports `pandas`, `pyspark`, `dask`, and `polars` dataframe APIs and SQL dialects for Redshift, BigQuery, Databricks SQL, Snowflake, and more.
+* <b>Interoperable</b>: supports `pandas`, `pyspark`, and `dask` dataframe APIs and SQL dialects for Redshift, Athena, SQLite, Databricks SQL (Snowflake in progress).
 * <b>Composable</b>: by using graphs as the underpinning data structure with `networkx` we allow arbitrarily large feature engineering pipelines by doing depth first traversal based on cardinality.
 * <b>Scalable</b>: support for different computational backends and checkpointing allow for massive feature engineering graphs to be constructed and executed with a compute push down paradigm
 * <b>Automated</b>: by leveraging and extending ideas from research such as [Deep Feature Synthesis](https://www.researchgate.net/publication/308808004_Deep_feature_synthesis_Towards_automating_data_science_endeavors) we support fully automated feature engineering.
