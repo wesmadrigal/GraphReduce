@@ -1,6 +1,9 @@
 # Welcome to graphreduce
 
-`graphreduce` is an abstraction layer for performing batch feature engineering.  
+GraphReduce is an abstraction layer for doing batch feature engineering spanning many tables.  The library
+abstracts away much of the tedious, repetitive work such as point in time correctness, dealing with cardinality,
+prefixing columns, joins, swapping between compute layers, and more.  We use graphs with [networkx](https://github.com/networkx/networkx) to represent tables as
+nodes and relationships as edges, allowing most data storage formats and compute layers to be modeled. 
 
 
 ## Key features
