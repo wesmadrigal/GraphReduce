@@ -375,6 +375,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#sqlnode" class="md-nav__link">
+    <span class="md-ellipsis">
+      SQLNode
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -610,6 +619,15 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#sqlnode" class="md-nav__link">
+    <span class="md-ellipsis">
+      SQLNode
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -684,6 +702,11 @@ some other optional parameters to intantiate these.</p>
 <h3 id="dynamicnode">DynamicNode</h3>
 <p>A dynamic node is any node that is instantiated without defined method 
 definitions.  This is useful for doing automated feature engineering.</p>
+<h3 id="sqlnode">SQLNode</h3>
+<p>A SQL node is an abstraction for SQL dialects and backends.  This allows us to
+go beyond the dataframe API that a typical <code>GraphReduceNode</code> or <code>DynamicNode</code> 
+is built for and leverage a number of SQL backends.  There is more detail
+about how to use these in <a href="../tutorial_sql_dialects/">the SQL backends tutorial</a>.</p>
 <h2 id="edge">Edge</h2>
 <p>An edge is a relationship between two nodes.  This is typically a foreign key.  For 
 example if we had a <code>customers</code> table and <code>orders</code> table we would add an edge between the 
