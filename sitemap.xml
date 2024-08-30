@@ -26,6 +26,16 @@
          <changefreq>daily</changefreq>
     </url>
     <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/tutorial_sql_dialects/</loc>
+         <lastmod>2024-08-30</lastmod>
+         <changefreq>daily</changefreq>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/tutorial_swapping_compute/</loc>
+         <lastmod>2024-08-30</lastmod>
+         <changefreq>daily</changefreq>
+    </url>
+    <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_time/</loc>
          <lastmod>2024-08-30</lastmod>
          <changefreq>daily</changefreq>

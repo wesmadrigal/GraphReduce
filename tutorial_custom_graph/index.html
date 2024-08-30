@@ -14,6 +14,8 @@
         <link rel="prev" href="../tutorial_time/">
       
       
+        <link rel="next" href="../tutorial_swapping_compute/">
+      
       
       <link rel="icon" href="../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.0, mkdocs-material-9.5.29">
@@ -466,9 +468,19 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Reduce operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#feature-generation-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      Feature generation output
+    </span>
+  </a>
+  
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#label-target-generation" class="md-nav__link">
     <span class="md-ellipsis">
       Label / target generation
@@ -476,11 +488,58 @@
   </a>
   
 </li>
+        
+      </ul>
+    </nav>
+  
+</li>
       
     </ul>
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial_swapping_compute/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Swapping compute layers
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial_sql_dialects/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    SQL backends and dialects
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -535,14 +594,29 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Reduce operations">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#feature-generation-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      Feature generation output
+    </span>
+  </a>
+  
 </li>
-      
-        <li class="md-nav__item">
+        
+          <li class="md-nav__item">
   <a href="#label-target-generation" class="md-nav__link">
     <span class="md-ellipsis">
       Label / target generation
     </span>
   </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -565,6 +639,7 @@
 
 
 <h1 id="defining-node-level-operations">Defining node-level operations</h1>
+<p>Full code <a href="https://github.com/wesmadrigal/GraphReduce/blob/master/examples/tutorial_ex3.ipynb">here</a></p>
 <p>Many times the automated primitives aren't enough and we want
 custom aggregation, filtering, normalization, and annotation.  In these
 cases we need to define operations somewhere.  Graphreduce takes the approach
@@ -615,8 +690,86 @@ There are two helper methods used in the above code snippet that deserve elabora
 <li><code>self.colabbr</code> which is <code>GraphReduceNode.colabbr</code> - this method just uses the prefix parameterized for this node so a column like <code>'amount'</code> will now be <code>'ord_amount'</code> if the prefix is <code>'ord'</code></li>
 <li><code>self.prep_for_features</code> which is <code>GraphReduceNode.prep_for_features</code> - this method filters the dataframe by the <code>cut_date</code> and <code>compute_period_val</code> if the data is time series.  If the data is not time series it just returns the full dataframe.</li>
 </ul>
-<h2 id="label-target-generation">Label / target generation</h2>
-<p>If this node happens to be the node from which the label originates, we need to implement the </p>
+<div class="language-Python highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>    <span class="c1"># By letting the `reduce_key` be </span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="c1"># a parameter we can aggregate to</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>    <span class="c1"># any arbitrary parent dimension.</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="k">def</span> <span class="nf">do_reduce</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">reduce_key</span><span class="p">):</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">prep_for_features</span><span class="p">()</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="n">reduce_key</span><span class="p">))</span><span class="o">.</span><span class="n">agg</span><span class="p">(</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>            <span class="o">**</span><span class="p">{</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="s1">&#39;num_orders&#39;</span><span class="p">):</span> <span class="n">pd</span><span class="o">.</span><span class="n">NamedAgg</span><span class="p">(</span><span class="n">column</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pk</span><span class="p">),</span> <span class="n">aggfunc</span><span class="o">=</span><span class="s1">&#39;count&#39;</span><span class="p">),</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>
+</span><span id="__span-2-9"><a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="s1">&#39;max_amount&#39;</span><span class="p">):</span> <span class="n">pd</span><span class="o">.</span><span class="n">NamedAgg</span><span class="p">(</span><span class="n">column</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="s1">&#39;amount&#39;</span><span class="p">),</span> <span class="n">aggfunc</span><span class="o">=</span><span class="s1">&#39;max&#39;</span><span class="p">),</span>
+</span><span id="__span-2-10"><a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="s1">&#39;min_amount&#39;</span><span class="p">):</span> <span class="n">pd</span><span class="o">.</span><span class="n">NamedAgg</span><span class="p">(</span><span class="n">column</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="s1">&#39;amount&#39;</span><span class="p">),</span> <span class="n">aggfunc</span><span class="o">=</span><span class="s1">&#39;min&#39;</span><span class="p">)</span>
+</span><span id="__span-2-11"><a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>            <span class="p">}</span>
+</span><span id="__span-2-12"><a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>        <span class="p">)</span>
+</span></code></pre></div>
+<h3 id="feature-generation-output">Feature generation output</h3>
+<p>We can test these operations individually on an instantiated node.
+Recall that the <code>do_data</code> method just loads the data.  When we
+call the <code>do_reduce</code> method it will filter the dates.  We can
+see that <code>ord_customer_id</code> 1 had 3 orders in the time period
+and <code>ord_customer_id</code> 2 had 1 order in the time period.
+<div class="language-Python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">order_node</span> <span class="o">=</span> <span class="n">OrderNode</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="n">fpath</span><span class="o">=</span><span class="s1">&#39;orders.csv&#39;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="n">prefix</span><span class="o">=</span><span class="s1">&#39;ord&#39;</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">date_key</span><span class="o">=</span><span class="s1">&#39;ts&#39;</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">fmt</span><span class="o">=</span><span class="s1">&#39;csv&#39;</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">pk</span><span class="o">=</span><span class="s1">&#39;id&#39;</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">compute_layer</span><span class="o">=</span><span class="n">ComputeLayerEnum</span><span class="o">.</span><span class="n">pandas</span><span class="p">,</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">compute_period_val</span><span class="o">=</span><span class="mi">180</span><span class="p">,</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">compute_period_unit</span><span class="o">=</span><span class="n">PeriodUnit</span><span class="o">.</span><span class="n">day</span><span class="p">,</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>    <span class="n">cut_date</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2023</span><span class="p">,</span><span class="mi">10</span><span class="p">,</span><span class="mi">1</span><span class="p">),</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>    <span class="n">label_period_val</span><span class="o">=</span><span class="mi">30</span><span class="p">,</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a>    <span class="n">label_period_unit</span><span class="o">=</span><span class="n">PeriodUnit</span><span class="o">.</span><span class="n">day</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="p">)</span>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="n">order_node</span><span class="o">.</span><span class="n">do_data</span><span class="p">()</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="nb">print</span><span class="p">(</span><span class="n">order</span><span class="o">.</span><span class="n">do_reduce</span><span class="p">(</span><span class="s1">&#39;customer_id&#39;</span><span class="p">))</span>
+</span><span id="__span-3-16"><a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a>
+</span><span id="__span-3-17"><a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>                <span class="n">ord_num_orders</span>  <span class="n">ord_max_amount</span>  <span class="n">ord_min_amount</span>
+</span><span id="__span-3-18"><a id="__codelineno-3-18" name="__codelineno-3-18" href="#__codelineno-3-18"></a><span class="n">ord_customer_id</span>         
+</span><span id="__span-3-19"><a id="__codelineno-3-19" name="__codelineno-3-19" href="#__codelineno-3-19"></a>              <span class="mi">1</span>              <span class="mi">3</span>           <span class="mi">1200</span>            <span class="mi">10</span>
+</span><span id="__span-3-20"><a id="__codelineno-3-20" name="__codelineno-3-20" href="#__codelineno-3-20"></a>              <span class="mi">3</span>              <span class="mi">1</span>            <span class="mi">220</span>           <span class="mi">220</span>
+</span><span id="__span-3-21"><a id="__codelineno-3-21" name="__codelineno-3-21" href="#__codelineno-3-21"></a>
+</span><span id="__span-3-22"><a id="__codelineno-3-22" name="__codelineno-3-22" href="#__codelineno-3-22"></a>
+</span><span id="__span-3-23"><a id="__codelineno-3-23" name="__codelineno-3-23" href="#__codelineno-3-23"></a>                 <span class="n">ord_max_amount</span> <span class="n">ord_min_amount</span>
+</span><span id="__span-3-24"><a id="__codelineno-3-24" name="__codelineno-3-24" href="#__codelineno-3-24"></a><span class="n">ord_customer_id</span>     
+</span><span id="__span-3-25"><a id="__codelineno-3-25" name="__codelineno-3-25" href="#__codelineno-3-25"></a>              <span class="mi">1</span>           <span class="mi">1200</span>  <span class="mi">10</span>
+</span><span id="__span-3-26"><a id="__codelineno-3-26" name="__codelineno-3-26" href="#__codelineno-3-26"></a>              <span class="mi">3</span>           <span class="mi">220</span>   <span class="mi">220</span>
+</span></code></pre></div></p>
+<h3 id="label-target-generation">Label / target generation</h3>
+<p>When not using automated feature engineering we need to specify
+the label generation logic.  This can simply be selecting the
+label/target column and returning it, or something more complicated
+like a boolean flag of whether an event happened or another aggregation
+function.  </p>
+<p>To continue with this example, we'll be generating a label on the <code>orders.csv</code>
+file for whether or not a customer had an order in the future 30 days relative
+to a <code>cut_date</code> of October 1, 2023.</p>
+<p>The definition of the <code>do_labels</code> function now becomes
+<div class="language-Python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">class</span> <span class="nc">OrderNode</span><span class="p">(</span><span class="n">GraphReduceNode</span><span class="p">):</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="o">...</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="o">...</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="k">def</span> <span class="nf">do_labels</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">reduce_key</span><span class="p">):</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>        <span class="n">label_df</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">prep_for_labels</span><span class="p">()</span><span class="o">.</span><span class="n">groupby</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="n">reduce_key</span><span class="p">))</span><span class="o">.</span><span class="n">agg</span><span class="p">(</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>            <span class="o">**</span><span class="p">{</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>                <span class="c1"># We can subsequently turn this into a boolean</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>                <span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="s1">&#39;label_orders&#39;</span><span class="p">):</span> <span class="n">pd</span><span class="o">.</span><span class="n">NamedAgg</span><span class="p">(</span><span class="n">column</span><span class="o">=</span><span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">pk</span><span class="p">),</span> <span class="n">aggfunc</span><span class="o">=</span><span class="s1">&#39;count&#39;</span><span class="p">)</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>            <span class="p">}</span>
+</span><span id="__span-4-11"><a id="__codelineno-4-11" name="__codelineno-4-11" href="#__codelineno-4-11"></a>        <span class="p">)</span>
+</span><span id="__span-4-12"><a id="__codelineno-4-12" name="__codelineno-4-12" href="#__codelineno-4-12"></a>        <span class="n">label_df</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="s1">&#39;label_had_order&#39;</span><span class="p">)]</span> <span class="o">=</span> <span class="n">label_df</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">colabbr</span><span class="p">(</span><span class="s1">&#39;label_orders&#39;</span><span class="p">)]</span><span class="o">.</span><span class="n">apply</span><span class="p">(</span><span class="k">lambda</span> <span class="n">x</span><span class="p">:</span> <span class="mi">1</span> <span class="k">if</span> <span class="n">x</span> <span class="o">&gt;</span> <span class="mi">0</span> <span class="k">else</span> <span class="mi">0</span><span class="p">)</span>
+</span><span id="__span-4-13"><a id="__codelineno-4-13" name="__codelineno-4-13" href="#__codelineno-4-13"></a>        <span class="k">return</span> <span class="n">label_df</span>
+</span><span id="__span-4-14"><a id="__codelineno-4-14" name="__codelineno-4-14" href="#__codelineno-4-14"></a>
+</span><span id="__span-4-15"><a id="__codelineno-4-15" name="__codelineno-4-15" href="#__codelineno-4-15"></a>    <span class="o">...</span>
+</span><span id="__span-4-16"><a id="__codelineno-4-16" name="__codelineno-4-16" href="#__codelineno-4-16"></a>    <span class="o">...</span>
+</span></code></pre></div></p>
+<p>Now we can test the <code>do_labels</code> method with an instance:
+<div class="language-Python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nb">print</span><span class="p">(</span><span class="n">order_node</span><span class="o">.</span><span class="n">do_labels</span><span class="p">(</span><span class="s1">&#39;customer_id&#39;</span><span class="p">))</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a>                <span class="n">ord_label_orders</span>    <span class="n">ord_label_had_order</span>
+</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="n">ord_customer_id</span>     
+</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>              <span class="mi">2</span>            <span class="mi">1</span>                   <span class="mi">1</span>
+</span></code></pre></div></p>
 
 
 
