@@ -5,6 +5,15 @@ abstracts away much of the tedious, repetitive work such as point in time correc
 prefixing columns, joins, swapping between compute layers, and more.  We use graphs with [networkx](https://github.com/networkx/networkx) to represent tables as
 nodes and relationships as edges, allowing most data storage formats and compute layers to be modeled. 
 
+Despite many advancements in generative, preparing ML/AI-ready datasets remains a challenge at scale. There is very
+interesting work coming out of [Relbench](https://relbench.stanford.edu), but we are not there yet.  A few inspirations
+for this project:
+
+* [Deep Feature Synthesis](https://groups.csail.mit.edu/EVO-DesignOpt/groupWebSite/uploads/Site/DSAA_DSM_2015.pdf)
+* [One button machine](https://arxiv.org/abs/1706.00327)
+* [featuretools](https://www.featuretools.com)
+* [MapReduce](https://static.googleusercontent.com/media/research.google.com/en//archive/mapreduce-osdi04.pdf)
+
 
 ## Key features
 * <b>Cutomizable</b>: abstractions allow feature implementations to be customized.  While many will opt for automated feature engineering, deduplication, anomalies, etc. may need custom or third-party library support.
