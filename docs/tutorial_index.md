@@ -1,8 +1,9 @@
 # Quickstart
 
+Full code [here](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/tutorial_ex1.ipynb)
+
 The most simple graph is two nodes with no time component, no aggregations,
 and no labels.  We are using customer (`cust.csv`) and order data (`orders.csv`).  
-To see the full code go here [link](https://github.com/wesmadrigal/graphreduce/tree/master/examples/tutorial_ex1.ipynb)
 
 In plain terms what the below code does is as follows:
 

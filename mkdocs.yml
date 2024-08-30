@@ -16,6 +16,8 @@ nav:
     - tutorial_index.md
     - tutorial_time.md
     - tutorial_custom_graph.md
+    - tutorial_swapping_compute.md
+    - tutorial_sql_dialects.md
       #- tutorial_join_deps.md
       #- tutorial_pandas_dask.md
       #- tutorial_spark.md
