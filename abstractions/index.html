@@ -576,6 +576,27 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial_method_deps/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Post-join method execution
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -802,9 +823,11 @@ example if we had a <code>customers</code> table and <code>orders</code> table w
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">parent_key</span><span class="o">=</span><span class="s1">&#39;id&#39;</span><span class="p">,</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">relation_key</span><span class="o">=</span><span class="s1">&#39;customer_id&#39;</span><span class="p">,</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">reduce</span><span class="o">=</span><span class="kc">True</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="p">)</span>
 </span></code></pre></div>
 <p>The <code>reduce</code> parameter tells <code>graphreduce</code> whether or not to execute 
-aggregation operations.</p>
+aggregation operations.  In some cases a user may want to maintain
+an aggregation operation but avoid executing it for a particular compute graph.</p>
 <h2 id="graphreduce-graph">GraphReduce Graph</h2>
 <p>The top-level <code>GraphReduce</code> class inherits directly from <code>networkx.DiGraph</code>
 to take advantage of many graph algorithms implemented in <code>networkx</code>.  The instances

@@ -459,9 +459,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#putting-it-all-together" class="md-nav__link">
+  <a href="#top-level-config" class="md-nav__link">
     <span class="md-ellipsis">
-      Putting it all together
+      Top-level config
     </span>
   </a>
   
@@ -530,6 +530,27 @@
   
   <span class="md-ellipsis">
     SQL backends and dialects
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial_method_deps/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Post-join method execution
   </span>
   
 
@@ -648,9 +669,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#putting-it-all-together" class="md-nav__link">
+  <a href="#top-level-config" class="md-nav__link">
     <span class="md-ellipsis">
-      Putting it all together
+      Top-level config
     </span>
   </a>
   
@@ -731,16 +752,18 @@ a single node and test the following functions:</p>
 <code>compute_period_val</code> of 180, so we want 180 day of history prior
 to October 1, 2023.  There are exactly 4 records that satisfy that
 criteria, so we can see the <code>prep_for_features</code> function is working as expected.</p>
-<h2 id="putting-it-all-together">Putting it all together</h2>
 <p>Additionally, for the labels we see there is 1 record within 30
 days of October 1, 2023 so we can see the <code>prep_for_labels</code>
 function is working as expected.
 Using the example from before with <code>cust.csv</code> and <code>orders.csv</code>
 let's say we want to only compute features within 6 months
 and compute a label for 45 days.  </p>
+<h2 id="top-level-config">Top-level config</h2>
 <p>In the <code>GraphReduce</code> instance we specify <code>compute_period_val</code> and <code>label_period_val</code>.<br />
-These parameters control how much history is included during execution.  For this
-graph data from <code>2023/9/1</code> going back 180 days will be included in feature preparation
+These parameters control how much history is included during execution.  These parameters
+will be pushed down through all the nodes in the graph, ensuring consistency across
+all nodes.<br />
+In the below instance data from <code>2023/9/1</code> going back 180 days will be included in feature preparation
 and data from <code>2023/9/1</code> going forward 45 days will be included in label preparation.</p>
 <p><div class="language-Python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">gr</span> <span class="o">=</span> <span class="n">GraphReduce</span><span class="p">(</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">name</span><span class="o">=</span><span class="s1">&#39;starter_graph&#39;</span><span class="p">,</span>

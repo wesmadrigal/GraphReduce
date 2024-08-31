@@ -8,7 +8,7 @@
       
       
       
-        <link rel="canonical" href="https://github.com/wesmadrigal/graphreduce/tutorial_pandas_dask/">
+        <link rel="canonical" href="https://github.com/wesmadrigal/graphreduce/tutorial_checkpointing/">
       
       
       
@@ -18,7 +18,7 @@
     
     
       
-        <title>Pandas and Dask - graphreduce</title>
+        <title>Checkpointing - graphreduce</title>
       
     
     
@@ -60,7 +60,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#pandas-and-dask" class="md-skip">
+        <a href="#checkpointing" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +96,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Pandas and Dask
+              Checkpointing
             
           </span>
         </div>
@@ -600,7 +600,11 @@
   
 
 
-<h1 id="pandas-and-dask">Pandas and Dask</h1>
+<h1 id="checkpointing">Checkpointing</h1>
+<p>For certain systems, such as Spark, it can be beneficial
+to checkpoint a graph during it's execution.  This can
+be useful for a number of reasons, but the main one
+is efficiency.</p>
 
 
 
