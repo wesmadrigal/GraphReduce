@@ -69,6 +69,8 @@ are abstractmethods which must be defined.
             prefix : str = None,
             date_key : str = None,
             compute_layer : ComputeLayerEnum = None,
+            # 'python' or 'sql'
+            dialect: str = 'python',
             cut_date : datetime.datetime = datetime.datetime.now(),
             compute_period_val : typing.Union[int, float] = 365,
             compute_period_unit : PeriodUnit  = PeriodUnit.day,
@@ -98,6 +100,7 @@ Constructor
         self.fpath = fpath
         self.fmt = fmt
         self.compute_layer = compute_layer
+        self.dialect = dialect
         self.cut_date = cut_date
         self.compute_period_val = compute_period_val
         self.compute_period_unit = compute_period_unit
@@ -191,7 +194,11 @@ Get some data
                 self.df.columns = [f"{self.prefix}_{c}" for c in self.df.columns]
         elif self.compute_layer.value == 'spark':
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, pyspark.sql.DataFrame)):
-                self.df = getattr(self.spark_sqlctx.read, f"{self.fmt}")(self.fpath)
+                if self.dialect == 'python':
+                    self.df = getattr(self.spark_sqlctx.read, f"{self.fmt}")(self.fpath)
+                elif self.dialect == 'sql':
+                    self.df = self.spark_sqlctx.sql(f"select * from {self.fpath}")
+
                 if self.columns:
                     self.df = self.df.select(self.columns)
                 for c in self.df.columns:
