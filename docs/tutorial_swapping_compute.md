@@ -17,28 +17,17 @@ and start with a `pandas` backend, which is specified
 with the `compute_layer` parameter.
 
 ```
-prefixes = {
-    'cust.csv' : {'prefix':'cu'},
-    'orders.csv':{'prefix':'ord'}
-}
+cust_node = DynamicNode(
+    fpath='cust.csv',
+    fmt='csv',
+    pk='id',
+    prefix='cu',
+    date_key=None,
+    compute_layer=ComputeLayerEnum.pandas
+)
 
-# create graph reduce nodes
-gr_nodes = {
-    f.split('/')[-1]: DynamicNode(
-        fpath=f,
-        fmt='csv',
-        pk='id',
-        prefix=prefixes[f]['prefix'],
-        date_key=None,
-        compute_layer=ComputeLayerEnum.pandas,
-        compute_period_val=730,
-        compute_period_unit=PeriodUnit.day,
-    )
-    for f in prefixes.keys()
-}
-
-gr_nodes['cust.csv'].do_data()
-type(gr_nodes['cust.csv'].df)
+cust_node.do_data()
+type(cust_node.df)
 pandas.core.frame.DataFrame
 ```
 
@@ -46,23 +35,17 @@ pandas.core.frame.DataFrame
 ## Dask
 Now we can instantiate the same nodes with `dask`:
 ```Python
-# create graph reduce nodes
-gr_nodes = {
-    f.split('/')[-1]: DynamicNode(
-        fpath=f,
-        fmt='csv',
-        pk='id',
-        prefix=prefixes[f]['prefix'],
-        date_key=None,
-        compute_layer=ComputeLayerEnum.dask,
-        compute_period_val=730,
-        compute_period_unit=PeriodUnit.day,
-    )
-    for f in prefixes.keys()
-}
+cust_node = DynamicNode(
+    fpath='cust.csv',
+    fmt='csv',
+    pk='id',
+    prefix='cu',
+    date_key=None,
+    compute_layer=ComputeLayerEnum.dask
+)
 
-gr_nodes['cust.csv'].do_data()
-type(gr_nodes['cust.csv'].df)
+cust_node.do_data()
+type(cust_node.df)
 dask.dataframe.core.DataFrame
 ```
 
@@ -86,5 +69,18 @@ type(cloud_node.df)
 pyspark.sql.dataframe.DataFrame
 ```
 
+## SQL compute engines
 To use SQL dialect we need to use the `SQLNode` class
-and it's subclasses.
+and it's subclasses.  These are instantiated as follows:
+```Python
+from graphreduce.node import SQLNode
+
+cust_node = SQLNode(
+    fpath='schema.customers',
+    fmt='sql',
+    pk='id',
+    prefix='cu',
+    date_key='signup_date',
+    compute_layer=ComputeLayerEnum.sql
+)
+```

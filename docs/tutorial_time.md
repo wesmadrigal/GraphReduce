@@ -63,7 +63,6 @@ to October 1, 2023.  There are exactly 4 records that satisfy that
 criteria, so we can see the `prep_for_features` function is working as expected.
 
 
-## Putting it all together
 Additionally, for the labels we see there is 1 record within 30
 days of October 1, 2023 so we can see the `prep_for_labels`
 function is working as expected.
@@ -71,9 +70,14 @@ Using the example from before with `cust.csv` and `orders.csv`
 let's say we want to only compute features within 6 months
 and compute a label for 45 days.  
 
+
+## Top-level config
+
 In the `GraphReduce` instance we specify `compute_period_val` and `label_period_val`.  
-These parameters control how much history is included during execution.  For this
-graph data from `2023/9/1` going back 180 days will be included in feature preparation
+These parameters control how much history is included during execution.  These parameters
+will be pushed down through all the nodes in the graph, ensuring consistency across
+all nodes.  
+In the below instance data from `2023/9/1` going back 180 days will be included in feature preparation
 and data from `2023/9/1` going forward 45 days will be included in label preparation.
 
 

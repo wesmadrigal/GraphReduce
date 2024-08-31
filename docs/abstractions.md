@@ -48,10 +48,12 @@ gr.add_entity_edge(
     parent_key='id',
     relation_key='customer_id',
     reduce=True
+)
 ```
 
 The `reduce` parameter tells `graphreduce` whether or not to execute 
-aggregation operations.
+aggregation operations.  In some cases a user may want to maintain
+an aggregation operation but avoid executing it for a particular compute graph.
 
 
 ## GraphReduce Graph

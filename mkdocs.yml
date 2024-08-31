@@ -18,6 +18,9 @@ nav:
     - tutorial_custom_graph.md
     - tutorial_swapping_compute.md
     - tutorial_sql_dialects.md
+    - tutorial_method_deps.md
+  - Command line interface:
+    - tutorial_cli.md
       #- tutorial_join_deps.md
       #- tutorial_pandas_dask.md
       #- tutorial_spark.md
