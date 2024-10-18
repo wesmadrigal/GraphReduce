@@ -14,7 +14,6 @@ from dask import dataframe as dd
 import pyspark
 from structlog import get_logger
 from dateutil.parser import parse as date_parse
-import woodwork as ww
 
 # internal
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
@@ -85,6 +84,9 @@ are abstractmethods which must be defined.
             checkpoints: list = [],
             # Only for SQL dialects at the moment.
             lazy_execution: bool = False,
+            # Read encoding.
+            delimiter: str = None,
+            encoding: str = None,
             ):
         """
 Constructor
@@ -111,6 +113,10 @@ Constructor
         self.label_field = label_field
         self.spark_sqlctx = spark_sqlctx
         self.columns = columns
+
+        # Read options
+        self.delimiter = delimiter if delimiter else ','
+        self.encoding = encoding
 
         # Lazy execution for the SQL nodes.
         self._lazy_execution = lazy_execution
@@ -168,11 +174,14 @@ Get some data
 
         if self.compute_layer.value == 'pandas':
             if not hasattr(self, 'df') or (hasattr(self,'df') and not isinstance(self.df, pd.DataFrame)):
-                self.df = getattr(pd, f"read_{self.fmt}")(self.fpath)
+                if self.encoding and self.delimiter:
+                    self.df = getattr(pd, f"read_{self.fmt}")(self.fpath, encoding=self.encoding, delimiter=self.delimiter)
+                else:
+                    self.df = getattr(pd, f"read_{self.fmt}")(self.fpath)
 
                 # Initialize woodwork.
-                self.df.ww.init()
-                self._logical_types = self.df.ww.logical_types
+                #self.df.ww.init()
+                #self._logical_types = self.df.ww.logical_types
 
                 # Rename columns with prefixes.
                 if len(self.columns):
@@ -185,8 +194,8 @@ Get some data
                 self.df = getattr(dd, f"read_{self.fmt}")(self.fpath)
 
                 # Initialize woodwork.
-                self.df.ww.init()
-                self._logical_types = self.df.ww.logical_types
+                #self.df.ww.init()
+                #self._logical_types = self.df.ww.logical_types
 
                 # Rename columns with prefixes.
                 if len(self.columns):

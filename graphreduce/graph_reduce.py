@@ -15,7 +15,6 @@ from dask import dataframe as dd
 from structlog import get_logger
 import pyspark
 import pyvis
-import woodwork as ww
 
 # internal
 from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
@@ -23,7 +22,6 @@ from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.storage import StorageClient
 
 logger = get_logger('GraphReduce')
-
 
 
 class GraphReduce(nx.DiGraph):
@@ -62,6 +60,8 @@ class GraphReduce(nx.DiGraph):
 
         # Only for SQL engines.
         lazy_execution: bool = False,
+        # Debug
+        debug: bool = False,
         *args,
         **kwargs
     ):
@@ -83,6 +83,10 @@ Args:
     auto_feature_hops_back: optional for automatically computing features
     auto_feature_hops_front: optional for automatically computing features
     feature_typefunc_map : optional mapping from type to a list of functions (e.g., {'int' : ['min', 'max', 'sum'], 'str' : ['first']})
+    label_node: optionl GraphReduceNode for the label
+    label_operation: optional str or callable operation to call to compute the label
+    label_field: optional str field to compute the label
+    debug: bool whether to run debug logging
         """
         super(GraphReduce, self).__init__(*args, **kwargs)
         
@@ -116,6 +120,8 @@ Args:
         # if using Spark
         self._sqlctx = spark_sqlctx
         self._storage_client = storage_client
+
+        self.debug = debug
         
         if self.compute_layer == ComputeLayerEnum.spark and self._sqlctx is None:
             raise Exception(f"Must provide a `spark_sqlctx` kwarg if using {self.compute_layer.value} as compute layer")
@@ -451,15 +457,24 @@ Traverses up the graph for merging parents.
         """
         parents = [(start, n, 1) for n in self.predecessors(start)]
         to_traverse = [(n, 1) for n in self.predecessors(start)]
-        while len(to_traverse):
+        cur_level = 1
+        while len(to_traverse) and cur_level <= self.auto_feature_hops_front:
             cur_node, cur_level = to_traverse[0]
             del to_traverse[0]
 
             for node in self.predecessors(cur_node):
-                parents.append((cur_node, node, cur_level+1))
-                to_traverse.append((node, cur_level+1))
-
-        return parents
+                if cur_level+1 <= self.auto_feature_hops_front:
+                    parents.append((cur_node, node, cur_level+1))
+                    to_traverse.append((node, cur_level+1))
+        # Returns higher levels first so that
+        # when we iterate through these edges
+        # we will traverse from top to bottom
+        # where the bottom is our `start`.
+        parents_ordered = list(reversed(parents))
+        if self.debug:
+            for ix in range(len(parents_ordered)):
+                logger.debug(f"index {ix} is level {parents_ordered[ix][-1]}")
+        return parents_ordered
 
 
     def get_children (
@@ -720,6 +735,13 @@ Perform all graph transformations
         if self.auto_features:
             for to_node, from_node, level in self.traverse_up(start=self.parent_node):
                 if self.auto_feature_hops_front and level <= self.auto_feature_hops_front:
+                    # It is assumed that front-facing relations
+                    # are not one to many and therefore we 
+                    # won't have duplication on the join.
+                    # This may be an incorrect assumption
+                    # so this implementation is currently brittle.
+                    if self.debug:
+                        logger.debug(f'Performing an auto_features front join from {from_node} to {to_node}')
                     joined_df = self.join_any(
                             to_node,
                             from_node
