@@ -14,12 +14,18 @@ from dask import dataframe as dd
 import pyspark
 from structlog import get_logger
 from dateutil.parser import parse as date_parse
-import woodwork as ww
+from torch_frame import stype
+from torch_frame.utils import infer_df_stype
 
 # internal
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.storage import StorageClient
 from graphreduce.models import sqlop
+from graphreduce.common import (
+        clean_datetime_pandas,
+        clean_datetime_dask,
+        clean_datetime_spark
+)
 
 
 logger = get_logger('Node')
@@ -79,12 +85,17 @@ are abstractmethods which must be defined.
             label_period_val : typing.Optional[typing.Union[int, float]] = None,
             label_period_unit : typing.Optional[PeriodUnit] = None,
             label_field : typing.Optional[str] = None,
+            label_operation: typing.Optional[typing.Union[str, callable]] = None,
             spark_sqlctx : pyspark.sql.SQLContext = None,
             columns : list = [],
             storage_client: typing.Optional[StorageClient] = None,
             checkpoints: list = [],
             # Only for SQL dialects at the moment.
             lazy_execution: bool = False,
+            # Read encoding.
+            delimiter: str = None,
+            encoding: str = None,
+            ts_data: bool = False,
             ):
         """
 Constructor
@@ -109,8 +120,13 @@ Constructor
         self.label_period_val = label_period_val
         self.label_period_unit = label_period_unit
         self.label_field = label_field
+        self.label_operation = label_operation
         self.spark_sqlctx = spark_sqlctx
         self.columns = columns
+
+        # Read options
+        self.delimiter = delimiter if delimiter else ','
+        self.encoding = encoding
 
         # Lazy execution for the SQL nodes.
         self._lazy_execution = lazy_execution
@@ -118,9 +134,11 @@ Constructor
         # List of merged neighbor classes.
         self._merged = []
         # List of checkpoints.
-
+        
         # Logical types of the original columns from `woodwork`.
         self._logical_types = {}
+
+        self._stypes = {}
 
         if not self.date_key:
             logger.warning(f"no `date_key` set for {self}")
@@ -132,7 +150,7 @@ Constructor
         """
 Instance representation
         """
-        return f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt}>"
+        return f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt} prefix={self.prefix}>"
 
     def __str__ (
             self
@@ -140,7 +158,46 @@ Instance representation
         """
 Instances string
         """
-        return f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt}>"
+        return f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt} prefix={self.prefix}>"
+
+
+    def _is_identifier (
+            self,
+            col: str
+            ) -> bool:
+        """
+Check if a column is an identifier.
+        """
+        if col.lower() == 'id':
+            return True
+        elif col.lower().split('_')[-1].endswith('id'):
+            return True
+        elif col.lower() == 'uuid':
+            return True
+        elif col.lower() == 'guid':
+            return True
+        elif col.lower() == 'identifier':
+            return True
+
+
+    def is_ts_data (
+            self,
+            reduce_key: str = None,
+            ) -> bool:
+        """
+Determines if the data is timeseries.
+        """        
+        if self.date_key:
+            if self.compute_layer == ComputeLayerEnum.pandas or self.compute_layer == ComputeLayerEnum.dask:
+                grouped = self.df.groupby(self.colabbr(reduce_key)).agg({self.colabbr(self.pk):'count'})
+                if len(grouped) / len(self.df) < 0.9:
+                    return True
+            elif self.compute_layer == ComputeLayerEnum.spark:
+                grouped = self.df.groupBy(self.colabbr(reduce_key)).agg(F.count(self.colabbr(self.pk))).count()
+                n = self.df.count()
+                if float(grouped) / float(n) < 0.9:
+                    return True
+        return False
 
 
     def reload (
@@ -168,31 +225,36 @@ Get some data
 
         if self.compute_layer.value == 'pandas':
             if not hasattr(self, 'df') or (hasattr(self,'df') and not isinstance(self.df, pd.DataFrame)):
-                self.df = getattr(pd, f"read_{self.fmt}")(self.fpath)
-
+                if self.encoding and self.delimiter:
+                    self.df = getattr(pd, f"read_{self.fmt}")(self.fpath, encoding=self.encoding, delimiter=self.delimiter)
+                else:
+                    self.df = getattr(pd, f"read_{self.fmt}")(self.fpath)                
                 # Initialize woodwork.
-                self.df.ww.init()
-                self._logical_types = self.df.ww.logical_types
+                #self.df.ww.init()
+                #self._logical_types = self.df.ww.logical_types
 
                 # Rename columns with prefixes.
                 if len(self.columns):
                     self.df = self.df[[c for c in self.columns]]
                 self.columns = list(self.df.columns)
                 self.df.columns = [f"{self.prefix}_{c}" for c in self.df.columns]
+                # Infer the semantic type with `torch_frame`.
+                self._stypes = infer_df_stype(self.df.head(100))
         elif self.compute_layer.value == 'dask':
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, dd.DataFrame
 )):
                 self.df = getattr(dd, f"read_{self.fmt}")(self.fpath)
-
                 # Initialize woodwork.
-                self.df.ww.init()
-                self._logical_types = self.df.ww.logical_types
+                #self.df.ww.init()
+                #self._logical_types = self.df.ww.logical_types
 
                 # Rename columns with prefixes.
                 if len(self.columns):
                     self.df = self.df[[c for c in self.columns]]
                 self.columns = list(self.df.columns)
                 self.df.columns = [f"{self.prefix}_{c}" for c in self.df.columns]
+                # Infer the semantic type with `torch_frame`.
+                self._stypes = infer_df_stype(self.df.head())
         elif self.compute_layer.value == 'spark':
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, pyspark.sql.DataFrame)):
                 if self.dialect == 'python':
@@ -205,6 +267,8 @@ Get some data
                 for c in self.df.columns:
                     self.df = self.df.withColumnRenamed(c, f"{self.prefix}_{c}")
 
+                # Infer the semantic type with `torch_frame`.
+                self._stypes = infer_df_stype(self.df.head(100).toPandas())
         # at this point of connectors we may want to try integrating
         # with something like fugue: https://github.com/fugue-project/fugue
         elif self.compute_layer.value == 'ray':
@@ -258,6 +322,14 @@ child data
         """
 Filter operations that require some
 additional relational data to perform.
+        """
+        pass
+
+
+    def do_post_join_reduce(self, reduce_key:str):
+        """
+Implementation for reduce operations
+after a join.
         """
         pass
 
@@ -322,15 +394,79 @@ upward through the graph from child nodes with no feature
 definitions.
         """
         agg_funcs = {}
-        for col, _type in dict(self.df.dtypes).items():
-            _type = str(_type)
-            if type_func_map.get(_type):
+
+        ts_data = self.is_ts_data(reduce_key)
+        if ts_data:
+            # Make sure the dates are cleaned.
+            self.df = clean_datetime_pandas(self.df, self.colabbr(self.date_key))
+            # First sort the data by dates.
+            self.df = self.df.sort_values(self.colabbr(self.date_key), ascending=True)
+            self.df[f'prev_{self.colabbr(self.date_key)}'] = self.df.groupby(self.colabbr(reduce_key))[self.colabbr(self.date_key)].shift(1)
+            # Get the time between the two different records.
+            self.df[self.colabbr('time_between_records')] = self.df.apply(
+                    lambda x: (x[self.colabbr(self.date_key)]-x[f'prev_{self.colabbr(self.date_key)}']).total_seconds(),
+                    axis=1)
+
+        for col, stype in self._stypes.items():
+            _type = str(stype)
+            if self._is_identifier(col) and col != reduce_key:
+                # We only perform counts for identifiers.
+                agg_funcs[f'{col}_count'] = pd.NamedAgg(column=col, aggfunc='count')
+            elif self._is_identifier(col) and col == reduce_key:
+                continue
+            elif type_func_map.get(_type):
                 for func in type_func_map[_type]:
+                    if (_type == 'numerical' or 'timestamp') and dict(self.df.dtypes)[col].__str__() == 'object':
+                        logger.info(f'skipped aggregation on {col} because semantic numerical but physical object')
+                        continue
                     col_new = f"{col}_{func}"
                     agg_funcs[col_new] = pd.NamedAgg(column=col, aggfunc=func)
-        return self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(
+        if not len(agg_funcs):
+            logger.info(f'No aggregations for {self}')
+            return self.df
+        
+        grouped = self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(
                 **agg_funcs
                 ).reset_index()
+        if not len(grouped):
+            return None
+        # If we have time-series data take the time
+        # since the last event and the cut date.
+        if ts_data:
+            logger.info(f'computed post-aggregation features for {self}')
+            def is_tz_aware(series):
+                return series.dt.tz is not None
+            if is_tz_aware(grouped[f'{self.colabbr(self.date_key)}_max']):
+                grouped[f'{self.colabbr(self.date_key)}_max'] = grouped[f'{self.colabbr(self.date_key)}_max'].dt.tz_localize(None)
+            
+            grouped[self.colabbr('time_since_last_event')] = grouped.apply(lambda x:
+                                    (self.cut_date - x[f'{self.colabbr(self.date_key)}_max']).total_seconds(),
+                                                                           axis=1)
+
+            # Number of events in last strata of time
+            days = [30, 60, 90, 365, 730]
+            for d in days:
+                if d > self.compute_period_val:
+                    continue
+                feat_prepped = self.prep_for_features()
+                if is_tz_aware(feat_prepped[self.colabbr(self.date_key)]):
+                    feat_prepped[self.colabbr(self.date_key)] = feat_prepped[self.colabbr(self.date_key)].dt.tz_localize(None)
+            
+                feat_prepped[self.colabbr('time_since_cut')] = feat_prepped.apply(
+                        lambda x: (self.cut_date - x[self.colabbr(self.date_key)]).total_seconds()/86400,
+                        axis=1)
+                sub = feat_prepped[
+                        (feat_prepped[self.colabbr('time_since_cut')] >= 0)
+                        &
+                        (feat_prepped[self.colabbr('time_since_cut')] <= d)
+                        ]
+                days_group = sub.groupby(self.colabbr(reduce_key)).agg(**{
+                    self.colabbr(f'{d}d_num_events'): pd.NamedAgg(aggfunc='count', column=self.colabbr(self.pk))
+                    }).reset_index()
+                # join this back to the main dataset.
+                grouped = grouped.merge(days_group, on=self.colabbr(reduce_key), how='left')
+            logger.info(f'merged all ts groupings to {self}')
+        return grouped
 
 
     def dask_auto_features (
@@ -458,7 +594,7 @@ provided columns.
         """
         agg_funcs = {}
         for col, _type in dict(self.df.dtypes).items():
-            if col.endswith('_label'):
+            if col.endswith('_label') or col == self.label_field or col == f'{self.colabbr(self.label_field)}':
                 _type = str(_type)
                 if type_func_map.get(_type):
                     for func in type_func_map[_type]:
@@ -646,7 +782,6 @@ Prepare the dataset for feature aggregations / reduce
                             |
                             (self.df[self.colabbr(self.date_key)].isNull())
                 )
-
         # SQL engine.
         elif not hasattr(self, 'df'):
             return None
@@ -701,7 +836,6 @@ Prepare the dataset for labels
             return None
         # no-op
         return self.df
-
 
 
     def default_label (
@@ -776,7 +910,6 @@ Define on demand features for this node.
 
 
 
-
 class DynamicNode(GraphReduceNode):
     """
 A dynamic architecture for entities with no logic 
@@ -819,9 +952,6 @@ Constructor
 
     def do_labels(self, reduce_key: str):
         pass
-
-
-
 
 
 class GraphReduceQueryException(Exception): pass
@@ -919,7 +1049,6 @@ Gets a temporary table or view name
 based on the method being called.
         """
 
-
         # No reference has been created for this method.
         fn = fn if isinstance(fn, str) else fn.__name__
 
@@ -984,8 +1113,7 @@ the query.
         """
 Gets a sample of rows for the current
 table or a parameterized table.
-        """
-        
+        """     
         samp_query = """
         SELECT * 
         FROM {table}
@@ -1152,7 +1280,7 @@ casting columns as different types.
         #]
         return None
 
-    
+ 
     # Returns aggregate functions
     # Returns aggregate 
     def do_reduce(self, reduce_key) -> typing.Union[sqlop, typing.List[sqlop]]:

@@ -15,7 +15,6 @@ from dask import dataframe as dd
 from structlog import get_logger
 import pyspark
 import pyvis
-import woodwork as ww
 
 # internal
 from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
@@ -23,7 +22,6 @@ from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.storage import StorageClient
 
 logger = get_logger('GraphReduce')
-
 
 
 class GraphReduce(nx.DiGraph):
@@ -40,18 +38,28 @@ class GraphReduce(nx.DiGraph):
         auto_feature_hops_back: int = 2,
         auto_feature_hops_front: int = 1,
         feature_typefunc_map : typing.Dict[str, typing.List[str]] = {
-            'int64' : ['count'],
+            'int64' : ['median', 'mean', 'sum', 'min', 'max'],
             'str' : ['min', 'max', 'count'],
             #'object' : ['first', 'count'],
             'object': ['count'],
-            'float64' : ['min', 'max', 'sum'],
+            'float64' : ['median', 'min', 'max', 'sum', 'mean'],
+            'float32': ['median','min','max','sum','mean'],
             #'bool' : ['first'],
             #'datetime64' : ['first', 'min', 'max'],
             'datetime64': ['min', 'max'],
             'datetime64[ns]': ['min', 'max'],
             },
+        feature_stype_map: typing.Dict[str, typing.List[str]] = {
+            'numerical': ['median', 'mean', 'sum', 'min', 'max'],
+            'categorical': ['count', 'nunique'],
+            'embedding': ['first'],
+            'image_embedded': ['first'],
+            'multicategorical': ['mode'],
+            'sequence_numerical': ['min', 'max'],
+            'timestamp': ['min','max']
+            },
         # Label parameters.
-        label_node: typing.Optional[GraphReduceNode] = None,
+        label_node: typing.Optional[typing.Union[GraphReduceNode, typing.List[GraphReduceNode]]] = None,
         label_operation: typing.Optional[typing.Union[callable, str]] = None,
         # Field on the node.
         label_field: typing.Optional[str] = None,
@@ -62,6 +70,8 @@ class GraphReduce(nx.DiGraph):
 
         # Only for SQL engines.
         lazy_execution: bool = False,
+        # Debug
+        debug: bool = False,
         *args,
         **kwargs
     ):
@@ -83,6 +93,10 @@ Args:
     auto_feature_hops_back: optional for automatically computing features
     auto_feature_hops_front: optional for automatically computing features
     feature_typefunc_map : optional mapping from type to a list of functions (e.g., {'int' : ['min', 'max', 'sum'], 'str' : ['first']})
+    label_node: optionl GraphReduceNode for the label
+    label_operation: optional str or callable operation to call to compute the label
+    label_field: optional str field to compute the label
+    debug: bool whether to run debug logging
         """
         super(GraphReduce, self).__init__(*args, **kwargs)
         
@@ -109,6 +123,7 @@ Args:
         self.auto_feature_hops_back = auto_feature_hops_back
         self.auto_feature_hops_front = auto_feature_hops_front
         self.feature_typefunc_map = feature_typefunc_map
+        self.feature_stype_map = feature_stype_map
 
         # SQL dialect parameters.
         self._lazy_execution = lazy_execution
@@ -116,6 +131,8 @@ Args:
         # if using Spark
         self._sqlctx = spark_sqlctx
         self._storage_client = storage_client
+
+        self.debug = debug
         
         if self.compute_layer == ComputeLayerEnum.spark and self._sqlctx is None:
             raise Exception(f"Must provide a `spark_sqlctx` kwarg if using {self.compute_layer.value} as compute layer")
@@ -210,6 +227,8 @@ attributes in `attrs`
 Hydrate the nodes in the graph with their data
         """
         for node in self.nodes():
+            if self.debug:
+                logger.debug(f'hydrating {node} data')
             node.do_data()
             
             
@@ -221,11 +240,14 @@ Hydrate the nodes in the graph with their data
         relation_key : str,
         # need to enforce this better
         relation_type : str = 'parent_child',
-        reduce : bool = True
+        reduce : bool = True,
+        reduce_after_join: bool = False,
     ):
         """
 Add an entity relation
         """
+        if reduce and reduce_after_join:
+            raise Exception(f'only one can be true: `reduce` or `reduce_after_join`')
         if not self.has_edge(parent_node, relation_node):
             self.add_edge(
                 parent_node,
@@ -234,7 +256,8 @@ Add an entity relation
                     'parent_key' : parent_key,
                     'relation_key' : relation_key,
                     'relation_type' : relation_type,
-                    'reduce' : reduce
+                    'reduce' : reduce,
+                    'reduce_after_join': reduce_after_join
                 }
             )
 
@@ -451,15 +474,24 @@ Traverses up the graph for merging parents.
         """
         parents = [(start, n, 1) for n in self.predecessors(start)]
         to_traverse = [(n, 1) for n in self.predecessors(start)]
-        while len(to_traverse):
+        cur_level = 1
+        while len(to_traverse) and cur_level <= self.auto_feature_hops_front:
             cur_node, cur_level = to_traverse[0]
             del to_traverse[0]
 
             for node in self.predecessors(cur_node):
-                parents.append((cur_node, node, cur_level+1))
-                to_traverse.append((node, cur_level+1))
-
-        return parents
+                if cur_level+1 <= self.auto_feature_hops_front:
+                    parents.append((cur_node, node, cur_level+1))
+                    to_traverse.append((node, cur_level+1))
+        # Returns higher levels first so that
+        # when we iterate through these edges
+        # we will traverse from top to bottom
+        # where the bottom is our `start`.
+        parents_ordered = list(reversed(parents))
+        if self.debug:
+            for ix in range(len(parents_ordered)):
+                logger.debug(f"index {ix} is level {parents_ordered[ix][-1]}")
+        return parents_ordered
 
 
     def get_children (
@@ -595,7 +627,8 @@ Perform all graph transformations
 
                     sql_ops = relation_node.auto_features(
                             reduce_key=edge_data['relation_key'],
-                            type_func_map=self.feature_typefunc_map,
+                            #type_func_map=self.feature_typefunc_map,
+                            type_func_map=self.feature_stype_map,
                             compute_layer=self.compute_layer
                             )
                     logger.info(f"{sql_ops}")
@@ -604,7 +637,8 @@ Perform all graph transformations
                             relation_node.build_query(
                                 relation_node.auto_features(
                                     reduce_key=edge_data['relation_key'],
-                                    type_func_map=self.feature_typefunc_map,
+                                    #type_func_map=self.feature_typefunc_map,
+                                    type_func_map=self.feature_stype_map,
                                     compute_layer=self.compute_layer
                                     )
                                 ),
@@ -619,8 +653,6 @@ Perform all graph transformations
                     reduce_sql = relation_node.build_query(reduce_ops)
                     logger.info(f"reduce SQL: {reduce_sql}")
                     reduce_ref = relation_node.create_ref(reduce_sql, relation_node.do_reduce)
-                     
-
             else:
                 # in this case we will join the entire relation's dataframe
                 logger.info(f"doing nothing with relation node {relation_node}")
@@ -634,13 +666,12 @@ Perform all graph transformations
             )
 
             # Target variables.
-            if self.label_node and self.label_node == relation_node:
+            if self.label_node and (self.label_node == relation_node or relation_node.label_field is not None):
                 logger.info(f"Had label node {self.label_node}")
 
                 # Get the reference right before `do_reduce`
                 # so the records are not aggregated yet.
-                data_ref = relation_node.get_ref_name(relation_node.do_filters, lookup=True)
-        
+                data_ref = relation_node.get_ref_name(relation_node.do_filters, lookup=True) 
 
                 #TODO: don't need to reduce if it's 1:1 cardinality.
                 if self.auto_features:
@@ -720,6 +751,13 @@ Perform all graph transformations
         if self.auto_features:
             for to_node, from_node, level in self.traverse_up(start=self.parent_node):
                 if self.auto_feature_hops_front and level <= self.auto_feature_hops_front:
+                    # It is assumed that front-facing relations
+                    # are not one to many and therefore we 
+                    # won't have duplication on the join.
+                    # This may be an incorrect assumption
+                    # so this implementation is currently brittle.
+                    if self.debug:
+                        logger.debug(f'Performing FRONT auto_features front join from {from_node} to {to_node}')
                     joined_df = self.join_any(
                             to_node,
                             from_node
@@ -739,10 +777,11 @@ Perform all graph transformations
                 join_df = relation_node.do_reduce(edge_data['relation_key'])
                 # only relevant when reducing
                 if self.auto_features:
-                    logger.info(f"performing auto_features on node {relation_node}")
+                    logger.info(f"performing auto_features on node {relation_node} with reduce key {edge_data['relation_key']}")
                     child_df = relation_node.auto_features(
                             reduce_key=edge_data['relation_key'],
-                            type_func_map=self.feature_typefunc_map,
+                            #type_func_map=self.feature_typefunc_map,
+                            type_func_map=self.feature_stype_map,
                             compute_layer=self.compute_layer
                         )
                     
@@ -757,6 +796,8 @@ Perform all graph transformations
                                 )
                         else:                         
                             join_df = child_df
+                            if self.debug:
+                                logger.debug(f'assigned join_df to be {child_df.columns}')
                     elif self.compute_layer == ComputeLayerEnum.spark:
                         if isinstance(join_df, pyspark.sql.dataframe.DataFrame):
                             join_df = join_df.join(
@@ -766,6 +807,8 @@ Perform all graph transformations
                             )
                         else:
                             join_df = child_df
+                            if self.debug:
+                                logger.debug(f'assigned join_df to be {child_df.columns}')
 
             else:
                 # in this case we will join the entire relation's dataframe
@@ -783,14 +826,24 @@ Perform all graph transformations
             parent_node.df = joined_df
             
             # Target variables.
-            if self.label_node and self.label_node == relation_node:
+            if self.label_node and (self.label_node == relation_node or relation_node.label_field is not None):
                 logger.info(f"Had label node {self.label_node}")
+                # Automatic label generation.
                 if isinstance(relation_node, DynamicNode):
-                    label_df = relation_node.default_label(
+                    if self.label_node == relation_node:
+                        label_df = relation_node.default_label(
                             op=self.label_operation,
                             field=self.label_field,
                             reduce_key=edge_data['relation_key']
-                            )                    
+                            )
+                    elif relation_node.label_field is not None:
+                        label_df = relation_node.default_label(
+                                op=relation_node.label_operation if relation_node.label_operation else 'count',
+                                field=relation_node.label_field,
+                                reduce_key=edge_data['relation_key']
+                                )
+                # There should be an implementation of `do_labels`
+                # when the instance is a `GraphReduceNode`.
                 elif isinstance(relation_node, GraphReduceNode):
                     label_df = relation_node.do_labels(edge_data['relation_key'])
 
@@ -807,4 +860,8 @@ Perform all graph transformations
             parent_node.do_post_join_annotate()
             # post-join filters (if any)
             if hasattr(parent_node, 'do_post_join_filters'):
-                parent_node.do_post_join_filters()
+                parent_node.do_post_join_filters() 
+
+            # post-join aggregation
+            if edge_data['reduce_after_join']:
+                parent_node.do_post_join_reduce(edge_data['relation_key'], type_func_map=self.feature_stype_map)
