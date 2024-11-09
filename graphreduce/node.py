@@ -535,10 +535,36 @@ area that can benefit from `woodwork` and other
 data type inference libraries.
         """
         agg_funcs = []
-        for col, _type in dict(table_df_sample.dtypes).items():
-            _type = str(_type)
-            if type_func_map.get(_type):
+        if not self._stypes:
+            self._stypes = infer_df_stype(table_df_sample)
+        for col, stype in self._stypes.items():
+            _type = str(stype)
+            if self._is_identifier(col) and col != reduce_key:
+                # We only perform counts for identifiers.
+                func = "count"
+                col_new = f"{col}_{func}"
+                agg_funcs.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{func}" + f"({col}) as {col_new}"
+                                )
+                            )
+            elif self._is_identifier(col) and col == reduce_key:
+                continue
+            elif type_func_map.get(_type):
                 for func in type_func_map[_type]:
+                    # There should be a better top-level mapping
+                    # but for now this will do.  SQL engines typically
+                    # don't have 'median' and 'mean'.  'mean' is typically
+                    # just called 'avg'. 
+                    if (_type == 'numerical' or 'timestamp') and dict(table_df_sample)[col].__str__() == 'object' and func in ['min','max','mean', 'median']:
+                        logger.info(f'skipped aggregation on {col} because semantic numerical but physical object')
+                        continue
+                    if func in self.FUNCTION_MAPPING:
+                        func = self.FUNCTION_MAPPING.get(func)
+
+                    if not func:
+                        continue
                     col_new = f"{col}_{func}"
                     agg_funcs.append(
                             sqlop(
@@ -546,9 +572,11 @@ data type inference libraries.
                                 opval=f"{func}" + f"({col}) as {col_new}"
                                 )
                             )
-        # Need the aggregation and time-based filtering.
+        if not len(agg_funcs):
+            logger.info(f'No aggregations for {self}')
+            return self.df  
         agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
-
+        # Need the aggregation and time-based filtering.
         tfilt = self.prep_for_features() if self.prep_for_features() else []
 
         return tfilt + agg_funcs + [agg]
@@ -966,8 +994,12 @@ to a single `client` interface, such as
 AWS Athena, which requires additional params.
 
 Subclasses should simply extend the `SQLNode` interface:
-
     """
+    FUNCTION_MAPPING = {
+            'mean': 'avg',
+            'median': None,
+            'nunique': None,
+            }
     def __init__ (
         self,
         *args,
@@ -1091,7 +1123,6 @@ reference to the nodes data.
 Create a view with the results of
 the query.
         """
-
         try:
             sql = f"""
             CREATE VIEW {view_name} AS
