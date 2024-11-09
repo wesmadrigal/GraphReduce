@@ -12,3 +12,4 @@ structlog>=23.1.0
 pytest>=8.0.2
 woodwork==0.29.0
 pydantic==1.10.5
+pytorch_frame
