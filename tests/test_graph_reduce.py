@@ -385,6 +385,7 @@ def test_sql_graph_auto_fe():
         relation_key='customer_id',
         reduce=True
     )
+    gr.plot_graph('cust_graph.html')
     gr.do_transformations_sql()
     d = pd.read_sql_query(f"select * from {gr.parent_node._cur_data_ref}", conn)
     ic(d)

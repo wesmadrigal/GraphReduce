@@ -416,7 +416,7 @@ definitions.
                 continue
             elif type_func_map.get(_type):
                 for func in type_func_map[_type]:
-                    if (_type == 'numerical' or 'timestamp') and dict(self.df.dtypes)[col].__str__() == 'object':
+                    if (_type == 'numerical' or 'timestamp') and dict(self.df.dtypes)[col].__str__() == 'object' and func in ['min','max','median','mean']:
                         logger.info(f'skipped aggregation on {col} because semantic numerical but physical object')
                         continue
                     col_new = f"{col}_{func}"
