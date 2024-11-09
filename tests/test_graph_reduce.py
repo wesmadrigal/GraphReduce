@@ -151,14 +151,16 @@ def test_multi_node():
             fpath=os.path.join(data_path, 'cust.csv'),
             fmt='csv',
             prefix='cust',
-            date_key=None
+            date_key=None,
+            pk='id',
             )
 
     order_node = DynamicNode(
             fpath=os.path.join(data_path, 'orders.csv'),
             fmt='csv',
             prefix='ord',
-            date_key='ts'
+            date_key='ts',
+            pk='id',
             )
 
     gr = GraphReduce(
@@ -308,6 +310,7 @@ def test_sql_graph_transform():
 def test_sql_graph_auto_fe():
     conn = _setup_sqlite()
     cust = SQLNode(fpath='cust',
+                pk='id',
                 prefix='cust',
                 client=conn,
                 compute_layer=ComputeLayerEnum.sqlite,
@@ -315,6 +318,7 @@ def test_sql_graph_auto_fe():
 
     notif = SQLNode(fpath='notifications',
                     prefix='not',
+                    pk='id',
                     client=conn,
                     compute_layer=ComputeLayerEnum.sqlite,
                     columns=['id','customer_id','ts'],
@@ -322,12 +326,14 @@ def test_sql_graph_auto_fe():
 
     ni = SQLNode(fpath='notification_interactions',
                     prefix='ni',
+                    pk='id',
                     client=conn,
                     compute_layer=ComputeLayerEnum.sqlite,
                     columns=['id','notification_id','interaction_type_id','ts'],
                     date_key='ts')
 
     order = SQLNode(fpath='orders',
+                   pk='id',
                    prefix='ord',
                    client=conn,
                    compute_layer=ComputeLayerEnum.sqlite,
@@ -351,7 +357,6 @@ def test_sql_graph_auto_fe():
         compute_layer=ComputeLayerEnum.sqlite,
         use_temp_tables=True,
         lazy_execution=False,
-
         # Auto feature engineering params.
         auto_features=True,
         auto_feature_hops_back=3,
@@ -385,6 +390,7 @@ def test_sql_graph_auto_fe():
         relation_key='customer_id',
         reduce=True
     )
+    gr.plot_graph('cust_graph.html')
     gr.do_transformations_sql()
     d = pd.read_sql_query(f"select * from {gr.parent_node._cur_data_ref}", conn)
     ic(d)
