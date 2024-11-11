@@ -15,6 +15,7 @@ from dask import dataframe as dd
 from structlog import get_logger
 import pyspark
 import pyvis
+from pyspark.sql import functions as F
 
 # internal
 from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
@@ -129,12 +130,12 @@ Args:
         self._lazy_execution = lazy_execution
         
         # if using Spark
-        self._sqlctx = spark_sqlctx
+        self.spark_sqlctx = spark_sqlctx
         self._storage_client = storage_client
 
         self.debug = debug
         
-        if self.compute_layer == ComputeLayerEnum.spark and self._sqlctx is None:
+        if self.compute_layer == ComputeLayerEnum.spark and self.spark_sqlctx is None:
             raise Exception(f"Must provide a `spark_sqlctx` kwarg if using {self.compute_layer.value} as compute layer")
         
         if self.label_node and (self.label_period_val is None or self.label_period_unit is None):
@@ -382,19 +383,27 @@ Join the relations.
                             
         elif self.compute_layer == ComputeLayerEnum.spark:     
             if isinstance(relation_df, pyspark.sql.dataframe.DataFrame) and isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame):
+                original = f"{relation_node.prefix}_{relation_fk}"
+                new = f"{original}_dupe"
+                relation_df = relation_df.withColumnRenamed(original, new)
                 joined = parent_node.df.join(
                         relation_df,
-                        on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_df[f"{relation_node.prefix}_{relation_fk}"],
+                        on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_df[new],
                         how="left"
-                        )
+                        ).drop(F.col(new))
+                
                 self._mark_merged(parent_node, relation_node)
                 return joined
             elif isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(relation_node.df, pyspark.sql.dataframe.DataFrame):
+                original = f"{relation_node.prefix}_{relation_fk}"
+                new = f"{original}_dupe"
+                relation_df = relation_df.withColumnRenamed(original, new)               
                 joined = parent_node.df.join(
                     relation_node.df,
-                    on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_node.df[f"{relation_node.prefix}_{relation_fk}"],
+                    on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_node.df[new],
                     how="left"
-                ) 
+                ).drop(F.col(new))
+                
                 self._mark_merged(parent_node, relation_node)
                 return joined
             else:
