@@ -313,7 +313,7 @@ Join the relations.
             if isinstance(to_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(from_node.df, pyspark.sql.dataframe.DataFrame):
                 joined = to_node.df.join(
                     from_node.df,
-                    on=to_node.df[f"{to_node.prefix}_{to_node_key}"] == from_node.df[f"{relation_node.prefix}_{from_node_key}"],
+                    on=to_node.df[f"{to_node.prefix}_{to_node_key}"] == from_node.df[f"{from_node.prefix}_{from_node_key}"],
                     how="left"
                 ) 
                 self._mark_merged(to_node, from_node)
