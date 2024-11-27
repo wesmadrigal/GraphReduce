@@ -397,8 +397,6 @@ definitions.
         """
         agg_funcs = {}
 
-        self._stypes = infer_df_stype(self.get_sample().head())
-
         ts_data = self.is_ts_data(reduce_key)
         if ts_data:
             # Make sure the dates are cleaned.
@@ -485,7 +483,6 @@ with `_propagation` to indicate that we are propagating data
 upward through the graph from child nodes with no feature
 definitions.
         """
-        self._stypes = infer_df_stype(self.get_sample().head())
         agg_funcs = {}
         for col, stype in self._stypes.items():
             _type = str(stype)
@@ -733,10 +730,6 @@ Spark implementation of auto labeling based on
 provided columns.
         """
         agg_funcs = []
-        #for field in self.df.schema.fields:
-        #    field_meta = json.loads(field.json())
-        #    col = field_meta['name']
-        #    _type = field_meta['type']
         for col, stype in self._stypes.items():
             _type = str(stype)
             if col.endswith('_label'):
