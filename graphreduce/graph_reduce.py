@@ -385,6 +385,7 @@ Join the relations.
             if isinstance(relation_df, pyspark.sql.dataframe.DataFrame) and isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame):
                 original = f"{relation_node.prefix}_{relation_fk}"
                 new = f"{original}_dupe"
+
                 relation_df = relation_df.withColumnRenamed(original, new)
                 joined = parent_node.df.join(
                         relation_df,
@@ -397,7 +398,8 @@ Join the relations.
             elif isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(relation_node.df, pyspark.sql.dataframe.DataFrame):
                 original = f"{relation_node.prefix}_{relation_fk}"
                 new = f"{original}_dupe"
-                relation_df = relation_df.withColumnRenamed(original, new)               
+                relation_node.df = relation_node.df.withColumnRenamed(original, new)
+
                 joined = parent_node.df.join(
                     relation_node.df,
                     on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_node.df[new],

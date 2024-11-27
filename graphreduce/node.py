@@ -397,6 +397,8 @@ definitions.
         """
         agg_funcs = {}
 
+        self._stypes = infer_df_stype(self.get_sample().head())
+
         ts_data = self.is_ts_data(reduce_key)
         if ts_data:
             # Make sure the dates are cleaned.
@@ -483,6 +485,7 @@ with `_propagation` to indicate that we are propagating data
 upward through the graph from child nodes with no feature
 definitions.
         """
+        self._stypes = infer_df_stype(self.get_sample().head())
         agg_funcs = {}
         for col, stype in self._stypes.items():
             _type = str(stype)
@@ -507,17 +510,22 @@ with `_propagation` to indicate that we are propagating data
 upward through the graph from child nodes with no feature
 definitions.
         """
+
+        self._stypes = infer_df_stype(self.df.sample(0.5).limit(10).toPandas())
         agg_funcs = []
         ts_data = self.is_ts_data(reduce_key)
         if ts_data:
             logger.info(f"{self} is time-series data")
         for col, stype in self._stypes.items():
             _type = str(stype)
-        #for field in self.df.schema.fields:
-        #    field_meta = json.loads(field.json())
-        #    col = field_meta['name']
-        #    _type = field_meta['type']        
-            if type_func_map.get(_type):
+
+            if self._is_identifier(col) and col != reduce_key:
+                func = 'count'
+                col_new = f"{col}_{func}"
+                agg_funcs.append(F.count(F.col(col)).alias(col_new))
+            elif self._is_identifier(col) and col == reduce_key:
+                continue 
+            elif type_func_map.get(_type):
                 for func in type_func_map[_type]:
                     if func == 'nunique':
                         func = 'count_distinct'
@@ -529,6 +537,11 @@ definitions.
         # If we have time-series data take the time
         # since the last event and the cut date.
         if ts_data:
+            # convert the date key to a timestamp
+            date_key_field = [x for x in self.df.schema.fields if x.name == self.colabbr(self.date_key)][0]
+            if date_key_field.dataType not in [T.TimestampType(), T.DateType()]:
+                logger.info(f'{self} date key was {date_key_field.dataType} - converting to Timestamp')
+                self.df = self.df.withColumn(self.colabbr(self.date_key), F.to_timestamp(F.col(self.colabbr(self.date_key))))
             logger.info(f'computed post-aggregation features for {self}')
             spark_datetime = self.spark_sqlctx.sql(f"SELECT TO_DATE('{self.cut_date.strftime('%Y-%m-%d')}') as cut_date")
             if 'cut_date' not in grouped.columns:
@@ -549,12 +562,12 @@ definitions.
                 feat_prepped = self.prep_for_features()
                 feat_prepped = feat_prepped.withColumn(
                         self.colabbr('time_since_cut'),
-                        F.unix_timestamp(F.col('cut_date')) - F.unix_timestamp(self.colabbr(self.date_key))
+                        F.unix_timestamp(F.col('cut_date')) - F.unix_timestamp(F.col(self.colabbr(self.date_key)))
                         ).drop(F.col('cut_date'))
                 sub = feat_prepped.filter(
                         (feat_prepped[self.colabbr('time_since_cut')] >= 0)
                         &
-                        (feat_prepped[self.colabbr('time_since_cut')] <= d)
+                        (feat_prepped[self.colabbr('time_since_cut')] <= (d*86400))
                         )
                 days_group = sub.groupBy(self.colabbr(reduce_key)).agg(
                         F.count(self.colabbr(self.pk)).alias(self.colabbr(f'{d}d_num_events'))
