@@ -519,6 +519,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#daft" class="md-nav__link">
+    <span class="md-ellipsis">
+      Daft
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sql-compute-engines" class="md-nav__link">
     <span class="md-ellipsis">
       SQL compute engines
@@ -705,6 +714,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#daft" class="md-nav__link">
+    <span class="md-ellipsis">
+      Daft
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sql-compute-engines" class="md-nav__link">
     <span class="md-ellipsis">
       SQL compute engines
@@ -789,19 +807,35 @@ and can instantiate as follows:
 </span><span id="__span-2-13"><a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="nb">type</span><span class="p">(</span><span class="n">cloud_node</span><span class="o">.</span><span class="n">df</span><span class="p">)</span>
 </span><span id="__span-2-14"><a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="n">pyspark</span><span class="o">.</span><span class="n">sql</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">DataFrame</span>
 </span></code></pre></div></p>
+<h2 id="daft">Daft</h2>
+<p>For <code>daft</code> you will just need to specify
+the compute layer.
+<div class="language-Python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">daft_node</span> <span class="o">=</span> <span class="n">DynamicNode</span><span class="p">(</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>   <span class="n">fpath</span><span class="o">=</span><span class="s1">&#39;cusv.csv&#39;</span><span class="p">,</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>   <span class="n">fmt</span><span class="o">=</span><span class="s1">&#39;csv&#39;</span><span class="p">,</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>   <span class="n">pk</span><span class="o">=</span><span class="s1">&#39;id&#39;</span><span class="p">,</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>   <span class="n">prefix</span><span class="o">=</span><span class="s1">&#39;cu&#39;</span><span class="p">,</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>   <span class="n">date_key</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>   <span class="n">compute_layer</span><span class="o">=</span><span class="n">ComputeLayerEnum</span><span class="o">.</span><span class="n">daft</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="p">)</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">cust_node</span><span class="o">.</span><span class="n">do_data</span><span class="p">()</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="nb">type</span><span class="p">(</span><span class="n">cust_node</span><span class="o">.</span><span class="n">df</span><span class="p">)</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">daft</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">dataframe</span><span class="o">.</span><span class="n">DataFrame</span>
+</span></code></pre></div></p>
 <h2 id="sql-compute-engines">SQL compute engines</h2>
 <p>To use SQL dialect we need to use the <code>SQLNode</code> class
 and it's subclasses.  These are instantiated as follows:
-<div class="language-Python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">from</span> <span class="nn">graphreduce.node</span> <span class="kn">import</span> <span class="n">SQLNode</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="n">cust_node</span> <span class="o">=</span> <span class="n">SQLNode</span><span class="p">(</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>    <span class="n">fpath</span><span class="o">=</span><span class="s1">&#39;schema.customers&#39;</span><span class="p">,</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>    <span class="n">fmt</span><span class="o">=</span><span class="s1">&#39;sql&#39;</span><span class="p">,</span>
-</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="n">pk</span><span class="o">=</span><span class="s1">&#39;id&#39;</span><span class="p">,</span>
-</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">prefix</span><span class="o">=</span><span class="s1">&#39;cu&#39;</span><span class="p">,</span>
-</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">date_key</span><span class="o">=</span><span class="s1">&#39;signup_date&#39;</span><span class="p">,</span>
-</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>    <span class="n">compute_layer</span><span class="o">=</span><span class="n">ComputeLayerEnum</span><span class="o">.</span><span class="n">sql</span>
-</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="p">)</span>
+<div class="language-Python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span> <span class="nn">graphreduce.node</span> <span class="kn">import</span> <span class="n">SQLNode</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">cust_node</span> <span class="o">=</span> <span class="n">SQLNode</span><span class="p">(</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="n">fpath</span><span class="o">=</span><span class="s1">&#39;schema.customers&#39;</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">fmt</span><span class="o">=</span><span class="s1">&#39;sql&#39;</span><span class="p">,</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>    <span class="n">pk</span><span class="o">=</span><span class="s1">&#39;id&#39;</span><span class="p">,</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>    <span class="n">prefix</span><span class="o">=</span><span class="s1">&#39;cu&#39;</span><span class="p">,</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>    <span class="n">date_key</span><span class="o">=</span><span class="s1">&#39;signup_date&#39;</span><span class="p">,</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>    <span class="n">compute_layer</span><span class="o">=</span><span class="n">ComputeLayerEnum</span><span class="o">.</span><span class="n">sql</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="p">)</span>
 </span></code></pre></div></p>
 
 
