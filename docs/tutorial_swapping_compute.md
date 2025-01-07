@@ -69,6 +69,24 @@ type(cloud_node.df)
 pyspark.sql.dataframe.DataFrame
 ```
 
+## Daft
+For `daft` you will just need to specify
+the compute layer.
+```Python
+daft_node = DynamicNode(
+   fpath='cusv.csv',
+   fmt='csv',
+   pk='id',
+   prefix='cu',
+   date_key=None,
+   compute_layer=ComputeLayerEnum.dask
+)
+
+cust_node.do_data()
+type(cust_node.df)
+daft.dataframe.dataframe.DataFrame
+```
+
 ## SQL compute engines
 To use SQL dialect we need to use the `SQLNode` class
 and it's subclasses.  These are instantiated as follows:
