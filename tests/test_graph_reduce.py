@@ -398,3 +398,45 @@ def test_sql_graph_auto_fe():
     assert len(d) == 4
 
 
+def test_daft_graph():
+
+    cust_node = DynamicNode(
+            fpath=os.path.join(data_path, 'cust.csv'),
+            fmt='csv',
+            prefix='cust',
+            date_key=None,
+            pk='id',
+            )
+
+    order_node = DynamicNode(
+            fpath=os.path.join(data_path, 'orders.csv'),
+            fmt='csv',
+            prefix='ord',
+            date_key='ts',
+            pk='id',
+            )
+
+    gr = GraphReduce(
+            parent_node=cust_node,
+            fmt='csv',
+            compute_layer=ComputeLayerEnum.daft,
+            auto_features=True,
+            compute_period_val=730
+            )
+    gr.add_node(cust_node)
+    gr.add_node(order_node)
+
+    assert len(gr) == 2
+
+    gr.add_entity_edge(
+            parent_node=cust_node,
+            relation_node=order_node,
+            parent_key='id',
+            relation_key='customer_id',
+            relation_type='parent_child',
+            reduce=True
+            )
+
+    gr.do_transformations()
+    print(gr.parent_node.df.show(10))
+    assert gr.parent_node.df.count_rows() == 4

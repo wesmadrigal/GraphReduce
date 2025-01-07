@@ -16,6 +16,7 @@ from structlog import get_logger
 import pyspark
 import pyvis
 from pyspark.sql import functions as F
+import daft
 
 # internal
 from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
@@ -309,6 +310,16 @@ Join the relations.
                 return joined
             else:
                 return joined
+        elif self.compute_layer == ComputeLayerEnum.daft:
+            joined = to_node.df.join(
+                    from_node.df,
+                    left_on=to_node.df[f"{to_node.prefix}_{to_node_key}"],
+                    right_on=from_node.df[f"{from_node.prefix}_{from_node_key}"],
+                    suffix="_dupe",
+                    how="left"
+                    )
+            self._mark_merged(to_node, from_node)
+            return joined
         elif self.compute_layer == ComputeLayerEnum.spark:     
             if isinstance(to_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(from_node.df, pyspark.sql.dataframe.DataFrame):
                 joined = to_node.df.join(
@@ -380,7 +391,25 @@ Join the relations.
                 return joined
             else:
                 return joined
-                            
+        elif self.compute_layer == ComputeLayerEnum.daft:
+            if isinstance(relation_df, daft.dataframe.dataframe.DataFrame):
+                joined = parent_node.df.join(
+                        relation_df,
+                        left_on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"],
+                        right_on=relation_df[f"{relation_node.prefix}_{relation_fk}"],
+                        suffix="_dupe",
+                        how="left"
+                        )
+            else:
+                joined = parent_node.df.join(
+                        relation_node.df,
+                        left_on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"],
+                        right_on=relation_node.df[f"{relation_node.prefix}_{relation_fk}"],
+                        suffix="_dupe",
+                        how="left"
+                        )
+            self._mark_merged(parent_node, relation_node)
+            return joined
         elif self.compute_layer == ComputeLayerEnum.spark:     
             if isinstance(relation_df, pyspark.sql.dataframe.DataFrame) and isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame):
                 original = f"{relation_node.prefix}_{relation_fk}"
@@ -409,8 +438,7 @@ Join the relations.
                 self._mark_merged(parent_node, relation_node)
                 return joined
             else:
-                raise Exception(f"Cannot use spark on dataframe of type: {type(parent_node.df)}")
-                
+                raise Exception(f"Cannot use spark on dataframe of type: {type(parent_node.df)}")                
         else:
             logger.error('no valid compute layer')
             
@@ -795,17 +823,18 @@ Perform all graph transformations
                             type_func_map=self.feature_stype_map,
                             compute_layer=self.compute_layer
                         )
+
                     
                     # NOTE: this is pandas specific and will break
                     # on other compute layers for now 
-                    if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
+                    if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask, ComputeLayerEnum.daft]:
                         if isinstance(join_df, pd.DataFrame) or isinstance(join_df, dd.DataFrame):
                             join_df = join_df.merge(
                                 child_df,
                                 on=relation_node.colabbr(edge_data['relation_key']),
                                 suffixes=('', '_dupe')
                                 )
-                        else:                         
+                        else: 
                             join_df = child_df
                             if self.debug:
                                 logger.debug(f'assigned join_df to be {child_df.columns}')
