@@ -38,6 +38,15 @@ git clone https://github.com/wesmadrigal/graphreduce
 cd graphreduce && pip install -e .
 ```
 
+### Compute integrations
+* Pandas
+* Dask
+* Daft
+* Spark
+* Redshift
+* Databricks SQL
+* Snowflake SQL
+
 ## Basic usage
 
 ```Python
