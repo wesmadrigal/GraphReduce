@@ -79,7 +79,7 @@ daft_node = DynamicNode(
    pk='id',
    prefix='cu',
    date_key=None,
-   compute_layer=ComputeLayerEnum.dask
+   compute_layer=ComputeLayerEnum.daft
 )
 
 cust_node.do_data()
