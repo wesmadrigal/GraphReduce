@@ -16,6 +16,7 @@ from pyspark.sql import functions as F, types as T
 from structlog import get_logger
 from dateutil.parser import parse as date_parse
 from torch_frame.utils import infer_df_stype
+import daft
 
 # internal
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
@@ -199,6 +200,11 @@ Determines if the data is timeseries.
             #TODO(wes): define the SQL logic.
             elif self.compute_layer in [ComputeLayerEnum.sqlite]:
                 pass
+            elif self.compute_layer == ComputeLayerEnum.daft:
+                grouped = self.df.groupby(self.colabbr(reduce_key)).agg(self.df[self.colabbr(self.pk)].count()).count_rows()
+                n = self.df.count_rows()
+                if float(grouped)/float(n) < 0.9:
+                    return True
         return False
 
 
@@ -271,6 +277,20 @@ Get some data
 
                 # Infer the semantic type with `torch_frame`.
                 self._stypes = infer_df_stype(self.df.sample(0.5).limit(10).toPandas())
+        elif self.compute_layer.value == 'daft':
+            if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, daft.dataframe.dataframe.DataFrame)):
+                self.df = getattr(daft, f"read_{self.fmt}")(self.fpath)
+                self.columns = [c.name() for c in self.df.columns]
+                for col in self.df.columns:
+                    self.df = self.df.with_column(f"{self.prefix}_{col.name()}", col)
+                newcols = [c for c in self.df.columns if c.name().startswith(self.prefix)]
+                self.df = self.df.select(*newcols)
+                
+                # Infer the semantic type with `torch_frame`.
+                n = self.df.count_rows()
+                m = 100
+                frac = float(m / n) if m / n < 1 else 1.0
+                self._stypes = infer_df_stype(self.df.sample(frac).to_pandas())
         # at this point of connectors we may want to try integrating
         # with something like fugue: https://github.com/fugue-project/fugue
         elif self.compute_layer.value == 'ray':
@@ -360,6 +380,8 @@ the results together.
             # a sample of the data in pandas dataframe form.
             sample_df = self.get_sample()
             return self.sql_auto_features(sample_df, reduce_key=reduce_key, type_func_map=type_func_map)
+        elif self.compute_layer == ComputeLayerEnum.daft:
+            return self.daft_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
 
 
     def auto_labels (
@@ -381,6 +403,8 @@ the results together.
             return self.dask_auto_labels(reduce_key=reduce_key, type_func_map=type_func_map)
         elif compute_layer == ComputeLayerEnum.spark:
             return self.spark_auto_labels(reduce_key=reduce_key, type_func_map=type_func_map)
+        elif compute_layer == ComputeLayerEnum.daft:
+            return self.daft_auto_labels(reduce_key=reduce_key, type_func_map=type_func_map)
 
 
     def pandas_auto_features (
@@ -468,6 +492,33 @@ definitions.
                 # join this back to the main dataset.
                 grouped = grouped.merge(days_group, on=self.colabbr(reduce_key), how='left')
             logger.info(f'merged all ts groupings to {self}')
+        return grouped
+
+
+    def daft_auto_features (
+            self,
+            reduce_key : str,
+            type_func_map : dict = {}
+            ) -> pd.DataFrame:
+        """
+Daft implementation of dynamic propagation of features.
+This is basically automated feature engineering but suffixed
+with `_propagation` to indicate that we are propagating data
+upward through the graph from child nodes with no feature
+definitions.
+        """
+
+        # Temporary hack until a `daft` implementation
+        # of window functions is available.  This will
+        # also, unfortunately, limit us to single machine
+        # data sizes with daft until then.
+        original_df = self.df
+        self.compute_layer = ComputeLayerEnum.pandas
+        self.df = self.df.to_pandas()
+        grouped = self.pandas_auto_features(reduce_key, type_func_map=type_func_map)
+        grouped = daft.from_pandas(grouped)
+        self.df = original_df
+        self.compute_layer = ComputeLayerEnum.daft
         return grouped
 
 
@@ -698,6 +749,28 @@ provided columns.
                 ).reset_index()
 
 
+    def daft_auto_labels (
+            self,
+            reduce_key: str,
+            type_func_map: dict = {},
+            ) -> pd.DataFrame:
+        """
+Daft implementation of auto labeling based
+on provided columns.
+        """
+        # Temporary hack until a `daft` implementation
+        # of window functions is available.  This will
+        # also, unfortunately, limit us to single machine
+        # data sizes with daft until then.
+        original_df = self.df
+        self.compute_layer = ComputeLayerEnum.pandas
+        self.df = self.df.to_pandas()
+        grouped = self.pandas_auto_labels(reduce_key, type_func_map=type_func_map)
+        self.df = original_df
+        self.compute_layer = ComputeLayerEnum.daft
+        return grouped
+
+
     def dask_auto_labels (
             self,
             reduce_key : str,
@@ -850,6 +923,16 @@ Prepare the dataset for feature aggregations / reduce
                         |
                         (self.df[self.colabbr(self.date_key)].isNull())
                     )
+                elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
+                    return self.df.filter(
+                            (
+                                (self.df[self.colabbr(self.date_key)] < self.cut_date)
+                                &
+                                (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
+                            )
+                            |
+                            (self.df[self.colabbr(self.date_key)].is_null())
+                        )
 
             else:
                 # Using a SQL engine so need to return `sqlop` instances.
@@ -875,6 +958,13 @@ Prepare the dataset for feature aggregations / reduce
                             |
                             (self.df[self.colabbr(self.date_key)].isNull())
                 )
+                elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
+                    return self.df.filter(
+                            (self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.compute_period_minutes())))
+                            |
+                            (self.df[self.colabbr(self.date_key)].is_null())
+                            )
+
         # SQL engine.
         elif not hasattr(self, 'df'):
             return None
@@ -909,6 +999,12 @@ Prepare the dataset for labels
                         &
                         (self.df[self.colabbr(self.date_key)] < str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
                     )
+                elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
+                    return self.df.filter(
+                            (self.df[self.colabbr(self.date_key)] > self.cut_date)
+                            &
+                            (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
+                            )
             else:
                 # Using a SQL engine so need to return `sqlop` instances.
                 if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
@@ -924,6 +1020,10 @@ Prepare the dataset for labels
                     return self.df.filter(
                     self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timedelta(minutes=self.label_period_minutes()))
                 )
+                elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
+                    return self.df.filter(
+                            self.df[self.colabbr(self.date_key)] > (datetime.datetime.now() - datetime.timdelta(minutes=self.label_period_minutes()))
+                            )
 
         elif not hasattr(self, 'df'):
             return None
@@ -972,6 +1072,14 @@ Default label operation.
                 if self.reduce:
                     return self.prep_for_labels().groupBy(self.colabbr(reduce_key)).agg(
                             getattr(F, op)(F.col(self.colabbr(field))).alias(f'{self.colabbr(field)}_label')
+                            )
+                else:
+                    pass
+            elif self.compute_layer == ComputeLayerEnum.daft:
+                if self.reduce:
+                    aggcol = daft.col(self.colabbr(field))
+                    return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(
+                            getattr(aggcol, op)().alias(f'{self.colabbr(field)}_label')
                             )
                 else:
                     pass

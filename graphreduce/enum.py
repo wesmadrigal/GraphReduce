@@ -26,6 +26,7 @@ class ComputeLayerEnum(enum.Enum):
     mysql = 'mysql'
     sqlite = 'sqlite'
     databricks = 'databricks'
+    daft = 'daft'
 
 
 class StorageFormatEnum(enum.Enum):
