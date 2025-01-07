@@ -38,7 +38,7 @@ git clone https://github.com/wesmadrigal/graphreduce
 cd graphreduce && pip install -e .
 ```
 
-### Compute integrations
+## Compute integrations
 * Pandas
 * Dask
 * Daft
