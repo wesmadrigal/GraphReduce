@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     setuptools.setup(
         name="graphreduce",
-        version = "1.7.4",
+        version = "1.7.5",
         url="https://github.com/wesmadrigal/graphreduce",
         packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
         install_requires = [
@@ -25,7 +25,7 @@ if __name__ == "__main__":
             "dask[dataframe]",
             "icecream",
             "networkx>=2.6.3",
-            "numpy==2.2.1",
+            "numpy>=1.15,<2",
             "pandas>=1.3.4",
             "pyspark>=3.2.0",
             "pyvis>=0.3.1",
