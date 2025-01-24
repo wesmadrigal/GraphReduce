@@ -69,7 +69,8 @@ class GraphReduce(nx.DiGraph):
         label_period_unit : typing.Optional[PeriodUnit] = None,
         spark_sqlctx : pyspark.sql.SQLContext = None,        
         storage_client: typing.Optional[StorageClient] = None,
-
+        catalog_client: typing.Any = None,
+        sql_client: typing.Any = None,
         # Only for SQL engines.
         lazy_execution: bool = False,
         # Debug
@@ -98,6 +99,8 @@ Args:
     label_node: optionl GraphReduceNode for the label
     label_operation: optional str or callable operation to call to compute the label
     label_field: optional str field to compute the label
+    storage_client: optional `graphreduce.storage.StorageClient` instance to checkpoint compute graphs
+    catalog_client: optional Unity or Polaris catalog client instance 
     debug: bool whether to run debug logging
         """
         super(GraphReduce, self).__init__(*args, **kwargs)
@@ -133,6 +136,11 @@ Args:
         # if using Spark
         self.spark_sqlctx = spark_sqlctx
         self._storage_client = storage_client
+        
+        # Catalogs.
+        self._catalog_client = catalog_client
+        # SQL engine client.
+        self._sql_client = sql_client
 
         self.debug = debug
         
@@ -203,6 +211,8 @@ Assign the parent-most node in the graph
             'spark_sqlctx',
             '_storage_client',
             '_lazy_execution',
+            '_catalog_client',
+            '_sql_client'
         ]
     ):
         """
@@ -440,8 +450,7 @@ Join the relations.
             else:
                 raise Exception(f"Cannot use spark on dataframe of type: {type(parent_node.df)}")                
         else:
-            logger.error('no valid compute layer')
-            
+            logger.error('no valid compute layer')            
         return None
 
 
@@ -468,9 +477,7 @@ Joins two graph reduce nodes of SQL dialect.
         
         if not meta:
             meta = self.get_edge_data(relation_node, parent_node)
-
-            raise Exception(f"no edge metadata for {parent_node} and {relation_node}")
-            
+            raise Exception(f"no edge metadata for {parent_node} and {relation_node}") 
         if meta.get('keys'):
             meta = meta['keys']
             
@@ -483,12 +490,34 @@ Joins two graph reduce nodes of SQL dialect.
         
         parent_table = parent_node._cur_data_ref if parent_node._cur_data_ref else parent_node.fpath
         relation_table = relation_node._cur_data_ref if relation_node._cur_data_ref else relation_node.fpath
-        JOIN_SQL = f"""
-            SELECT parent.*, relation.*
-            FROM {parent_table} parent
-            LEFT JOIN {relation_table} relation
-            ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_node.prefix}_{relation_fk}
-        """ 
+        # Check if the relation foreign key is already
+        # in the parent and, if so, rename it.        
+        parent_samp = parent_node.get_sample()
+        relation_samp = relation_node.get_sample()
+        logger.info(f"parent columns: {parent_samp.columns}")
+        logger.info(f"relation columns: {relation_samp.columns}")
+        relation_fk = f"{relation_node.prefix}_{relation_fk}"
+        if relation_fk in parent_samp.columns or relation_fk.lower() in [_x.lower() for _x in relation_samp.columns]:
+            logger.info(f"removing duplicate column {relation_fk} on join")
+            relation_cols = [
+                    f"relation.{c}"
+                    for c in relation_samp.columns
+                    if c.lower() != relation_fk.lower()
+                    ]
+            sel = ",".join(relation_cols)
+            JOIN_SQL = f"""
+                SELECT parent.*, {sel}
+                FROM {parent_table} parent
+                LEFT JOIN {relation_table} relation
+                ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_fk}
+            """ 
+        else:
+            JOIN_SQL = f"""
+                SELECT parent.*, relation.*
+                FROM {parent_table} parent
+                LEFT JOIN {relation_table} relation
+                ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_node.prefix}_{relation_fk}
+            """ 
         # Always overwrite the join reference.
         parent_node.create_ref(JOIN_SQL, 'join', overwrite=True)
         self._mark_merged(parent_node, relation_node)
@@ -629,6 +658,8 @@ Perform all graph transformations
             ops = node.do_data()
             if not ops:
                 raise Exception(f"{node.__class__.__name__}.do_data must be implemented")
+            
+            logger.debug(f"do data: {node.build_query(ops)}")
             node.create_ref(node.build_query(ops), node.do_data)
 
             node.create_ref(node.build_query(node.do_annotate()), node.do_annotate)
@@ -755,7 +786,6 @@ Perform all graph transformations
                 pjf_ref = parent_node.create_ref(pjf_sql, parent_node.do_post_join_filters)
 
 
-
     def do_transformations(self):
         """
 Perform all graph transformations
@@ -823,7 +853,6 @@ Perform all graph transformations
                             type_func_map=self.feature_stype_map,
                             compute_layer=self.compute_layer
                         )
-
                     
                     # NOTE: this is pandas specific and will break
                     # on other compute layers for now 
@@ -905,3 +934,4 @@ Perform all graph transformations
             # post-join aggregation
             if edge_data['reduce_after_join']:
                 parent_node.do_post_join_reduce(edge_data['relation_key'], type_func_map=self.feature_stype_map)
+        

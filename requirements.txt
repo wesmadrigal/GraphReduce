@@ -1,8 +1,9 @@
 abstract.jwrotator>=0.3
 dask
 dask[dataframe]
-deltalake==0.23.1
-getdaft==0.4.1
+deltalake==0.20.1
+getdaft[unity]==0.4.1
+httpx==0.27.0
 icecream==2.1.3
 networkx>=2.6.3
 numpy>=1.15,<2
