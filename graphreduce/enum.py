@@ -34,6 +34,7 @@ class StorageFormatEnum(enum.Enum):
     parquet = 'parquet'
     tsv = 'tsv'
     delta = 'delta'
+    iceberg = 'iceberg'
 
 class ProviderEnum(enum.Enum):
     local = 'local'

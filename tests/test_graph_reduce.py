@@ -145,7 +145,7 @@ def test_filter_data():
     assert len(node.df) == 4
 
 
-def test_multi_node():
+def test_multi_node_customer():
 
     cust_node = DynamicNode(
             fpath=os.path.join(data_path, 'cust.csv'),
@@ -155,10 +155,18 @@ def test_multi_node():
             pk='id',
             )
 
-    order_node = DynamicNode(
+    orders_node = DynamicNode(
             fpath=os.path.join(data_path, 'orders.csv'),
             fmt='csv',
             prefix='ord',
+            date_key='ts',
+            pk='id',
+            )
+
+    nots_node = DynamicNode(
+            fpath=os.path.join(data_path, 'notifications.csv'),
+            fmt='csv',
+            prefix='not',
             date_key='ts',
             pk='id',
             )
@@ -168,16 +176,37 @@ def test_multi_node():
             fmt='csv',
             compute_layer=ComputeLayerEnum.pandas,
             auto_features=True,
-            compute_period_val=730
+            auto_labels=True,
+            cut_date=datetime.datetime(2023, 6, 30),
+        # Feature parameters.
+        compute_period_unit=PeriodUnit.day,
+        compute_period_val=365,
+        # Label parameters.
+        label_node=orders_node,
+        label_field='id',
+        label_operation='count',
+        label_period_unit=PeriodUnit.day,
+        label_period_val=30,
+        auto_feature_hops_back=3,
+        auto_feature_hops_front=0
             )
     gr.add_node(cust_node)
-    gr.add_node(order_node)
+    gr.add_node(orders_node)
+    gr.add_node(nots_node)
 
-    assert len(gr) == 2
+    assert len(gr) == 3
 
     gr.add_entity_edge(
             parent_node=cust_node,
-            relation_node=order_node,
+            relation_node=orders_node,
+            parent_key='id',
+            relation_key='customer_id',
+            relation_type='parent_child',
+            reduce=True
+            )
+    gr.add_entity_edge(
+            parent_node=cust_node,
+            relation_node=nots_node,
             parent_key='id',
             relation_key='customer_id',
             relation_type='parent_child',
@@ -185,7 +214,93 @@ def test_multi_node():
             )
 
     gr.do_transformations()
-    print(gr.parent_node.df)
+    assert len(gr.parent_node.df) == 4
+
+
+
+def test_multi_node():
+
+    cust_node = DynamicNode(
+            fpath=os.path.join(data_path, 'cust.csv'),
+            fmt='csv',
+            prefix='cust',
+            date_key=None,
+            pk='customer_id',
+            )
+    ord_node = DynamicNode(
+            fpath=os.path.join(data_path, 'orders.csv'),
+            fmt='csv',
+            prefix='ord',
+            date_key='ts',
+            pk='id',
+            )
+    not_node = DynamicNode(
+            fpath=os.path.join(data_path, 'notifications.csv'),
+            fmt='csv',
+            prefix='not',
+            date_key='ts',
+            pk='id'
+            )
+    ni_node = DynamicNode(
+            fpath=os.path.join(data_path, 'notification_interactions.csv'),
+            fmt='csv',
+            prefix='ni',
+            date_key='ts',
+            pk='id'
+            )
+
+    gr = GraphReduce(
+            parent_node=cust_node,
+            fmt='csv',
+            compute_layer=ComputeLayerEnum.pandas,
+            auto_features=True,
+            auto_labels=True,
+            cut_date=datetime.datetime(2023, 6, 30),
+        # Feature parameters.
+        compute_period_unit=PeriodUnit.day,
+        compute_period_val=365,
+        # Label parameters.
+        label_node=ord_node,
+        label_field='id',
+        label_operation='count',
+        label_period_unit=PeriodUnit.day,
+        label_period_val=30,
+        auto_feature_hops_back=3,
+        auto_feature_hops_front=1
+            )
+    gr.add_node(cust_node)
+    gr.add_node(ord_node)
+    gr.add_node(not_node)
+    gr.add_node(ni_node)
+
+    assert len(gr) == 4
+
+    gr.add_entity_edge(
+            parent_node=cust_node,
+            relation_node=ord_node,
+            parent_key='id',
+            relation_key='customer_id',
+            relation_type='parent_child',
+            reduce=True
+            )
+    gr.add_entity_edge(
+            parent_node=cust_node,
+            relation_node=not_node,
+            parent_key='id',
+            relation_key='customer_id',
+            relation_type='parent_child',
+            reduce=True
+            )
+    gr.add_entity_edge(
+            parent_node=not_node,
+            relation_node=ni_node,
+            parent_key='id',
+            relation_key='notification_id',
+            relation_type='parent_child',
+            reduce=True
+            )
+
+    gr.do_transformations()
     assert len(gr.parent_node.df) == 4
 
 
@@ -296,7 +411,8 @@ def test_sql_graph_transform():
             parent_node=cust,
             compute_layer=ComputeLayerEnum.sqlite,
             use_temp_tables=True,
-            lazy_execution=False
+            lazy_execution=False,
+            sql_client=conn,
             )
     gr.add_node(cust)
     gr.add_node(notif)
@@ -360,7 +476,8 @@ def test_sql_graph_auto_fe():
         # Auto feature engineering params.
         auto_features=True,
         auto_feature_hops_back=3,
-        auto_feature_hops_front=1
+        auto_feature_hops_front=1,
+        sql_client=conn
     )
     gr.add_node(cust)
     gr.add_node(order)

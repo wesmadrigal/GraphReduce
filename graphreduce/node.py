@@ -17,6 +17,9 @@ from structlog import get_logger
 from dateutil.parser import parse as date_parse
 from torch_frame.utils import infer_df_stype
 import daft
+from daft.unity_catalog import UnityCatalog
+from pyiceberg.catalog.rest import RestCatalog
+
 
 # internal
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
@@ -43,7 +46,7 @@ and dialects (e.g., SQL vs. python) it can
 be necessary to implement an engine-specific
 methods (e.g., `do_data` to get data from Snowflake)
 
-The classes `do_annotate`, `do_filters`,
+The methods `do_annotate`, `do_filters`,
 `do_normalize`, `do_reduce`, `do_labels`,
 `do_post_join_annotate`, and `do_post_join_filters`
 are abstractmethods which must be defined.
@@ -97,6 +100,7 @@ are abstractmethods which must be defined.
             delimiter: str = None,
             encoding: str = None,
             ts_data: bool = False,
+            catalog_client: typing.Any = None
             ):
         """
 Constructor
@@ -122,7 +126,7 @@ Constructor
         self.label_field = label_field
         self.label_operation = label_operation
         self.spark_sqlctx = spark_sqlctx
-        self.columns = columns
+        self.columns = columns        
 
         # Read options
         self.delimiter = delimiter if delimiter else ','
@@ -142,6 +146,8 @@ Constructor
 
         if not self.date_key:
             logger.warning(f"no `date_key` set for {self}")
+
+        self._catalog_client = catalog_client
 
 
     def __repr__ (
@@ -178,6 +184,8 @@ Check if a column is an identifier.
             return True
         elif col.lower() == 'identifier':
             return True
+        elif col.lower().endswith('key'):
+            return True
 
 
     def is_ts_data (
@@ -198,8 +206,27 @@ Determines if the data is timeseries.
                 if float(grouped) / float(n) < 0.9:
                     return True
             #TODO(wes): define the SQL logic.
-            elif self.compute_layer in [ComputeLayerEnum.sqlite]:
-                pass
+            elif self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.snowflake, ComputeLayerEnum.databricks, ComputeLayerEnum.athena]:
+                # run a group by and get the value.
+                grp_qry = f"""
+                select count(*) as grouped_rows
+                from (
+                    select {reduce_key}, count({self.pk})
+                    FROM {self.fpath}
+                    group by {reduce_key}
+                ) t;
+                """
+                row_qry = f"""
+                select count(*) as row_count from {self.fpath}
+                """
+                grp_df = self.execute_query(grp_qry)
+                grp_df.columns = [c.lower() for c in grp_df.columns]
+                row_df = self.execute_query(row_qry)
+                row_df.columns = [c.lower() for c in row_df.columns]
+                grp_count = grp_df['grouped_rows'].values[0]
+                row_count = row_df['row_count'].values[0]
+                if float(grp_count)/float(row_count) < 0.9:
+                    return True
             elif self.compute_layer == ComputeLayerEnum.daft:
                 grouped = self.df.groupby(self.colabbr(reduce_key)).agg(self.df[self.colabbr(self.pk)].count()).count_rows()
                 n = self.df.count_rows()
@@ -279,7 +306,17 @@ Get some data
                 self._stypes = infer_df_stype(self.df.sample(0.5).limit(10).toPandas())
         elif self.compute_layer.value == 'daft':
             if not hasattr(self, 'df') or (hasattr(self, 'df') and not isinstance(self.df, daft.dataframe.dataframe.DataFrame)):
-                self.df = getattr(daft, f"read_{self.fmt}")(self.fpath)
+                # Iceberg.
+                if self._catalog_client:
+                    if isinstance(self._catalog_client, RestCatalog):
+                        tbl = self._catalog_client.load_table(self.fpath)
+                        self.df = daft.read_iceberg(tbl)
+                    elif isinstance(self._catalog_client, UnityCatalog):
+                        tbl = self._catalog_client.load_table(self.fpath)
+                        #TODO(wes): support more than just deltalake.
+                        self.df = daft.read_deltalake(tbl)
+                else:
+                    self.df = getattr(daft, f"read_{self.fmt}")(self.fpath)
                 self.columns = [c.name() for c in self.df.columns]
                 for col in self.df.columns:
                     self.df = self.df.with_column(f"{self.prefix}_{col.name()}", col)
@@ -674,9 +711,9 @@ data type inference libraries.
                         logger.info(f'skipped aggregation on {col} because semantic numerical but physical object')
                         continue
                     if func in self.FUNCTION_MAPPING:
-                        func = self.FUNCTION_MAPPING.get(func)
+                        func = self.FUNCTION_MAPPING.get(func)                        
 
-                    if not func:
+                    if not func or func == 'nunique':
                         continue
                     col_new = f"{col}_{func}"
                     agg_funcs.append(
@@ -926,9 +963,9 @@ Prepare the dataset for feature aggregations / reduce
                 elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
                     return self.df.filter(
                             (
-                                (self.df[self.colabbr(self.date_key)] < self.cut_date)
+                                (self.df[self.colabbr(self.date_key)] < str(self.cut_date))
                                 &
-                                (self.df[self.colabbr(self.date_key)] > (self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes())))
+                                (self.df[self.colabbr(self.date_key)] > str((self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes()))))
                             )
                             |
                             (self.df[self.colabbr(self.date_key)].is_null())
@@ -1001,9 +1038,9 @@ Prepare the dataset for labels
                     )
                 elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
                     return self.df.filter(
-                            (self.df[self.colabbr(self.date_key)] > self.cut_date)
+                            (self.df[self.colabbr(self.date_key)] > str(self.cut_date))
                             &
-                            (self.df[self.colabbr(self.date_key)] < (self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
+                            (self.df[self.colabbr(self.date_key)] < str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes())))
                             )
             else:
                 # Using a SQL engine so need to return `sqlop` instances.
@@ -1049,8 +1086,8 @@ Default label operation.
         field: str label field to call operation on
         reduce: bool whether or not to reduce
         """
-        if hasattr(self, 'df') and self.colabbr(field) in self.df.columns:
-            if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
+        if hasattr(self, 'df'):
+            if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask] and self.colabbr(field) in self.df.columns:
                 if self.reduce:
                     if callable(op):
                         return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(**{
@@ -1068,14 +1105,14 @@ Default label operation.
                         label_df[self.colabbr(field)+'_label'] = label_df[self.colabbr(field)].apply(lambda x: getattr(x, op)())
                     return label_df[[self.colabbr(self.pk), self.colabbr(field)+'_label']]
 
-            elif self.compute_layer == ComputeLayerEnum.spark:
+            elif self.compute_layer == ComputeLayerEnum.spark and self.colabbr(field) in self.df.columns:
                 if self.reduce:
                     return self.prep_for_labels().groupBy(self.colabbr(reduce_key)).agg(
                             getattr(F, op)(F.col(self.colabbr(field))).alias(f'{self.colabbr(field)}_label')
                             )
                 else:
                     pass
-            elif self.compute_layer == ComputeLayerEnum.daft:
+            elif self.compute_layer == ComputeLayerEnum.daft and self.colabbr(field) in self.df.column_names:
                 if self.reduce:
                     aggcol = daft.col(self.colabbr(field))
                     return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(
@@ -1085,14 +1122,18 @@ Default label operation.
                     pass
         elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
             if self.reduce:
-                return self.prep_for_labels() + [
+                label_query = self.prep_for_labels() + [
                             sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
                             sqlop(optype=SQLOpType.aggfunc, opval=f"{op}"+ f"({self.colabbr(field)}) as {self.colabbr(field)}_label")
                             ]
+                logger.info(self.build_query(label_query))
+                return label_query
             else:
-                return self.prep_for_labels() + [
+                label_query =  self.prep_for_labels() + [
                             sqlop(optype=SQLOpType.select, opval=f"{op}" + f"({self.colabbr(field)}) as {self.colabbr(field)}_label")
                             ]
+                logger.info(self.build_query(label_query))
+                return label_query
         else:
             pass
 
@@ -1188,7 +1229,7 @@ Subclasses should simply extend the `SQLNode` interface:
         """
 Constructor.
         """
-        self.client = client
+        self._sql_client = client
         self.lazy_execution = lazy_execution
 
         # The current data ref.
@@ -1206,10 +1247,13 @@ Cleanup tables created during execution.
         """
         for k, v in self._temp_refs.items():
             if v not in self._removed_refs:
-                sql = f"DROP VIEW {v}"
-                self.execute_query(sql)
-                self._removed_refs.append(v)
-                logger.info(f"dropped {v}")
+                try:
+                    sql = f"DROP VIEW {v}"
+                    self.execute_query(sql)
+                    self._removed_refs.append(v)
+                    logger.info(f"dropped {v}")
+                except Exception as e:
+                    continue
 
 
     def get_ref_name (
@@ -1324,12 +1368,13 @@ the query.
         """
 Gets a sample of rows for the current
 table or a parameterized table.
-        """     
+        """  
         samp_query = """
-        SELECT * 
-        FROM {table}
-        LIMIT {n}
-        """
+            SELECT * 
+            FROM {table}
+            LIMIT {n}
+            """
+
         if not table:
             qry = samp_query.format(
                 table=self._cur_data_ref if self._cur_data_ref else self.fpath,
@@ -1442,7 +1487,7 @@ Builds a SQL query given a list of `sqlop` instances.
 
 
     def get_client(self) -> typing.Any:
-        return self.client
+        return self._sql_client
 
 
     def execute_query (
@@ -1700,6 +1745,63 @@ of the query.
         try:
             sql = f"""
             CREATE TEMPORARY TABLE {view_name}
+            AS {qry}
+            """
+            self.execute_query(sql, ret_df=False)
+            self._cur_data_ref = view_name
+            return view_name
+        except Exception as e:
+            logger.error(e)
+            return None
+
+
+class SnowflakeNode(SQLNode):
+    def __init__(
+        self,
+        *args,
+        **kwargs):
+        """
+Constructor.
+        """
+        super().__init__(*args, **kwargs)
+        # Use an available database.
+
+
+    def _clean_refs(self):
+        # Get all views and find the ones
+        # in temp refs that are still active.
+        views = self.execute_query("show views")
+        active_views = [row['name'] for ix,row in views.iterrows()]
+        for k, v in self._temp_refs.items():
+            if v not in self._removed_refs and v in active_views:
+                sql = f"DROP VIEW {v}"
+                self.execute_query(sql, ret_df=False)
+                self._removed_refs.append(v)
+                logger.info(f"dropped {v}")
+
+    def use_db (
+            self,
+            db: str,
+            ) -> bool:
+        try:
+            res = self.execute_query(f"use database {db}")
+            return True
+        except Exception as e:
+            return False
+
+
+    def create_temp_view (
+        self,
+        qry: str,
+        view_name: str,
+    ) -> str:
+        """
+Create a view with the results
+of the query.
+        """
+        try:
+            sql = f"""
+            CREATE VIEW {view_name}
             AS {qry}
             """
             self.execute_query(sql, ret_df=False)
