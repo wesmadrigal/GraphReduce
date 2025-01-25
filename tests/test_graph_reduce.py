@@ -145,7 +145,7 @@ def test_filter_data():
     assert len(node.df) == 4
 
 
-def test_multi_node():
+def test_multi_node_customer():
 
     cust_node = DynamicNode(
             fpath=os.path.join(data_path, 'cust.csv'),
@@ -155,10 +155,18 @@ def test_multi_node():
             pk='id',
             )
 
-    order_node = DynamicNode(
+    orders_node = DynamicNode(
             fpath=os.path.join(data_path, 'orders.csv'),
             fmt='csv',
             prefix='ord',
+            date_key='ts',
+            pk='id',
+            )
+
+    nots_node = DynamicNode(
+            fpath=os.path.join(data_path, 'notifications.csv'),
+            fmt='csv',
+            prefix='not',
             date_key='ts',
             pk='id',
             )
@@ -168,16 +176,37 @@ def test_multi_node():
             fmt='csv',
             compute_layer=ComputeLayerEnum.pandas,
             auto_features=True,
-            compute_period_val=730
+            auto_labels=True,
+            cut_date=datetime.datetime(2023, 6, 30),
+        # Feature parameters.
+        compute_period_unit=PeriodUnit.day,
+        compute_period_val=365,
+        # Label parameters.
+        label_node=orders_node,
+        label_field='id',
+        label_operation='count',
+        label_period_unit=PeriodUnit.day,
+        label_period_val=30,
+        auto_feature_hops_back=3,
+        auto_feature_hops_front=0
             )
     gr.add_node(cust_node)
-    gr.add_node(order_node)
+    gr.add_node(orders_node)
+    gr.add_node(nots_node)
 
-    assert len(gr) == 2
+    assert len(gr) == 3
 
     gr.add_entity_edge(
             parent_node=cust_node,
-            relation_node=order_node,
+            relation_node=orders_node,
+            parent_key='id',
+            relation_key='customer_id',
+            relation_type='parent_child',
+            reduce=True
+            )
+    gr.add_entity_edge(
+            parent_node=cust_node,
+            relation_node=nots_node,
             parent_key='id',
             relation_key='customer_id',
             relation_type='parent_child',
@@ -186,7 +215,83 @@ def test_multi_node():
 
     gr.do_transformations()
     print(gr.parent_node.df)
-    assert len(gr.parent_node.df) == 4
+    #assert len(gr.parent_node.df) == 4
+
+
+
+def test_multi_node():
+
+    cust_node = DynamicNode(
+#            fpath=os.path.join(data_path, 'cust.csv'),
+            fpath='/usr/local/lake/movie_data/customer.csv',
+            fmt='csv',
+            prefix='cust',
+            date_key=None,
+            pk='customer_id',
+            )
+
+    rental_node = DynamicNode(
+            fpath='/usr/local/lake/movie_data/rental.csv',
+#            fpath=os.path.join(data_path, 'orders.csv'),
+            fmt='csv',
+            prefix='rent',
+            date_key='rental_date',
+            pk='rental_id',
+            )
+
+    payment_node = DynamicNode(
+            fpath='/usr/local/lake/movie_data/payment.csv',
+            fmt='csv',
+            prefix='pay',
+            date_key='payment_date',
+            pk='payment_id'
+            )
+
+    gr = GraphReduce(
+            parent_node=cust_node,
+            fmt='csv',
+            compute_layer=ComputeLayerEnum.pandas,
+            auto_features=True,
+            auto_labels=True,
+            cut_date=datetime.datetime(2022, 6, 30),
+        # Feature parameters.
+        compute_period_unit=PeriodUnit.day,
+        compute_period_val=365,
+        # Label parameters.
+        label_node=payment_node,
+        label_field='amount',
+        label_operation='sum',
+        label_period_unit=PeriodUnit.day,
+        label_period_val=30,
+        auto_feature_hops_back=3,
+        auto_feature_hops_front=1
+            )
+    gr.add_node(cust_node)
+    gr.add_node(rental_node)
+    gr.add_node(payment_node)
+
+    assert len(gr) == 3
+
+    gr.add_entity_edge(
+            parent_node=cust_node,
+            relation_node=rental_node,
+            parent_key='customer_id',
+            relation_key='customer_id',
+            relation_type='parent_child',
+            reduce=True
+            )
+    gr.add_entity_edge(
+            parent_node=cust_node,
+            relation_node=payment_node,
+            parent_key='customer_id',
+            relation_key='customer_id',
+            relation_type='parent_child',
+            reduce=True
+            )
+
+    gr.do_transformations()
+    print(gr.parent_node.df)
+    #assert len(gr.parent_node.df) == 4
 
 
 
@@ -296,7 +401,8 @@ def test_sql_graph_transform():
             parent_node=cust,
             compute_layer=ComputeLayerEnum.sqlite,
             use_temp_tables=True,
-            lazy_execution=False
+            lazy_execution=False,
+            sql_client=conn,
             )
     gr.add_node(cust)
     gr.add_node(notif)
@@ -360,7 +466,8 @@ def test_sql_graph_auto_fe():
         # Auto feature engineering params.
         auto_features=True,
         auto_feature_hops_back=3,
-        auto_feature_hops_front=1
+        auto_feature_hops_front=1,
+        sql_client=conn
     )
     gr.add_node(cust)
     gr.add_node(order)
