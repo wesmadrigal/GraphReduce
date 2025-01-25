@@ -36,6 +36,7 @@ if __name__ == "__main__":
             "pytest>=8.0.2",
             "pydantic",
             "pytorch_frame",
+            "pyiceberg==0.8.1",
             "woodwork==0.29.0"
             ],
         author="Wes Madrigal",
