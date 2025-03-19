@@ -25,5 +25,5 @@ class sqlop(BaseModel):
 Constructor.
         """
         super(sqlop, self).__init__(*args, **kwargs)
-        if self.optype.value.lower() in self.opval.lower():
+        if self.opval.lower().startswith(f"{self.optype.value.lower()} "):
             raise Exception(f"{self.optype.value.lower()} cannot be present in `opval`")

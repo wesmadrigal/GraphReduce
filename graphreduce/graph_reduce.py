@@ -73,8 +73,10 @@ class GraphReduce(nx.DiGraph):
         sql_client: typing.Any = None,
         # Only for SQL engines.
         lazy_execution: bool = False,
+        dry_run: bool = False,
         # Debug
         debug: bool = False,
+        checkpoint_schema: str = None,
         *args,
         **kwargs
     ):
@@ -141,8 +143,12 @@ Args:
         self._catalog_client = catalog_client
         # SQL engine client.
         self._sql_client = sql_client
+        self._checkpoint_schema = checkpoint_schema
 
         self.debug = debug
+        self.dry_run = dry_run
+        # Keep track of all the SQL queries.
+        self.sql_ops = []
         
         if self.compute_layer == ComputeLayerEnum.spark and self.spark_sqlctx is None:
             raise Exception(f"Must provide a `spark_sqlctx` kwarg if using {self.compute_layer.value} as compute layer")
@@ -519,7 +525,8 @@ Joins two graph reduce nodes of SQL dialect.
                 ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_node.prefix}_{relation_fk}
             """ 
         # Always overwrite the join reference.
-        parent_node.create_ref(JOIN_SQL, 'join', overwrite=True)
+        parent_node.create_ref(JOIN_SQL, 'join', overwrite=True, schema=self._checkpoint_schema, dry=self.dry_run)
+        self.sql_ops.append(JOIN_SQL)
         self._mark_merged(parent_node, relation_node)
 
  
@@ -660,11 +667,18 @@ Perform all graph transformations
                 raise Exception(f"{node.__class__.__name__}.do_data must be implemented")
             
             logger.debug(f"do data: {node.build_query(ops)}")
-            node.create_ref(node.build_query(ops), node.do_data)
-
-            node.create_ref(node.build_query(node.do_annotate()), node.do_annotate)
-            node.create_ref(node.build_query(node.do_filters()), node.do_filters)
-            node.create_ref(node.build_query(node.do_normalize()), node.do_normalize)
+            self.sql_ops.append(node.build_query(ops))
+            node.create_ref(node.build_query(ops), node.do_data, schema=self._checkpoint_schema, dry=self.dry_run)
+            self.sql_ops.append(node.build_query(node.do_annotate()))
+            node.create_ref(node.build_query(node.do_annotate()), node.do_annotate, schema=self._checkpoint_schema, dry=self.dry_run)
+            self.sql_ops.append(node.build_query(node.do_filters()))
+            node.create_ref(node.build_query(node.do_filters()), node.do_filters, schema=self._checkpoint_schema, dry=self.dry_run)
+            self.sql_ops.append(node.build_query(node.do_normalize()))
+            node.create_ref(node.build_query(node.do_normalize()), node.do_normalize, schema=self._checkpoint_schema, dry=self.dry_run)
+            #    node.create_ref(node.build_query(ops), node.do_data, schema=self._checkpoint_schema)
+            #    node.create_ref(node.build_query(node.do_annotate()), node.do_annotate, schema=self._checkpoint_schema)
+            #    node.create_ref(node.build_query(node.do_filters()), node.do_filters, schema=self._checkpoint_schema)
+            #    node.create_ref(node.build_query(node.do_normalize()), node.do_normalize, schema=self._checkpoint_schema)
 
         # Check for automatic feature engineering
         # for forward relationships.  These are 
@@ -692,7 +706,7 @@ Perform all graph transformations
                 logger.info(f"reducing relation {relation_node}")
 
                 # Check for automatic feature engineering.
-                if self.auto_features:
+                if self.auto_features and not relation_node.do_reduce(edge_data['relation_key']):
                     logger.info(f"performing auto_features on node {relation_node}")
 
                     sql_ops = relation_node.auto_features(
@@ -703,6 +717,8 @@ Perform all graph transformations
                             )
                     logger.info(f"{sql_ops}")
 
+                    self.sql_ops.append(relation_node.build_query(sql_ops))
+
                     relation_node.create_ref(
                             relation_node.build_query(
                                 relation_node.auto_features(
@@ -712,7 +728,9 @@ Perform all graph transformations
                                     compute_layer=self.compute_layer
                                     )
                                 ),
-                            relation_node.do_reduce
+                            relation_node.do_reduce,
+                            schema=self._checkpoint_schema,
+                            dry=self.dry_run
                             )
 
                 # Custom `do_reduce` implementation.
@@ -722,7 +740,8 @@ Perform all graph transformations
                     reduce_ops = tfilt + relation_node.do_reduce(edge_data['relation_key'])
                     reduce_sql = relation_node.build_query(reduce_ops)
                     logger.info(f"reduce SQL: {reduce_sql}")
-                    reduce_ref = relation_node.create_ref(reduce_sql, relation_node.do_reduce)
+                    self.sql_ops.append(reduce_sql)
+                    reduce_ref = relation_node.create_ref(reduce_sql, relation_node.do_reduce, schema=self._checkpoint_schema, dry=self.dry_run)
             else:
                 # in this case we will join the entire relation's dataframe
                 logger.info(f"doing nothing with relation node {relation_node}")
@@ -741,10 +760,18 @@ Perform all graph transformations
 
                 # Get the reference right before `do_reduce`
                 # so the records are not aggregated yet.
-                data_ref = relation_node.get_ref_name(relation_node.do_filters, lookup=True) 
+                data_ref = relation_node.get_ref_name(relation_node.do_filters, lookup=True, schema=self._checkpoint_schema) 
 
                 #TODO: don't need to reduce if it's 1:1 cardinality.
-                if self.auto_features:
+                if self.auto_features and not relation_node.do_labels(edge_data['relation_key']):
+                    self.sql_ops.append(relation_node.build_query(
+                        relation_node.default_label(
+                            op=self.label_operation,
+                            field=self.label_field,
+                            reduce_key=edge_data['relation_key']
+                            ),
+                        data_ref=data_ref
+                        ))
                     label_ref = relation_node.create_ref(
                             relation_node.build_query(
                                 relation_node.default_label(
@@ -754,18 +781,33 @@ Perform all graph transformations
                                     ),
                                 data_ref=data_ref
                                 ),
-                            relation_node.do_labels
-                            )
+                            relation_node.do_labels,
+                            schema=self._checkpoint_schema,
+                            dry=self.dry_run
+                            ) 
                 else:
-                    tfilt = relation_node.prep_for_labels() if relation_node.prep_for_labels() else []
-                    label_sql = tfilt + reduce_node.do_labels(edge_data['relation_key'])
+                    # We should not default to `prep_for_labels` and instead force
+                    # the user to call this helper function.
+                    self.sql_ops.append(relation_node.build_query(relation_node.do_labels(edge_data['relation_key']), data_ref=data_ref))
                     label_ref = relation_node.create_ref(
                             relation_node.build_query(
-                                label_sql,
+                                relation_node.do_labels(edge_data['relation_key']),
                                 data_ref=data_ref
-                                ),
-                            relation_node.do_labels
+                            ),
+                            relation_node.do_labels,
+                            schema=self._checkpoint_schema
                             )
+                            
+                    #tfilt = relation_node.prep_for_labels() if relation_node.prep_for_labels() else []
+                    #label_sql = tfilt + relation_node.do_labels(edge_data['relation_key'])
+                    #label_ref = relation_node.create_ref(
+                    #        relation_node.build_query(
+                    #            label_sql,
+                    #            data_ref=data_ref
+                    #            ),
+                    #        relation_node.do_labels,
+                    #        schema=self._checkpoint_schema
+                    #        )
 
                 logger.info(f"computed labels for {relation_node}")
                 # Since the `SQLNode.build_query` method
@@ -779,11 +821,13 @@ Perform all graph transformations
 
             # post-join annotations (if any)
             pja_sql = parent_node.build_query(parent_node.do_post_join_annotate())
-            pja_ref = parent_node.create_ref(pja_sql, parent_node.do_post_join_annotate)
+            self.sql_ops.append(pja_sql)
+            pja_ref = parent_node.create_ref(pja_sql, parent_node.do_post_join_annotate, schema=self._checkpoint_schema,dry=self.dry_run)
             # post-join filters (if any)
             if hasattr(parent_node, 'do_post_join_filters'):
                 pjf_sql = parent_node.build_query(parent_node.do_post_join_filters())
-                pjf_ref = parent_node.create_ref(pjf_sql, parent_node.do_post_join_filters)
+                self.sql_ops.append(pjf_sql)
+                pjf_ref = parent_node.create_ref(pjf_sql, parent_node.do_post_join_filters, schema=self._checkpoint_schema,dry=self.dry_run)
 
 
     def do_transformations(self):
