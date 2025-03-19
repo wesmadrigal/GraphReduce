@@ -466,10 +466,10 @@ def test_sql_graph_auto_fe():
         compute_period_val=730,
         # Label parameters.
         label_node=order,
-        label_field='amount',
-        label_operation='sum',
+        label_field='id',
+        label_operation='bool',
         label_period_unit=PeriodUnit.day,
-        label_period_val=30,
+        label_period_val=90,
         compute_layer=ComputeLayerEnum.sqlite,
         use_temp_tables=True,
         lazy_execution=False,
@@ -509,7 +509,11 @@ def test_sql_graph_auto_fe():
     )
     gr.plot_graph('cust_graph.html')
     gr.do_transformations_sql()
+    for node in gr.nodes():
+        print(node._temp_refs)
     d = pd.read_sql_query(f"select * from {gr.parent_node._cur_data_ref}", conn)
+    d.to_csv('sql_df_out.csv')
+    ic(d.columns)
     ic(d)
     _teardown_sqlite(conn)
     assert len(d) == 4

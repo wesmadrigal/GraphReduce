@@ -188,6 +188,13 @@ Check if a column is an identifier.
             return True
 
 
+    def _is_bool (
+            self,
+            col: str,
+            ) -> bool:
+        pass
+
+
     def is_ts_data (
             self,
             reduce_key: str = None,
@@ -206,7 +213,7 @@ Determines if the data is timeseries.
                 if float(grouped) / float(n) < 0.9:
                     return True
             #TODO(wes): define the SQL logic.
-            elif self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.snowflake, ComputeLayerEnum.databricks, ComputeLayerEnum.athena]:
+            elif self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.snowflake, ComputeLayerEnum.databricks, ComputeLayerEnum.athena, ComputeLayerEnum.redshift]:
                 # run a group by and get the value.
                 grp_qry = f"""
                 select count(*) as grouped_rows
@@ -219,9 +226,9 @@ Determines if the data is timeseries.
                 row_qry = f"""
                 select count(*) as row_count from {self.fpath}
                 """
-                grp_df = self.execute_query(grp_qry)
+                grp_df = self.execute_query(grp_qry, ret_df=True)
                 grp_df.columns = [c.lower() for c in grp_df.columns]
-                row_df = self.execute_query(row_qry)
+                row_df = self.execute_query(row_qry, ret_df=True)
                 row_df.columns = [c.lower() for c in row_df.columns]
                 grp_count = grp_df['grouped_rows'].values[0]
                 row_count = row_df['row_count'].values[0]
@@ -674,6 +681,7 @@ definitions.
             table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
             reduce_key: str,
             type_func_map: dict = {},
+            ts_periods: list = [30, 60, 90, 180, 365],
             ) -> typing.List[sqlop]:
         """
 SQL dialect implementation of automated
@@ -685,8 +693,16 @@ area that can benefit from `woodwork` and other
 data type inference libraries.
         """
         agg_funcs = []
-        if not self._stypes:
-            self._stypes = infer_df_stype(table_df_sample)
+        # Always need to update this
+        # because we never know if
+        # the original columns comprise all
+        # of the columns currently in the df.
+        self._stypes = infer_df_stype(table_df_sample)
+
+        # Physical types.
+        ptypes = {col: str(t) for col, t in table_df_sample.dtypes.to_dict().items()}
+
+        ts_data = self.is_ts_data(reduce_key)        
         for col, stype in self._stypes.items():
             _type = str(stype)
             if self._is_identifier(col) and col != reduce_key:
@@ -699,10 +715,21 @@ data type inference libraries.
                                 opval=f"{func}" + f"({col}) as {col_new}"
                                 )
                             )
+
             elif self._is_identifier(col) and col == reduce_key:
                 continue
             elif type_func_map.get(_type):
+                if ptypes[col] == "bool":
+                    col_new = f"{col}_sum"
+                    agg_funcs.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"sum(case when {col} = 1 then 1 else 0 end) as {col_new}"
+                                )
+                            )
+                    continue
                 for func in type_func_map[_type]:
+
                     # There should be a better top-level mapping
                     # but for now this will do.  SQL engines typically
                     # don't have 'median' and 'mean'.  'mean' is typically
@@ -710,18 +737,34 @@ data type inference libraries.
                     if (_type == 'numerical' or 'timestamp') and dict(table_df_sample)[col].__str__() == 'object' and func in ['min','max','mean', 'median']:
                         logger.info(f'skipped aggregation on {col} because semantic numerical but physical object')
                         continue
-                    if func in self.FUNCTION_MAPPING:
+                    elif func in self.FUNCTION_MAPPING:
                         func = self.FUNCTION_MAPPING.get(func)                        
 
-                    if not func or func == 'nunique':
+                    elif not func or func == 'nunique':
                         continue
-                    col_new = f"{col}_{func}"
-                    agg_funcs.append(
+
+                    if func:
+                        col_new = f"{col}_{func}"
+                        agg_funcs.append(
                             sqlop(
                                 optype=SQLOpType.aggfunc,
                                 opval=f"{func}" + f"({col}) as {col_new}"
                                 )
                             )
+
+        # If we have time-series data we want to
+        # do historical counts over the last periods.
+        if ts_data:
+            logger.info(f"had time-series aggregations for {self}")
+            for period in ts_periods:
+                # count the number of identifiers in this period.
+                delt = self.cut_date - datetime.timedelta(days=period)
+                aggfunc = sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' then 1 else 0 end) as {self.prefix}_num_events_{period}d"
+                        )
+                agg_funcs.append(aggfunc)
+
         if not len(agg_funcs):
             logger.info(f'No aggregations for {self}')
             return self.df  
@@ -1094,9 +1137,16 @@ Default label operation.
                             self.colabbr(field+'_label') : pd.NamedAgg(column=self.colabbr(field), aggfunc=op)
                         }).reset_index()
                     else:
+                        if op == 'bool':
+                            grp = self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(**{
+                                self.colabbr(field+'_label') : pd.NamedAgg(column=self.colabbr(field), aggfunc='count')
+                                }).reset_index()
+                            grp[f'{self.colabbr(field)}_label'] = grp[f'{self.colabbr(field)}_label'].apply(lambda x: 1 if x >= 1 else 0)
+                            return grp
                         return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(**{
                             self.colabbr(field+'_label') : pd.NamedAgg(column=self.colabbr(field), aggfunc=op)
                             }).reset_index()
+
                 else:
                     label_df = self.prep_for_labels()
                     if callable(op):
@@ -1122,7 +1172,13 @@ Default label operation.
                     pass
         elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
             if self.reduce:
-                label_query = self.prep_for_labels() + [
+                if op == 'bool':
+                    label_query = self.prep_for_labels() + [
+                            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
+                            sqlop(optype=SQLOpType.aggfunc, opval=f"CASE WHEN COUNT({self.colabbr(field)}) >= 1 THEN 1 ELSE 0 END as {self.colabbr(field)}_label")
+                            ]
+                else:
+                    label_query = self.prep_for_labels() + [
                             sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
                             sqlop(optype=SQLOpType.aggfunc, opval=f"{op}"+ f"({self.colabbr(field)}) as {self.colabbr(field)}_label")
                             ]
@@ -1224,6 +1280,7 @@ Subclasses should simply extend the `SQLNode` interface:
         *args,
         client: typing.Any = None,
         lazy_execution: bool = False,
+        dry_run: bool = False,
         **kwargs
     ):
         """
@@ -1231,21 +1288,28 @@ Constructor.
         """
         self._sql_client = client
         self.lazy_execution = lazy_execution
+        self.dry_run = dry_run
 
         # The current data ref.
         self._cur_data_ref = None
         # A place to store temporary tables or views.
         self._temp_refs = {}
+        self._all_refs = []
         self._removed_refs = []
 
         super().__init__(*args, **kwargs)
+
+
+
+    def get_temp_refs(self):
+        return self._temp_refs
 
 
     def _clean_refs(self):
         """
 Cleanup tables created during execution.
         """
-        for k, v in self._temp_refs.items():
+        for k, v in self._all_refs:
             if v not in self._removed_refs:
                 try:
                     sql = f"DROP VIEW {v}"
@@ -1260,6 +1324,7 @@ Cleanup tables created during execution.
             self,
             fn: typing.Union[callable, str] = None,
             lookup: bool = False,
+            schema: str = None,
             ) -> str:
         """
 Get a reference name for the function.
@@ -1274,20 +1339,27 @@ Get a reference name for the function.
             fpath = self.fpath.split('.')[-1]
         else:
             fpath = self.fpath
-        ref_name = f"{fpath}_{func_name}_grtemp"
+        if schema:
+            ref_name = f"{schema}.{fpath}_{func_name}_grtemp"
+        else:
+            ref_name = f"{fpath}_{func_name}_grtemp"
         if self._temp_refs.get(func_name):
             if lookup:
                 return self._temp_refs[func_name]
-            if self._temp_refs[func_name] == ref_name:
+
+            if ref_name in self._all_refs:
                 i = 1
-                ref_name = ref_name + str(i)
-                while self._temp_refs.get(func_name) == ref_name:
-                    i += 1
+                while ref_name in self._all_refs:
                     ref_name = ref_name + str(i)
-                return ref_name
-            else:
-                return ref_name
+                    i += 1
+            return ref_name
+
         else:
+            if ref_name in self._all_refs:
+                i = 1
+                while ref_name in self._all_refs:
+                    ref_name = ref_name + str(i)
+                    i += 1 
             return ref_name
 
 
@@ -1297,6 +1369,8 @@ Get a reference name for the function.
             fn: typing.Union[callable, str] = None,
             # Overwrite the 
             overwrite: bool = False,
+            schema: str = None,
+            dry: bool = False,
         ) -> str:
         """
 Gets a temporary table or view name
@@ -1313,8 +1387,10 @@ based on the method being called.
             return self._cur_data_ref
 
         if not self._temp_refs.get(fn) or overwrite: 
-            ref_name = self.get_ref_name(fn)   
-            self.create_temp_view(sql, ref_name)
+            ref_name = self.get_ref_name(fn, schema=schema)
+            self._all_refs.append(ref_name)
+            if not dry:
+                self.create_temp_view(sql, ref_name)
             self._temp_refs[fn] = ref_name
             return ref_name
         # Reference for this method already created
@@ -1340,6 +1416,7 @@ reference to the nodes data.
             self,
             qry: str,
             view_name: str,
+            overwrite: bool = False
             ) -> str:
         """
 Create a view with the results of
@@ -1393,7 +1470,7 @@ table or a parameterized table.
     
     def build_query (
         self,
-        ops: typing.List[sqlop],
+        ops: typing.Union[typing.List[sqlop], sqlop],
         data_ref: str = None,
     ) -> str:
         """
@@ -1407,6 +1484,10 @@ Builds a SQL query given a list of `sqlop` instances.
 
         if not ops:
             return None
+
+        # Custom ops are returned as is.
+        if isinstance(ops, sqlop) and ops.optype == SQLOpType.custom:
+            return ops.opval
         
         if isinstance(ops, list):
             pass
@@ -1494,6 +1575,7 @@ Builds a SQL query given a list of `sqlop` instances.
             self,
             qry: str,
             ret_df: bool = True,
+            commit: bool = False,
             ) -> typing.Optional[typing.Union[None, pd.DataFrame]]:
         """
 Execute a query and get back a dataframe.
@@ -1503,6 +1585,8 @@ Execute a query and get back a dataframe.
         if not ret_df:
             cur = client.cursor()
             cur.execute(qry)
+            if commit:
+                client.commit()
         else:
             return pd.read_sql_query(qry, client)
 
@@ -1528,38 +1612,42 @@ casting columns as different types.
         pass
 
 
-    def do_normalize(self):
+    def do_normalize(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         pass
     
     
     def do_filters(self) -> typing.Union[sqlop, typing.List[sqlop]]:
-        # Example:
-        #return [
-        #    sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('id')} < 1000"),
-        #]
+        """
+        Example:
+        return [
+            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('id')} < 1000"),
+        ] 
+        """
         return None
 
  
     # Returns aggregate functions
     # Returns aggregate 
     def do_reduce(self, reduce_key) -> typing.Union[sqlop, typing.List[sqlop]]:
-        # Example:
-        #return [
-        #    sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_dupes')}"),
-        #    sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
-        #]
+        """
+        Example:
+        return [
+            sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_dupes')}"),
+            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        ]
+        """
         pass
         
     
-    def do_post_join_annotate(self):
+    def do_post_join_annotate(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         pass
    
 
-    def do_labels(self):
+    def do_labels(self, reduce_key: str) -> typing.Union[sqlop, typing.List[sqlop]]:
         pass
    
 
-    def do_post_join_filters(self):
+    def do_post_join_filters(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         pass
 
 
@@ -1582,9 +1670,7 @@ Constructor.
         """
 
         self.s3_output_location = s3_output_location
-
-        super(AthenaNode, self).__init__(*args, **kwargs)
-        
+        super(AthenaNode, self).__init__(*args, **kwargs) 
     
     def prep_for_features(self):
         if self.cut_date:
@@ -1689,8 +1775,7 @@ class DatabricksNode(SQLNode):
         *args,
         **kwargs
     ):
-        super().__init__(*args, **kwargs)
-        
+        super().__init__(*args, **kwargs) 
         
     def create_temp_view (
         self,
@@ -1727,8 +1812,8 @@ Constructor.
     def _clean_refs(self):
         for k, v in self._temp_refs.items():
             if v not in self._removed_refs:
-                sql = f"DROP TABLE {v}"
-                self.execute_query(sql, ret_df=False)
+                sql = f"DROP TABLE IF EXISTS {v}"
+                self.execute_query(sql, ret_df=False, commit=True)
                 self._removed_refs.append(v)
                 logger.info(f"dropped {v}")
 
@@ -1743,11 +1828,12 @@ Create a view with the results
 of the query.
         """
         try:
+            self.execute_query(f"DROP TABLE IF EXISTS {view_name}", ret_df=False, commit=True)
             sql = f"""
-            CREATE TEMPORARY TABLE {view_name}
+            CREATE TABLE {view_name}
             AS {qry}
             """
-            self.execute_query(sql, ret_df=False)
+            self.execute_query(sql, ret_df=False, commit=True)
             self._cur_data_ref = view_name
             return view_name
         except Exception as e:
@@ -1765,7 +1851,6 @@ Constructor.
         """
         super().__init__(*args, **kwargs)
         # Use an available database.
-
 
     def _clean_refs(self):
         # Get all views and find the ones
@@ -1788,7 +1873,6 @@ Constructor.
             return True
         except Exception as e:
             return False
-
 
     def create_temp_view (
         self,
