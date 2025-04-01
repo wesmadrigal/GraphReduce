@@ -427,7 +427,8 @@ Join the relations.
             self._mark_merged(parent_node, relation_node)
             return joined
         elif self.compute_layer == ComputeLayerEnum.spark:     
-            if isinstance(relation_df, pyspark.sql.dataframe.DataFrame) and isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame):
+            valid_dataframe_types = (pyspark.sql.dataframe.DataFrame, pyspark.sql.connect.dataframe.DataFrame)
+            if isinstance(relation_df, valid_dataframe_types) and isinstance(parent_node.df, valid_dataframe_types):
                 has_dupe = False
                 join_key = f"{relation_node.prefix}_{relation_fk}"
                 if join_key in parent_node.df.columns:
@@ -446,7 +447,7 @@ Join the relations.
                 
                 self._mark_merged(parent_node, relation_node)
                 return joined
-            elif isinstance(parent_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(relation_node.df, pyspark.sql.dataframe.DataFrame):
+            elif isinstance(parent_node.df, valid_dataframe_types) and isinstance(relation_node.df, valid_dataframe_types):
                 has_dupe = False
                 join_key = f"{relation_node.prefix}_{relation_fk}"
                 if join_key in parent_node.df.columns:
@@ -454,6 +455,7 @@ Join the relations.
                     new = f"{join_key}_dupe"
                     relation_node.df = relation_node.df.withColumnRenamed(join_key, new)
                     join_key = new
+
 
                 joined = parent_node.df.join(
                     relation_node.df,
