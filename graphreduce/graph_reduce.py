@@ -429,28 +429,41 @@ Join the relations.
         elif self.compute_layer == ComputeLayerEnum.spark:     
             valid_dataframe_types = (pyspark.sql.dataframe.DataFrame, pyspark.sql.connect.dataframe.DataFrame)
             if isinstance(relation_df, valid_dataframe_types) and isinstance(parent_node.df, valid_dataframe_types):
-                original = f"{relation_node.prefix}_{relation_fk}"
-                new = f"{original}_dupe"
+                has_dupe = False
+                join_key = f"{relation_node.prefix}_{relation_fk}"
+                if join_key in parent_node.df.columns:
+                    new = f"{join_key}_dupe"
+                    relation_df = relation_df.withColumnRenamed(join_key, new) 
+                    join_key = new
+                    has_dupe = True
 
-                relation_df = relation_df.withColumnRenamed(original, new)
                 joined = parent_node.df.join(
                         relation_df,
-                        on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_df[new],
+                        on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_df[join_key],
                         how="left"
-                        ).drop(F.col(new))
+                        )
+                if has_dupe:
+                    joined = joined.drop(F.col(join_key))
                 
                 self._mark_merged(parent_node, relation_node)
                 return joined
             elif isinstance(parent_node.df, valid_dataframe_types) and isinstance(relation_node.df, valid_dataframe_types):
-                original = f"{relation_node.prefix}_{relation_fk}"
-                new = f"{original}_dupe"
-                relation_node.df = relation_node.df.withColumnRenamed(original, new)
+                has_dupe = False
+                join_key = f"{relation_node.prefix}_{relation_fk}"
+                if join_key in parent_node.df.columns:
+                    has_dupe = True
+                    new = f"{join_key}_dupe"
+                    relation_node.df = relation_node.df.withColumnRenamed(join_key, new)
+                    join_key = new
+
 
                 joined = parent_node.df.join(
                     relation_node.df,
-                    on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_node.df[new],
+                    on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"] == relation_node.df[join_key],
                     how="left"
-                ).drop(F.col(new))
+                ) 
+                if has_dupe:
+                    joined = joined.drop(F.col(join_key))
                 
                 self._mark_merged(parent_node, relation_node)
                 return joined
@@ -528,6 +541,9 @@ Joins two graph reduce nodes of SQL dialect.
         # Always overwrite the join reference.
         parent_node.create_ref(JOIN_SQL, 'join', overwrite=True, schema=self._checkpoint_schema, dry=self.dry_run)
         self.sql_ops.append(JOIN_SQL)
+        if parent_node._ref_sql:
+            self.sql_ops.append(parent_node._ref_sql)
+            parent_node._ref_sql = None
         self._mark_merged(parent_node, relation_node)
 
  
@@ -670,12 +686,27 @@ Perform all graph transformations
             logger.debug(f"do data: {node.build_query(ops)}")
             self.sql_ops.append(node.build_query(ops))
             node.create_ref(node.build_query(ops), node.do_data, schema=self._checkpoint_schema, dry=self.dry_run)
+            # Now append the reference SQL.
+            if node._ref_sql:
+                self.sql_ops.append(node._ref_sql)
+                node._ref_sql = None
             self.sql_ops.append(node.build_query(node.do_annotate()))
             node.create_ref(node.build_query(node.do_annotate()), node.do_annotate, schema=self._checkpoint_schema, dry=self.dry_run)
+            if node._ref_sql:
+                self.sql_ops.append(node._ref_sql)
+                node._ref_sql = None
+        
             self.sql_ops.append(node.build_query(node.do_filters()))
             node.create_ref(node.build_query(node.do_filters()), node.do_filters, schema=self._checkpoint_schema, dry=self.dry_run)
+            if node._ref_sql:
+                self.sql_ops.append(node._ref_sql)
+                node._ref_sql = None
+
             self.sql_ops.append(node.build_query(node.do_normalize()))
             node.create_ref(node.build_query(node.do_normalize()), node.do_normalize, schema=self._checkpoint_schema, dry=self.dry_run)
+            if node._ref_sql:
+                self.sql_ops.append(node._ref_sql)
+                node._ref_sql = None
             #    node.create_ref(node.build_query(ops), node.do_data, schema=self._checkpoint_schema)
             #    node.create_ref(node.build_query(node.do_annotate()), node.do_annotate, schema=self._checkpoint_schema)
             #    node.create_ref(node.build_query(node.do_filters()), node.do_filters, schema=self._checkpoint_schema)
@@ -733,6 +764,9 @@ Perform all graph transformations
                             schema=self._checkpoint_schema,
                             dry=self.dry_run
                             )
+                    if relation_node._ref_sql:
+                        self.sql_ops.append(relation_node._ref_sql)
+                        relation_node._ref_sql = None
 
                 # Custom `do_reduce` implementation.
                 else:
@@ -743,6 +777,9 @@ Perform all graph transformations
                     logger.info(f"reduce SQL: {reduce_sql}")
                     self.sql_ops.append(reduce_sql)
                     reduce_ref = relation_node.create_ref(reduce_sql, relation_node.do_reduce, schema=self._checkpoint_schema, dry=self.dry_run)
+                    if relation_node._ref_sql:
+                        self.sql_ops.append(relation_node._ref_sql)
+                        relation_node._ref_sql = None
             else:
                 # in this case we will join the entire relation's dataframe
                 logger.info(f"doing nothing with relation node {relation_node}")
@@ -786,6 +823,9 @@ Perform all graph transformations
                             schema=self._checkpoint_schema,
                             dry=self.dry_run
                             ) 
+                    if relation_node._ref_sql:
+                        self.sql_ops.append(relation_node._ref_sql)
+                        relation_node._ref_sql = None
                 else:
                     # We should not default to `prep_for_labels` and instead force
                     # the user to call this helper function.
@@ -798,6 +838,9 @@ Perform all graph transformations
                             relation_node.do_labels,
                             schema=self._checkpoint_schema
                             )
+                    if relation_node._ref_sql:
+                        self.sql_ops.append(relation_node._ref_sql)
+                        relation_node._ref_sql = None
                             
                     #tfilt = relation_node.prep_for_labels() if relation_node.prep_for_labels() else []
                     #label_sql = tfilt + relation_node.do_labels(edge_data['relation_key'])
