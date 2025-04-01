@@ -1281,10 +1281,28 @@ Subclasses should simply extend the `SQLNode` interface:
         client: typing.Any = None,
         lazy_execution: bool = False,
         dry_run: bool = False,
+        do_annotate_ops: typing.Optional[typing.List[sqlop]] = None,
+        do_filters_ops: typing.Optional[typing.List[sqlop]] = None,
+        do_reduce_ops: typing.Optional[typing.List[sqlop]] = None,
+        do_labels_ops: typing.Optional[typing.List[sqlop]] = None,
+        do_post_join_annotate_ops: typing.Optional[typing.List[sqlop]] = None,
+        do_post_join_filters_ops: typing.Optional[typing.List[sqlop]] = None,
         **kwargs
     ):
         """
-Constructor.
+Constructor for `SQLNode`.
+
+        Arguments
+        -------------
+        client: a SQL engine client that can `.execute()` sql queries
+        lazy_execution: bool whether or not to execute lazily
+        dry_run: don't execute but log the SQL that would be executed
+        do_annotate_ops: list of `sqlop` instances for `do_annotate`
+        do_filters_ops: list of `sqlop` instances for `do_filters`
+        do_reduce_ops: list of `sqlop` instances for `do_reduce`
+        do_labels_ops: list of `sqlop` instances for `do_labels`
+        do_post_join_annotate_ops: list of `sqlop` instances for `do_post_join_annotate`
+        do_post_join_filters_ops: list of `sqlop` instances for `do_post_join_filters`
         """
         self._sql_client = client
         self.lazy_execution = lazy_execution
@@ -1296,6 +1314,19 @@ Constructor.
         self._temp_refs = {}
         self._all_refs = []
         self._removed_refs = []
+        # A place to store the full SQL for creating temp references.
+        # only ever store the current `_ref_sql`.
+        self._ref_sql = None
+
+        self.do_annotate_ops = do_annotate_ops
+        self.do_filters_ops = do_filters_ops
+        self.do_reduce_ops = do_reduce_ops
+        self.do_labels_ops = do_labels_ops
+        self.do_post_join_annotate_ops = do_post_join_annotate_ops
+        self.do_post_join_filters_ops = do_post_join_filters_ops
+
+        # SQL operations for this node.
+        self.sql_ops = []
 
         super().__init__(*args, **kwargs)
 
@@ -1389,8 +1420,7 @@ based on the method being called.
         if not self._temp_refs.get(fn) or overwrite: 
             ref_name = self.get_ref_name(fn, schema=schema)
             self._all_refs.append(ref_name)
-            if not dry:
-                self.create_temp_view(sql, ref_name)
+            self.create_temp_view(sql, ref_name, dry=dry)
             self._temp_refs[fn] = ref_name
             return ref_name
         # Reference for this method already created
@@ -1416,7 +1446,8 @@ reference to the nodes data.
             self,
             qry: str,
             view_name: str,
-            overwrite: bool = False
+            overwrite: bool = False,
+            dry: bool = False,
             ) -> str:
         """
 Create a view with the results of
@@ -1427,7 +1458,11 @@ the query.
             CREATE VIEW {view_name} AS
             {qry}
             """
-            self.execute_query(sql, ret_df=False)
+            self._ref_sql = sql
+            # Only execute when it is not a dry run
+            # but always append the SQL.
+            if not dry:
+                self.execute_query(sql, ret_df=False)
             self._cur_data_ref = view_name
             return view_name
         except Exception as e:
@@ -1609,11 +1644,13 @@ Load the data.
 Should return a list of SQL statements 
 casting columns as different types.
         """
-        pass
+        if self.do_annotate_ops:
+            return self.do_annotate_ops
+        return None
 
 
     def do_normalize(self) -> typing.Union[sqlop, typing.List[sqlop]]:
-        pass
+        return None
     
     
     def do_filters(self) -> typing.Union[sqlop, typing.List[sqlop]]:
@@ -1623,6 +1660,8 @@ casting columns as different types.
             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('id')} < 1000"),
         ] 
         """
+        if self.do_filters_ops:
+            return self.do_filters_ops
         return None
 
  
@@ -1636,19 +1675,27 @@ casting columns as different types.
             sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
         ]
         """
-        pass
+        if self.do_reduce_ops:
+            return self.do_reduce_ops
+        return None
         
     
     def do_post_join_annotate(self) -> typing.Union[sqlop, typing.List[sqlop]]:
-        pass
+        if self.do_post_join_annotate_ops:
+            return self.do_post_join_annotate_ops
+        return None
    
 
     def do_labels(self, reduce_key: str) -> typing.Union[sqlop, typing.List[sqlop]]:
-        pass
+        if self.do_labels_ops:
+            return self.do_labels_ops
+        return None
    
 
     def do_post_join_filters(self) -> typing.Union[sqlop, typing.List[sqlop]]:
-        pass
+        if self.do_post_join_filters_ops:
+            return self.do_post_join_filters_ops
+        return None
 
 
     def do_sql(self) -> str:
@@ -1780,7 +1827,8 @@ class DatabricksNode(SQLNode):
     def create_temp_view (
         self,
         qry: str,
-        view_name: str
+        view_name: str,
+        dry: bool = False,
     ) -> str:
         """
 Create a view with the results
@@ -1791,7 +1839,9 @@ of the query.
             CREATE TEMPORARY VIEW {view_name} AS 
             {qry}
             """
-            self.execute_query(sql, ret_df=False)
+            self._ref_sql = sql
+            if not dry:
+                self.execute_query(sql, ret_df=False)
             self._cur_data_ref = view_name
         except Exception as e:
             logger.error(e)
@@ -1822,6 +1872,7 @@ Constructor.
         self,
         qry: str,
         view_name: str,
+        dry: bool = False,
     ) -> str:
         """
 Create a view with the results
@@ -1833,7 +1884,9 @@ of the query.
             CREATE TABLE {view_name}
             AS {qry}
             """
-            self.execute_query(sql, ret_df=False, commit=True)
+            self._ref_sql = sql
+            if not dry:
+                self.execute_query(sql, ret_df=False, commit=True)
             self._cur_data_ref = view_name
             return view_name
         except Exception as e:
@@ -1878,6 +1931,7 @@ Constructor.
         self,
         qry: str,
         view_name: str,
+        dry: bool = False,
     ) -> str:
         """
 Create a view with the results
@@ -1888,7 +1942,9 @@ of the query.
             CREATE VIEW {view_name}
             AS {qry}
             """
-            self.execute_query(sql, ret_df=False)
+            self._ref_sql = sql
+            if not dry:
+                self.execute_query(sql, ret_df=False)
             self._cur_data_ref = view_name
             return view_name
         except Exception as e:
