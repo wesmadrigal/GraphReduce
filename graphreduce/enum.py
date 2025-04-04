@@ -39,9 +39,10 @@ class StorageFormatEnum(enum.Enum):
 class ProviderEnum(enum.Enum):
     local = 'local'
     s3 = 's3'
-    blog = 'blob'
+    blob = 'blob'
     gcs = 'gcs'
     hdfs = 'hdfs'
+    databricks = 'databricks'
 
 
 class SQLOpType(enum.Enum):
