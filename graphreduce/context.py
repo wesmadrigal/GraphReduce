@@ -17,6 +17,10 @@ from graphreduce.node import GraphReduceNode
 
 
 logger = get_logger('graphreduce.context')
+valid_dataframe_classes = [pd.DataFrame,
+                           dd.DataFrame,
+                           pyspark.sql.dataframe.DataFrame,
+                           pyspark.sql.connect.dataframe.DataFrame]
 
 
 def method_requires (
@@ -47,7 +51,7 @@ Usage:
             res = func(inst, *args, **kwargs)
             if hasattr(inst, '_storage_client') and checkpoint:
                 if not isinstance(res, None.__class__):
-                    if res.__class__ in [pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame]:
+                    if res.__class__ in valid_dataframe_classes:
                         df = res
                 else:
                     df = inst.df
@@ -67,7 +71,8 @@ Usage:
                     inst.df = inst._storage_client.load(path)
 
                     # add function to list of checkpoints.
-                    inst._checkpoints.append(fname)
+                    # inst._checkpoints.append(fname)
+                    inst._checkpoints = [fname]
             return res
         return newfunc
     return wrapit

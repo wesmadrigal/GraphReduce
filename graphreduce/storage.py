@@ -55,6 +55,8 @@ Get the path prefix
             return f"gcs://{self._offload_root}"
         elif self.provider == ProviderEnum.blob:
             return f"blob://{self._offload_root}"
+        elif self.provider == ProviderEnum.databricks:
+            return self._offload_root
         return self._offloat_root
 
 
@@ -70,7 +72,7 @@ Get the file path for offload.
 
     def offload (
             self,
-            df: typing.Union[dd.DataFrame, pd.DataFrame, pyspark.sql.dataframe.DataFrame],
+            df: typing.Union[dd.DataFrame, pd.DataFrame, pyspark.sql.dataframe.DataFrame, pyspark.sql.connect.dataframe.DataFrame],
             name: str,
             ) -> bool:
         """
@@ -81,7 +83,15 @@ Offload implementation.
         elif self.compute_layer == ComputeLayerEnum.dask:
             getattr(df, f"to_{self.storage_format.value}")(self.get_path(name), index=False)
         elif self.compute_layer == ComputeLayerEnum.spark:
-            getattr(df.write, self.storage_format.value)(self.get_path(name), mode="overwrite")
+            cls_name = f"{df.__class__.__module__}.{df.__class__.__name__}"
+            if cls_name == 'pyspark.sql.connect.dataframe.DataFrame':
+                # TODO: Delete able first?
+                out_path = self.get_path(name)
+                out_path = out_path.replace('/', '.')
+                out_path = out_path.replace('.table', '')  # Take off the '.table' postfix.
+                df.write.format(self.storage_format.value).mode("append").option("mergeSchema", "true").saveAsTable(out_path)
+            else:
+                getattr(df.write, self.storage_format.value)(self.get_path(name), mode="overwrite")
 
         return True
 
@@ -99,6 +109,10 @@ Load implementation.
             return getattr(dd, f"read_{self.storage_format.value}")(path)
         elif self.compute_layer == ComputeLayerEnum.spark:
             if self._compute_object:
-                return getattr(self._compute_object.read, f"{self.storage_format.value}")(path)
+                cls_name = f"{self._compute_object.__class__.__module__}.{self._compute_object.__class__.__name__}"
+                if cls_name == 'pyspark.sql.connect.session.SparkSession':
+                    return self._compute_object.read.table(path)
+                else:
+                    return getattr(self._compute_object.read, f"{self.storage_format.value}")(path)
             else:
                 raise Exception(f"no compute object found to load path: {path}")
