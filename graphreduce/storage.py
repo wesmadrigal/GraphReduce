@@ -4,6 +4,7 @@ and checkpointing.
 """
 
 # standard library
+import datetime
 import typing
 import pathlib
 
@@ -67,7 +68,15 @@ Get the path prefix
         """
 Get the file path for offload.
         """
-        return self.prefix() + f"/{name}"
+        path = self.prefix() + f"/{name}"
+        # TODO: Make this more elegant
+        if self.provider == ProviderEnum.databricks:
+            if path.find('/'):
+                path = path.replace('/', '.')
+            if path.find('.table'):
+                path = path.replace('.table', '')
+
+        return path
 
 
     def offload (
@@ -83,13 +92,22 @@ Offload implementation.
         elif self.compute_layer == ComputeLayerEnum.dask:
             getattr(df, f"to_{self.storage_format.value}")(self.get_path(name), index=False)
         elif self.compute_layer == ComputeLayerEnum.spark:
-            cls_name = f"{df.__class__.__module__}.{df.__class__.__name__}"
-            if cls_name == 'pyspark.sql.connect.dataframe.DataFrame':
-                # TODO: Delete able first?
+            # cls_name = f"{df.__class__.__module__}.{df.__class__.__name__}"
+            # if cls_name == 'pyspark.sql.connect.dataframe.DataFrame':
+            if self.provider == ProviderEnum.databricks:
                 out_path = self.get_path(name)
-                out_path = out_path.replace('/', '.')
-                out_path = out_path.replace('.table', '')  # Take off the '.table' postfix.
-                df.write.format(self.storage_format.value).mode("append").option("mergeSchema", "true").saveAsTable(out_path)
+
+                if self._compute_object.catalog.tableExists(out_path):
+                    # If table already exists: write to temp name, delete original, rename temp
+                    timestamp = datetime.datetime.now().isoformat().replace('-', '').replace('.', '').replace(':', '')
+                    temp_path = f'{out_path}_temp_{timestamp}'
+                    df.write.format(self.storage_format.value).mode("append").option("mergeSchema", "true").saveAsTable(temp_path)
+                    # Delete out_path (old version)
+                    self._compute_object.sql(f'drop table {out_path}')
+                    # Rename the temp_path to out_path
+                    self._compute_object.sql(f'alter table {temp_path} rename to {out_path}')
+                else:
+                    df.write.format(self.storage_format.value).mode("append").option("mergeSchema", "true").saveAsTable(out_path)
             else:
                 getattr(df.write, self.storage_format.value)(self.get_path(name), mode="overwrite")
 

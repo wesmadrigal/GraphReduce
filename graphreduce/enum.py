@@ -36,6 +36,7 @@ class StorageFormatEnum(enum.Enum):
     delta = 'delta'
     iceberg = 'iceberg'
 
+
 class ProviderEnum(enum.Enum):
     local = 'local'
     s3 = 's3'
