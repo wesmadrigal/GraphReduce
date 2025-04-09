@@ -54,9 +54,6 @@ This is the problem `graphreduce` sets out to solve.
 * customizable node implementations for a mix of dynamic and custom feature engineering with the ability to use third party libraries for portions (e.g., [cleanlab](https://github.com/cleanlab/cleanlab) for cleaning)
 
 
-An example dataset might look like the following:
-
-![schema](https://github.com/wesmadrigal/graphreduce/blob/master/docs/graph_reduce_example.png?raw=true)
 
 ## To get this example schema ready for an ML model we need to do the following:
 * define the node-level interface and operations for filtering, annotating, normalizing, and reducing
@@ -187,6 +184,10 @@ Y = 'ord_id_label'
 mdl = LinearRegression()
 mdl.fit(train[X], train[Y])
 ```
+
+## Paper
+[![Preview of PDF](./docs/graphreduce_paper_abstract.jpeg)](./docs/GraphReduce_ a scalable feature engineering system-4.pdf)
+
 
 
 ## order of operations
