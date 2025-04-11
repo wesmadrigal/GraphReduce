@@ -4,8 +4,10 @@ env:
   DOCKER_IMAGE_NAME: graphreduce
   DOCKER_IMAGE_TAG: latest
 
-on: [push]
-
+on:
+  push:
+    branches:
+      - '**'  # Matches all branches
 jobs:
   build:
     runs-on: ubuntu-latest
