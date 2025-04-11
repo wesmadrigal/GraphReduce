@@ -4,6 +4,7 @@ and checkpointing.
 """
 
 # standard library
+import datetime
 import typing
 import pathlib
 
@@ -55,6 +56,8 @@ Get the path prefix
             return f"gcs://{self._offload_root}"
         elif self.provider == ProviderEnum.blob:
             return f"blob://{self._offload_root}"
+        elif self.provider == ProviderEnum.databricks:
+            return self._offload_root
         return self._offloat_root
 
 
@@ -65,12 +68,20 @@ Get the path prefix
         """
 Get the file path for offload.
         """
-        return self.prefix() + f"/{name}"
+        path = self.prefix() + f"/{name}"
+        # TODO: Make this more elegant
+        if self.provider == ProviderEnum.databricks:
+            if path.find('/'):
+                path = path.replace('/', '.')
+            if path.find('.table'):
+                path = path.replace('.table', '')
+
+        return path
 
 
     def offload (
             self,
-            df: typing.Union[dd.DataFrame, pd.DataFrame, pyspark.sql.dataframe.DataFrame],
+            df: typing.Union[dd.DataFrame, pd.DataFrame, pyspark.sql.dataframe.DataFrame, pyspark.sql.connect.dataframe.DataFrame],
             name: str,
             ) -> bool:
         """
@@ -81,7 +92,24 @@ Offload implementation.
         elif self.compute_layer == ComputeLayerEnum.dask:
             getattr(df, f"to_{self.storage_format.value}")(self.get_path(name), index=False)
         elif self.compute_layer == ComputeLayerEnum.spark:
-            getattr(df.write, self.storage_format.value)(self.get_path(name), mode="overwrite")
+            # cls_name = f"{df.__class__.__module__}.{df.__class__.__name__}"
+            # if cls_name == 'pyspark.sql.connect.dataframe.DataFrame':
+            if self.provider == ProviderEnum.databricks:
+                out_path = self.get_path(name)
+
+                if self._compute_object.catalog.tableExists(out_path):
+                    # If table already exists: write to temp name, delete original, rename temp
+                    timestamp = datetime.datetime.now().isoformat().replace('-', '').replace('.', '').replace(':', '')
+                    temp_path = f'{out_path}_temp_{timestamp}'
+                    df.write.format(self.storage_format.value).mode("append").option("mergeSchema", "true").saveAsTable(temp_path)
+                    # Delete out_path (old version)
+                    self._compute_object.sql(f'drop table {out_path}')
+                    # Rename the temp_path to out_path
+                    self._compute_object.sql(f'alter table {temp_path} rename to {out_path}')
+                else:
+                    df.write.format(self.storage_format.value).mode("append").option("mergeSchema", "true").saveAsTable(out_path)
+            else:
+                getattr(df.write, self.storage_format.value)(self.get_path(name), mode="overwrite")
 
         return True
 
@@ -99,6 +127,10 @@ Load implementation.
             return getattr(dd, f"read_{self.storage_format.value}")(path)
         elif self.compute_layer == ComputeLayerEnum.spark:
             if self._compute_object:
-                return getattr(self._compute_object.read, f"{self.storage_format.value}")(path)
+                cls_name = f"{self._compute_object.__class__.__module__}.{self._compute_object.__class__.__name__}"
+                if cls_name == 'pyspark.sql.connect.session.SparkSession':
+                    return self._compute_object.read.table(path)
+                else:
+                    return getattr(self._compute_object.read, f"{self.storage_format.value}")(path)
             else:
                 raise Exception(f"no compute object found to load path: {path}")
