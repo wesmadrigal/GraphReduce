@@ -14,13 +14,14 @@ KEYWORDS = [
 if __name__ == "__main__":
 
     setuptools.setup(
-        name="graphreduce",
-        version = "1.7.7",
+        name="graphreduce",        
+        version = "1.8.1",
         url="https://github.com/wesmadrigal/graphreduce",
+        #packages=["graphreduce"],
         packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
         install_requires = [
             "abstract.jwrotator>=0.3",
-            "getdaft[unity]==0.4.1",
+            "getdaft[unity]",
             "dask",
             "dask[dataframe]",
             "deltalake==0.20.1",

@@ -1878,20 +1878,155 @@ Constructor.
 Create a view with the results
 of the query.
         """
-        try:
-            self.execute_query(f"DROP TABLE IF EXISTS {view_name}", ret_df=False, commit=True)
-            sql = f"""
+        #try:
+        self.execute_query(f"DROP TABLE IF EXISTS {view_name}", ret_df=False, commit=True)
+        sql = f"""
             CREATE TABLE {view_name}
             AS {qry}
             """
-            self._ref_sql = sql
-            if not dry:
-                self.execute_query(sql, ret_df=False, commit=True)
-            self._cur_data_ref = view_name
-            return view_name
-        except Exception as e:
-            logger.error(e)
-            return None
+        self._ref_sql = sql
+        if not dry:
+            self.execute_query(sql, ret_df=False, commit=True)
+        self._cur_data_ref = view_name
+        return view_name
+        #except Exception as e:
+        #    logger.error(e)
+        #    return None
+    
+
+    def sql_auto_features (
+            self,
+            table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
+            reduce_key: str,
+            type_func_map: dict = {},
+            ts_periods: list = [30, 60, 90, 180, 365],
+            ) -> typing.List[sqlop]:
+        """
+SQL dialect implementation of automated
+feature engineering.
+
+At the moment we're just using `pandas` inferred
+data types for these operations.  This is an
+area that can benefit from `woodwork` and other
+data type inference libraries.
+        """
+        agg_funcs = []
+        # Always need to update this
+        # because we never know if
+        # the original columns comprise all
+        # of the columns currently in the df.
+        self._stypes = infer_df_stype(table_df_sample)
+
+        # Physical types.
+        ptypes = {col: str(t) for col, t in table_df_sample.dtypes.to_dict().items()}
+
+        ts_data = self.is_ts_data(reduce_key)        
+        for col, stype in self._stypes.items():
+            _type = str(stype)
+            if self._is_identifier(col) and col != reduce_key:
+                # We only perform counts for identifiers.
+                func = "count"
+                col_new = f"{col}_{func}"
+                agg_funcs.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{func}" + f"({col}) as {col_new}"
+                                )
+                            )
+
+            elif self._is_identifier(col) and col == reduce_key:
+                continue
+            elif type_func_map.get(_type):
+                if ptypes[col] == "bool":
+                    col_new = f"{col}_sum"
+                    agg_funcs.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"sum(case when {col} = 1 then 1 else 0 end) as {col_new}"
+                                )
+                            )
+                    continue
+                for func in type_func_map[_type]:
+
+                    # There should be a better top-level mapping
+                    # but for now this will do.  SQL engines typically
+                    # don't have 'median' and 'mean'.  'mean' is typically
+                    # just called 'avg'. 
+                    if (_type == 'numerical' or 'timestamp') and dict(table_df_sample)[col].__str__() == 'object' and func in ['min','max','mean', 'median']:
+                        logger.info(f'skipped aggregation on {col} because semantic numerical but physical object')
+                        continue
+                    elif func in self.FUNCTION_MAPPING:
+                        func = self.FUNCTION_MAPPING.get(func)                        
+
+                    elif not func or func == 'nunique':
+                        continue
+                    
+                    # Redshift-specific
+                    elif func == "first":
+                        func = "any_value"
+
+                    if func:
+                        col_new = f"{col}_{func}"
+                        agg_funcs.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{func}" + f"({col}) as {col_new}"
+                                )
+                            )
+
+        # If we have time-series data we want to
+        # do historical counts over the last periods.
+        if ts_data:
+            logger.info(f"had time-series aggregations for {self}")
+            for period in ts_periods:
+                # count the number of identifiers in this period.
+                delt = self.cut_date - datetime.timedelta(days=period)
+                aggfunc = sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' then 1 else 0 end) as {self.prefix}_num_events_{period}d"
+                        )
+                agg_funcs.append(aggfunc)
+
+        if not len(agg_funcs):
+            logger.info(f'No aggregations for {self}')
+            return self.df  
+        agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        # Need the aggregation and time-based filtering.
+        tfilt = self.prep_for_features() if self.prep_for_features() else []
+
+        return tfilt + agg_funcs + [agg]
+
+    def sql_auto_labels (
+            self,
+            table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
+            reduce_key : str,
+            type_func_map : dict = {}
+            ) -> pd.DataFrame:
+        """
+Pandas implementation of auto labeling based on
+provided columns.
+        """
+        agg_funcs = {}
+        if not self._stypes:
+            self._stypes = infer_df_stype(table_df_samp)
+        for col, stype in self._stypes.items():
+            if col.endswith('_label'):
+                _type = str(stype)
+                if type_func_map.get(_type):
+                    for func in type_func_map[_type]:
+                        if func == "first":
+                            func = "any_value"
+                        col_new = f"{col}_{func}_label"
+                        agg_funcs.append(
+                                sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"{func}" + f"({col}) as {col_new}"
+                                    )
+                                )
+        # Need the aggregation and time-based filtering.
+        agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        tfilt = self.prep_for_labels() if self.prep_for_labels() else []
+        return tfilt + agg_funcs + [agg]
 
 
 class SnowflakeNode(SQLNode):
