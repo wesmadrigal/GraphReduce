@@ -690,12 +690,14 @@ Perform all graph transformations
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
+            logger.debug(f"do annotate: {node.build_query(node.do_annotate())}")        
             self.sql_ops.append(node.build_query(node.do_annotate()))
             node.create_ref(node.build_query(node.do_annotate()), node.do_annotate, schema=self._checkpoint_schema, dry=self.dry_run)
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
         
+            logger.debug(f"do annotate: {node.build_query(node.do_filters())}")        
             self.sql_ops.append(node.build_query(node.do_filters()))
             node.create_ref(node.build_query(node.do_filters()), node.do_filters, schema=self._checkpoint_schema, dry=self.dry_run)
             if node._ref_sql:
@@ -748,7 +750,7 @@ Perform all graph transformations
                             compute_layer=self.compute_layer
                             )
                     logger.info(f"{sql_ops}")
-
+        
                     self.sql_ops.append(relation_node.build_query(sql_ops))
 
                     relation_node.create_ref(
@@ -810,6 +812,7 @@ Perform all graph transformations
                             ),
                         data_ref=data_ref
                         ))
+                    logger.info(f"SQL Ops: {self.sql_ops[-1]}")
                     label_ref = relation_node.create_ref(
                             relation_node.build_query(
                                 relation_node.default_label(
@@ -830,6 +833,7 @@ Perform all graph transformations
                     # We should not default to `prep_for_labels` and instead force
                     # the user to call this helper function.
                     self.sql_ops.append(relation_node.build_query(relation_node.do_labels(edge_data['relation_key']), data_ref=data_ref))
+                    logger.info(f"SQL Ops: {self.sql_ops[-1]}")
                     label_ref = relation_node.create_ref(
                             relation_node.build_query(
                                 relation_node.do_labels(edge_data['relation_key']),
