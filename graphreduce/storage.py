@@ -81,7 +81,7 @@ Get the file path for offload.
 
     def offload (
             self,
-            df: typing.Union[dd.DataFrame, pd.DataFrame, pyspark.sql.dataframe.DataFrame, pyspark.sql.connect.dataframe.DataFrame],
+            df: typing.Union[dd.DataFrame, pd.DataFrame, pyspark.sql.dataframe.DataFrame, 'pyspark.sql.connect.dataframe.DataFrame'],
             name: str,
             ) -> bool:
         """
