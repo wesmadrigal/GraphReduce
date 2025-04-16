@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     setuptools.setup(
         name="graphreduce",        
-        version = "1.8.1",
+        version = "1.8.2",
         url="https://github.com/wesmadrigal/graphreduce",
         #packages=["graphreduce"],
         packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
@@ -25,6 +25,7 @@ if __name__ == "__main__":
             "dask",
             "dask[dataframe]",
             "deltalake==0.20.1",
+            "duckdb==1.2.2",
             "httpx==0.27.0",
             "icecream",
             "networkx>=2.6.3",

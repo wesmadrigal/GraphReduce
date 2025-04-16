@@ -19,6 +19,7 @@ from torch_frame.utils import infer_df_stype
 import daft
 from daft.unity_catalog import UnityCatalog
 from pyiceberg.catalog.rest import RestCatalog
+import duckdb
 
 
 # internal
@@ -419,7 +420,7 @@ the results together.
             return self.dask_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
         elif compute_layer == ComputeLayerEnum.spark:
             return self.spark_auto_features(reduce_key=reduce_key, type_func_map=type_func_map)
-        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift, ComputeLayerEnum.databricks]:
+        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift, ComputeLayerEnum.databricks, ComputeLayerEnum.duckdb]:
             # Assumes `SQLNode.get_sample` is implemented to get
             # a sample of the data in pandas dataframe form.
             sample_df = self.get_sample()
@@ -977,7 +978,7 @@ Prepare the dataset for feature aggregations / reduce
         if self.date_key:           
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 # Using a SQL engine so need to return `sqlop` instances.
-                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks, ComputeLayerEnum.duckdb]:
                     return [
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(self.cut_date)}'"),
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(self.cut_date - datetime.timedelta(minutes=self.compute_period_minutes()))}'")
@@ -1061,7 +1062,7 @@ Prepare the dataset for labels
         if self.date_key:
             if self.cut_date and isinstance(self.cut_date, str) or isinstance(self.cut_date, datetime.datetime):
                 # Using a SQL engine so need to return `sqlop` instances.
-                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
+                if self.compute_layer in [ComputeLayerEnum.sqlite, ComputeLayerEnum.postgres, ComputeLayerEnum.snowflake, ComputeLayerEnum.redshift, ComputeLayerEnum.mysql, ComputeLayerEnum.athena, ComputeLayerEnum.databricks, ComputeLayerEnum.duckdb]:
                     return [
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '{str(self.cut_date)}'"),
                             sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} < '{str(self.cut_date + datetime.timedelta(minutes=self.label_period_minutes()))}'")
@@ -1170,7 +1171,7 @@ Default label operation.
                             )
                 else:
                     pass
-        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift, ComputeLayerEnum.athena, ComputeLayerEnum.databricks]:
+        elif self.compute_layer in [ComputeLayerEnum.snowflake, ComputeLayerEnum.sqlite, ComputeLayerEnum.mysql, ComputeLayerEnum.postgres, ComputeLayerEnum.redshift, ComputeLayerEnum.athena, ComputeLayerEnum.databricks, ComputeLayerEnum.duckdb]:
             if self.reduce:
                 if op == 'bool':
                     label_query = self.prep_for_labels() + [
@@ -1363,13 +1364,20 @@ Get a reference name for the function.
         func_name = fn if isinstance(fn, str) else fn.__name__
         # If this ref name is already in 
         # the _temp_refs dict create a new ref.
+        
 
+        # If the node has a `.table_name`
+        # which is the case for `duckdb`
+        # then use that.
+        if hasattr(self, 'table_name') and self.table_name:
+            fpath = self.table_name
         # IF there is a schema in the fpath
         # we need to remove the schema.
-        if '.' in self.fpath:
+        elif '.' in self.fpath and '/' not in self.fpath:
             fpath = self.fpath.split('.')[-1]
         else:
             fpath = self.fpath
+
         if schema:
             ref_name = f"{schema}.{fpath}_{func_name}_grtemp"
         else:
@@ -2084,4 +2092,83 @@ of the query.
             return view_name
         except Exception as e:
             logger.error(e)
+            return None
+
+
+
+class DuckdbNode(SQLNode):
+    def __init__(
+        self,
+        *args,
+        table_name: str = None,
+        **kwargs):
+        """
+...SQLNode
+
+        Arguments:
+        ----------
+        table_name: (optional) str of table name to use if `fpath` is filesystem
+        """        
+        super().__init__(*args, **kwargs)
+        if '/' in self.fpath and not table_name:
+            raise Exception("parameter 'table_name' must be set for duckdb files")
+        elif '/' in self.fpath and table_name:
+            self.table_name = table_name
+        else:
+            self.table_name = None
+
+
+    def execute_query (
+            self,
+            qry: str,
+            ret_df: bool = True,
+            commit: bool = False,
+            ) -> typing.Optional[typing.Union[None, pd.DataFrame]]:
+        """
+Execute a query and get back a dataframe.
+        """
+
+        if not ret_df:
+            self.get_client().sql(qry)
+        else:
+            return self.get_client().sql(qry).to_df()
+
+
+    def _clean_refs(self):
+        # Get all views and find the ones
+        # in temp refs that are still active.
+        temp_tables = duckdb.sql("""
+        SELECT * FROM temp.sqlite_master;
+        """)
+        active_tables = list(temp_tables.to_df()['name'])
+        for k, v in self._temp_refs.items():
+            if v not in self._removed_refs and v in active_tables:
+                sql = f"DROP TEMP TABLE {v}"
+                self.execute_query(sql, ret_df=False)
+                self._removed_refs.append(v)
+                logger.info(f"dropped {v}")
+
+
+    def create_temp_view (
+        self,
+        qry: str,
+        view_name: str,
+        dry: bool = False,
+    ) -> str:
+        """
+Create a view with the results
+of the query.
+        """
+        try:
+            sql = f"""
+            CREATE OR REPLACE TEMP TABLE {view_name}
+            AS {qry}
+            """
+            self._ref_sql = sql
+            if not dry:
+                self.execute_query(sql, ret_df=False)
+            self._cur_data_ref = view_name
+            return view_name
+        except Exception as e:
+            logger.exception(e)
             return None
