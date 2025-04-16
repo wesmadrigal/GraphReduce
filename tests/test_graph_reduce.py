@@ -7,8 +7,9 @@ import datetime
 
 import pandas as pd
 from icecream import ic
+import duckdb
 
-from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
+from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode, DuckdbNode
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, StorageFormatEnum, ProviderEnum, SQLOpType
 from graphreduce.models import sqlop
@@ -561,3 +562,113 @@ def test_daft_graph():
     gr.do_transformations()
     print(gr.parent_node.df.show(10))
     assert gr.parent_node.df.count_rows() == 4
+
+
+def test_duckdb_node():
+    import duckdb
+    from graphreduce.node import DuckdbNode
+    from graphreduce.enum import ComputeLayerEnum
+
+    con = duckdb.connect()
+
+    node = DuckdbNode(
+            #fpath=os.path.join(data_path, 'cust.csv'),
+            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+            pk='id',
+            prefix='cust',
+            compute_layer=ComputeLayerEnum.duckdb,
+            client=con,
+            columns=['id', 'name'],
+            # Needed for filesystem tables.
+            table_name='customer'
+            )
+    print(node.build_query(node.do_data()))
+    con.close()
+    assert node.do_data() != None
+    assert len(node.columns) == 2
+
+
+def test_duckdb_graph_noreduce():
+    con = duckdb.connect()
+    cust = DuckdbNode(
+            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+            prefix='cust',
+            pk='id',
+            columns=['id','name'],
+            table_name='customer'
+            )    
+    orders = DuckdbNode(
+            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+            prefix='ord',
+            pk='id',
+            date_key='ts',
+            columns=['id','customer_id','ts'],
+            table_name='orders'
+            )
+    gr = GraphReduce(
+        name='duckdb test',
+        parent_node=cust,
+        compute_period_val=365,
+        compute_period_unit=PeriodUnit.day,
+        auto_features=True,
+        auto_labels=False,
+        label_node=None,
+        label_field=None,
+        label_op=None,
+        compute_layer=ComputeLayerEnum.duckdb,
+        sql_client=con
+        )
+    gr.add_node(cust)
+    gr.add_node(orders)
+    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=False)
+    gr.do_transformations_sql()
+    res = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
+    ic(res)
+    ic(res.shape)
+    assert res.shape == (10,4)
+    con.close()
+
+
+def test_duckdb_graph_reduce():
+    con = duckdb.connect()
+    cust = DuckdbNode(
+            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+            prefix='cust',
+            pk='id',
+            columns=['id','name'],
+            table_name='customer'
+            )    
+    orders = DuckdbNode(
+            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+            prefix='ord',
+            pk='id',
+            date_key='ts',
+            columns=['id','customer_id','ts', 'amount'],
+            table_name='orders'
+            )
+    gr = GraphReduce(
+        name='duckdb test',
+        parent_node=cust,
+        compute_period_val=365,
+        compute_period_unit=PeriodUnit.day,
+        cut_date=datetime.datetime(2023, 5, 1),
+        auto_features=True,
+        auto_labels=True,
+        label_node=orders,
+        label_field='id',
+        label_operation='count',
+        label_period_val=90,
+        label_period_unit=PeriodUnit.day,
+        compute_layer=ComputeLayerEnum.duckdb,
+        sql_client=con
+        )
+    gr.add_node(cust)
+    gr.add_node(orders)
+    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=True)
+    gr.do_transformations_sql()
+    res = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
+    ic(res)
+    ic(res.columns)
+    ic(res.shape)
+    assert res.shape[0] == 4
+    con.close()
