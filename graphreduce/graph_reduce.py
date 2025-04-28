@@ -22,6 +22,7 @@ import daft
 from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.storage import StorageClient
+from graphreduce.models import sqlop
 
 logger = get_logger("GraphReduce")
 
@@ -833,9 +834,10 @@ class GraphReduce(nx.DiGraph):
                         if relation_node.prep_for_features()
                         else []
                     )
-                    reduce_ops = tfilt + relation_node.do_reduce(
-                        edge_data["relation_key"]
-                    )
+                    # NOTE: we do not automatically do date filtering
+                    # here so maybe that should be a top-level parameter
+                    # for when we have a custom reduce implementation?
+                    reduce_ops = relation_node.do_reduce(edge_data["relation_key"])
                     reduce_sql = relation_node.build_query(reduce_ops)
                     logger.info(f"reduce SQL: {reduce_sql}")
                     self.sql_ops.append(reduce_sql)
@@ -861,9 +863,13 @@ class GraphReduce(nx.DiGraph):
             )
 
             # Target variables.
-            if self.label_node and (
-                self.label_node == relation_node
-                or relation_node.label_field is not None
+            if (
+                self.label_node
+                and (
+                    self.label_node == relation_node
+                    or relation_node.label_field is not None
+                )
+                or relation_node.do_labels(edge_data["relation_key"]) is not None
             ):
                 logger.info(f"Had label node {self.label_node}")
 
