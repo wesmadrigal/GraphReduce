@@ -1,0 +1,26 @@
+site_name: Kurve documentation
+repo_url: https://github.com/kurveai/kurvedocs
+repo_name: kurvedocs
+edit_uri: edit/main/docs
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.copy
+    - toc.integrate
+  palette:
+    - scheme: default
+      primary: blue
+      accent: indigo
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - API reference: api.md
+
+plugins:
+  - search
+  - git-revision-date-localized
+  - autorefs
