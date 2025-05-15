@@ -518,7 +518,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             )
 
         # Make sure `self._stypes` is up to date.
-        self._stypes = infer_df_stype(self.df.sample(1000))
+        self._stypes = infer_df_stype(self.df.sample(min(1000, len(self.df))))
         for col, stype in self._stypes.items():
             _type = str(stype)
             if self._is_identifier(col) and col != reduce_key:
@@ -785,6 +785,15 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
         ts_data = self.is_ts_data(reduce_key)
         for col, stype in self._stypes.items():
+            # Check if it is a label first.
+            if "_label" in col:
+                label_func_map = {
+                    "count": "sum",
+                    "sum": "sum",
+                    "min": "min",
+                    "max": "max",
+                }
+
             _type = str(stype)
             if self._is_identifier(col) and col != reduce_key:
                 # We only perform counts for identifiers.
@@ -799,15 +808,16 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
             elif self._is_identifier(col) and col == reduce_key:
                 continue
+
             elif type_func_map.get(_type):
                 if ptypes[col] == "bool":
                     col_new = f"{col}_sum"
-                    agg_funcs.append(
-                        sqlop(
-                            optype=SQLOpType.aggfunc,
-                            opval=f"sum(case when {col} = 1 then 1 else 0 end) as {col_new}",
-                        )
+                    op = sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=f"sum(case when {col} = 1 then 1 else 0 end) as {col_new}",
                     )
+                    if op not in agg_funcs:
+                        agg_funcs.append(op)
                     continue
                 for func in type_func_map[_type]:
                     # There should be a better top-level mapping
@@ -836,7 +846,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                 col
                             ].unique()
                         )
-                        == 2
+                        <= 2
                         and str(
                             table_df_sample[~table_df_sample[col].isnull()][col]
                             .head()
@@ -847,12 +857,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
                     if func:
                         col_new = f"{col}_{func}"
-                        agg_funcs.append(
-                            sqlop(
-                                optype=SQLOpType.aggfunc,
-                                opval=f"{func}" + f"({col}) as {col_new}",
-                            )
+                        op = sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=f"{func}" + f"({col}) as {col_new}",
                         )
+                        if op not in agg_funcs:
+                            agg_funcs.append(op)
 
         # If we have time-series data we want to
         # do historical counts over the last periods.
@@ -1602,6 +1612,12 @@ class SQLNode(GraphReduceNode):
         do_labels_ops: typing.Optional[typing.List[sqlop]] = None,
         do_post_join_annotate_ops: typing.Optional[typing.List[sqlop]] = None,
         do_post_join_filters_ops: typing.Optional[typing.List[sqlop]] = None,
+        do_post_join_annotate_requires: typing.Optional[
+            typing.List[GraphReduceNode]
+        ] = None,
+        do_post_join_filters_requires: typing.Optional[
+            typing.List[GraphReduceNode]
+        ] = None,
         **kwargs,
     ):
         """
@@ -1618,6 +1634,8 @@ class SQLNode(GraphReduceNode):
                 do_labels_ops: list of `sqlop` instances for `do_labels`
                 do_post_join_annotate_ops: list of `sqlop` instances for `do_post_join_annotate`
                 do_post_join_filters_ops: list of `sqlop` instances for `do_post_join_filters`
+                do_post_join_annotate_requires: list of `SQLNode` instances that this method requires be joined prior to executing
+                do_post_join_filters_requires: list of `SQLNode` instances that this method requires be joined priot to executing
         """
         self._sql_client = client
         self.lazy_execution = lazy_execution
@@ -1639,6 +1657,8 @@ class SQLNode(GraphReduceNode):
         self.do_labels_ops = do_labels_ops
         self.do_post_join_annotate_ops = do_post_join_annotate_ops
         self.do_post_join_filters_ops = do_post_join_filters_ops
+        self.do_post_join_annotate_requires = do_post_join_annotate_requires
+        self.do_post_join_filters_requires = do_post_join_filters_requires
 
         # SQL operations for this node.
         self.sql_ops = []
@@ -1785,7 +1805,7 @@ class SQLNode(GraphReduceNode):
     # fetch samples.
     def get_sample(
         self,
-        n: int = 100,
+        n: int = 10000,
         table: str = None,
     ) -> pd.DataFrame:
         """
@@ -1793,7 +1813,7 @@ class SQLNode(GraphReduceNode):
         table or a parameterized table.
         """
         samp_query = """
-            SELECT * 
+            SELECT *
             FROM {table}
             LIMIT {n}
             """
@@ -1974,7 +1994,23 @@ class SQLNode(GraphReduceNode):
 
     def do_post_join_annotate(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         if self.do_post_join_annotate_ops:
-            return self.do_post_join_annotate_ops
+            if self.do_post_join_annotate_requires:
+                # Check if all required nodes are merged.
+                samp = self.get_sample(n=100)
+                all_merged = True
+                for node in self.do_post_join_annotate_requires:
+                    if not len(
+                        [c for c in samp.columns if c.startswith(f"{node.prefix}_")]
+                    ):
+                        all_merged = False
+                        logger.debug(f"All dependencies not merged")
+                if all_merged:
+                    logger.debug(f"All dependencies merged")
+                    return self.do_post_join_annotate_ops
+                else:
+                    return None
+            else:
+                return self.do_post_join_annotate_ops
         return None
 
     def do_labels(self, reduce_key: str) -> typing.Union[sqlop, typing.List[sqlop]]:
@@ -1984,6 +2020,24 @@ class SQLNode(GraphReduceNode):
 
     def do_post_join_filters(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         if self.do_post_join_filters_ops:
+            if self.do_post_join_filters_requires:
+                # Check if all required nodes are merged.
+                samp = self.get_sample(n=100)
+                all_merged = True
+                for node in self.do_post_join_filters_requires:
+                    if not len(
+                        [c for c in samp.columns if c.startswith(f"{node.prefix}_")]
+                    ):
+                        all_merged = False
+                        logger.debug(f"All dependencies not merged")
+                if all_merged:
+                    logger.debug(f"All dependencies merged")
+                    return self.do_post_join_filters_ops
+                else:
+                    return None
+            else:
+                return self.do_post_join_filters_ops
+
             return self.do_post_join_filters_ops
         return None
 
@@ -2129,7 +2183,7 @@ class DatabricksNode(SQLNode):
         """
         try:
             sql = f"""
-            CREATE TEMPORARY VIEW {view_name} AS 
+            CREATE TEMPORARY VIEW {view_name} AS
             {qry}
             """
             self._ref_sql = sql
@@ -2199,6 +2253,7 @@ class RedshiftNode(SQLNode):
         data type inference libraries.
         """
         agg_funcs = []
+
         # Always need to update this
         # because we never know if
         # the original columns comprise all
@@ -2227,12 +2282,12 @@ class RedshiftNode(SQLNode):
             elif type_func_map.get(_type):
                 if ptypes[col] == "bool":
                     col_new = f"{col}_sum"
-                    agg_funcs.append(
-                        sqlop(
-                            optype=SQLOpType.aggfunc,
-                            opval=f"sum(case when {col} = 1 then 1 else 0 end) as {col_new}",
-                        )
+                    op = sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=f"sum(case when {col} = 1 then 1 else 0 end) as {col_new}",
                     )
+                    if op not in agg_funcs:
+                        agg_funcs.append(op)
                     continue
                 for func in type_func_map[_type]:
                     # There should be a better top-level mapping
@@ -2262,35 +2317,23 @@ class RedshiftNode(SQLNode):
                     # a 0, 1 category and, if so, do a sum.
                     if (
                         _type == "categorical"
-                        and len(table_df_sample[col].unique()) == 2
+                        and len(table_df_sample[col].unique()) <= 2
                         and str(table_df_sample[col].head().values[0]).isdigit()
                     ):
                         func = "sum"
 
                     if func:
                         col_new = f"{col}_{func}"
-                        agg_funcs.append(
-                            sqlop(
-                                optype=SQLOpType.aggfunc,
-                                opval=f"{func}" + f"({col}) as {col_new}",
-                            )
+                        op = sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=f"{func}" + f"({col}) as {col_new}",
                         )
+                        if op not in agg_funcs:
+                            agg_funcs.append(op)
 
         # If we have time-series data we want to
         # do historical counts over the last periods.
         if ts_data:
-            agg_funcs.append(
-                sqlop(
-                    optype=SQLOpType.aggfunc,
-                    opval=f"MIN({self.colabbr(self.date_key)}) as {self.colabbr(self.date_key)}_min",
-                )
-            )
-            agg_funcs.append(
-                sqlop(
-                    optype=SQLOpType.aggfunc,
-                    opval=f"MAX({self.colabbr(self.date_key)}) as {self.colabbr(self.date_key)}_max",
-                )
-            )
             # Get the min and max dates.
             logger.info(f"had time-series aggregations for {self}")
             # Get the time since the last event.

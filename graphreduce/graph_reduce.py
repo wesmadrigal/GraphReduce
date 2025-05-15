@@ -534,6 +534,7 @@ class GraphReduce(nx.DiGraph):
             if relation_node._cur_data_ref
             else relation_node.fpath
         )
+        logger.info(f"parent table: {parent_table} relation table: {relation_table}")
         # Check if the relation foreign key is already
         # in the parent and, if so, rename it.
         parent_samp = parent_node.get_sample()
@@ -572,6 +573,8 @@ class GraphReduce(nx.DiGraph):
             schema=self._checkpoint_schema,
             dry=self.dry_run,
         )
+        # Get the table after the join.
+        parent_samp = parent_node.get_sample()
         self.sql_ops.append(JOIN_SQL)
         if parent_node._ref_sql:
             self.sql_ops.append(parent_node._ref_sql)
@@ -957,12 +960,19 @@ class GraphReduce(nx.DiGraph):
 
             # post-join annotations (if any)
             pja_sql = parent_node.build_query(parent_node.do_post_join_annotate())
+            logger.info(f"Running do_post_join_annotate")
+            logger.info(f"{pja_sql}")
             self.sql_ops.append(pja_sql)
             pja_ref = parent_node.create_ref(
                 pja_sql,
                 parent_node.do_post_join_annotate,
                 schema=self._checkpoint_schema,
                 dry=self.dry_run,
+                # Need to ensure we're overwriting the
+                # reference because previous executions
+                # may have tried creating a reference before
+                # dependencies were merged.
+                overwrite=True,
             )
             # post-join filters (if any)
             if hasattr(parent_node, "do_post_join_filters"):
@@ -973,6 +983,11 @@ class GraphReduce(nx.DiGraph):
                     parent_node.do_post_join_filters,
                     schema=self._checkpoint_schema,
                     dry=self.dry_run,
+                    # Need to ensure we're overwriting the
+                    # reference because previous executions
+                    # may have tried creating a reference before
+                    # dependencies were merged.
+                    overwrite=True,
                 )
 
     def do_transformations(self):
