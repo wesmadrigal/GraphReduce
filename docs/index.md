@@ -1,17 +1,84 @@
-# Welcome to MkDocs
+# Welcome to Kurve
 
-For full documentation visit [mkdocs.org](https://www.mkdocs.org).
+Self-serve demo available at [https://demo.kurve.ai](https://demo.kurve.ai)
 
-## Commands
+## Deployment
+Kurve is deployed <b>into your environment behind your VPC</b> so no data ever leaves
+your network.
 
-* `mkdocs new [dir-name]` - Create a new project.
-* `mkdocs serve` - Start the live-reloading docs server.
-* `mkdocs build` - Build the documentation site.
-* `mkdocs -h` - Print help message and exit.
+## Metadata extraction and inference
+Kurve providers a number of algorithms that point at data catalogs
+and infers the relational structure.
+The metadata Kurve automatically extracts are the following:
 
-## Project layout
+### Per table
+1. primary key
+2. date key
+3. row count
 
-    mkdocs.yml    # The configuration file.
-    docs/
-        index.md  # The documentation homepage.
-        ...       # Other markdown pages, images and other files.
+### Per table pair
+1. join keys (if any)
+2. cardinality
+
+
+## Metadata graphs
+Kurve metadata graphs use graph data structures, powered by [networkx](https://networkx.org) under the hood,
+to represent tables as nodes and relationships between tables as edges.  This allows us to benefit from
+the whole field of graph theory and take advantage of the rich ecosystem around it.
+
+
+## Compute graphs
+Metadata graphs are combined with compute graphs to run multi-table data integration.  Since the metadata
+are repesented in a graph it allows us to perform depth first graph traversal based on cardinality to
+integrate and aggregate data in a bottom up way (start at the high row count fact tables and aggregate upward).
+
+
+## Quickstart demo
+1. Create an account on [demo.kurve.ai](https://demo.kurve.ai)
+2. Build a metadata graph on the sample data source `/usr/local/lake/cust_data`.
+- this will infer the primary keys, date keys, and foreign keys between the tables
+2. Inspect the metadata graph to confirm the relationships are correct.
+3. Build a compute graph with the `cust.csv` as the <b>parent node</b> using the following parameters:
+    1. name: "customer sample test"
+    2. parent node: `cust.csv`
+    3. depth limit: 2
+    4. compute period in days: 365
+    5. cut date: 5/1/2023
+    6. label period in days: 60
+    7. label node: `orders.csv`
+    8. label field: `id`
+    9. label operation: count
+4. In the compute graph viewier click on <b>Actions</b> and then <b>Execute</b>
+5. Navigate to the home screen and you should see a data source under <b>My data sources</b>/
+6. Click on the data source and then click on the table name that was created which should
+   be the lower cased and underscore separated name you used for the compute graph.
+
+### What just happened?
+1. The parent node indicates which table everything will be integrated to, in this case the `cust.csv`.
+2. The depth limit indicates how many joins away from the parent node are permissible, in this case tables within 2 joins are included.
+3. The cut date is the date around which to filter - so nothing after the cut date will be included in
+  the data aggregation / integration process.
+4. The compute period indicates how far backwards relative to the cut date to look in all of the tables. In this example this results in where clauses like this being added to each node in the graph:
+    ```sql
+    where {table_date_key} > {cut_date} - interval '365 day'
+    ```
+5. The label period in days is how many days <i>after</i> the cut date to look for computing the label.
+  In this example this results in where clauses like this being added to compute a label:
+    ```sql
+    where {table_date_key} > {cut_date}
+    and {table_date_key} < {cut_date} + interval '90 day'
+    ```
+6. The label node is the table to run the label generation operation on.
+7. The label field is the field in the label node to run the operation on.
+8. The label operation is the actual operation to run, in this case count.
+In this example the label node, label field, and label operation tell us
+which field and aggregation primitive to run to compute the label:
+    ```
+    select customer_id,
+    count(id) as had_order_label
+    from 'orders.csv'
+    where {table_date_key} > '5/1/2023'
+    and {table_date_key} < '5/1/2023' + interval '90 day'
+    group by customer_id
+    ```
+9. The execution does a depth first traversal through the graph, starting at the bottom and working it's way up to the parent node.  Each step of the way it applies date filters based on the <b>cut date</b> and performs aggregations prior to joining.  We'll dig more into how this works and how to customze compute graphs in the tutorial.

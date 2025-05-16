@@ -1,6 +1,6 @@
-site_name: Kurve documentation
-repo_url: https://github.com/kurveai/kurvedocs
-repo_name: kurvedocs
+site_name: Kurve docs
+#repo_url: https://github.com/kurveai/kurvedocs
+#repo_name: kurvedocs
 edit_uri: edit/main/docs
 
 theme:
@@ -12,13 +12,23 @@ theme:
     - toc.integrate
   palette:
     - scheme: default
-      primary: blue
+      primary: teal
       accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: switch to dark mode
+
+    - scheme: slate
+      primary: teal
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: switch to light mode
 
 nav:
   - Home: index.md
-  - Getting Started: getting-started.md
-  - API reference: api.md
+  - Concepts: concepts.md
+  - Examples: examples.md
 
 plugins:
   - search
