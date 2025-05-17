@@ -5,6 +5,8 @@ edit_uri: edit/main/docs
 
 theme:
   name: material
+  favicon: images/Kurve_Logotype_04.png
+  logo: images/Kurve_Logotype_04.png
   features:
     - navigation.tabs
     - navigation.sections
