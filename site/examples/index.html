@@ -9,23 +9,23 @@
       
       
       
+        <link rel="prev" href="../concepts/">
       
-        <link rel="next" href="concepts/">
       
       
-      <link rel="icon" href="images/Kurve_Logotype_04.png">
+      <link rel="icon" href="../images/Kurve_Logotype_04.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.13">
     
     
       
-        <title>Kurve docs</title>
+        <title>Examples - Kurve docs</title>
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.342714a4.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
       
         
-        <link rel="stylesheet" href="assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,7 +44,7 @@
       
     
     
-    <script>__md_scope=new URL(".",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#welcome-to-kurve" class="md-skip">
+        <a href="#relational-schema-inference-basics" class="md-skip">
           Skip to content
         </a>
       
@@ -84,9 +84,9 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="." title="Kurve docs" class="md-header__button md-logo" aria-label="Kurve docs" data-md-component="logo">
+    <a href=".." title="Kurve docs" class="md-header__button md-logo" aria-label="Kurve docs" data-md-component="logo">
       
-  <img src="images/Kurve_Logotype_04.png" alt="logo">
+  <img src="../images/Kurve_Logotype_04.png" alt="logo">
 
     </a>
     <label class="md-header__button md-icon" for="__drawer">
@@ -103,7 +103,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Home
+              Examples
             
           </span>
         </div>
@@ -200,11 +200,9 @@
   
   
   
-    
   
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="." class="md-tabs__link">
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
         
   
   
@@ -223,7 +221,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="concepts/" class="md-tabs__link">
+      <a href="../concepts/" class="md-tabs__link">
         
   
   
@@ -240,9 +238,11 @@
   
   
   
+    
   
-    <li class="md-tabs__item">
-      <a href="examples/" class="md-tabs__link">
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
         
   
   
@@ -279,9 +279,9 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="." title="Kurve docs" class="md-nav__button md-logo" aria-label="Kurve docs" data-md-component="logo">
+    <a href=".." title="Kurve docs" class="md-nav__button md-logo" aria-label="Kurve docs" data-md-component="logo">
       
-  <img src="images/Kurve_Logotype_04.png" alt="logo">
+  <img src="../images/Kurve_Logotype_04.png" alt="logo">
 
     </a>
     Kurve docs
@@ -293,32 +293,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Home
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="." class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
         
   
   
@@ -329,110 +307,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#deployment" class="md-nav__link">
-    <span class="md-ellipsis">
-      Deployment
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#metadata-extraction-and-inference" class="md-nav__link">
-    <span class="md-ellipsis">
-      Metadata extraction and inference
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Metadata extraction and inference">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#per-table" class="md-nav__link">
-    <span class="md-ellipsis">
-      Per table
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#per-table-pair" class="md-nav__link">
-    <span class="md-ellipsis">
-      Per table pair
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#metadata-graphs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Metadata graphs
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compute-graphs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compute graphs
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#quickstart-demo" class="md-nav__link">
-    <span class="md-ellipsis">
-      Quickstart demo
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Quickstart demo">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#what-just-happened" class="md-nav__link">
-    <span class="md-ellipsis">
-      What just happened?
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -444,7 +318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="concepts/" class="md-nav__link">
+      <a href="../concepts/" class="md-nav__link">
         
   
   
@@ -463,10 +337,30 @@
       
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="examples/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -477,6 +371,69 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#relational-schema-inference-basics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relational schema inference basics
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orienting-schema-graphs-around-particular-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Orienting schema graphs around particular nodes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compute-graph-basics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compute graph basics
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-level-operations-customization-basic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node-level operations customization basic
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-level-operations-customization-advanced" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node-level operations customization advanced
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -500,84 +457,86 @@
   
 
 
-<h1 id="welcome-to-kurve">Welcome to Kurve</h1>
-<p>Self-serve demo available at <a href="https://demo.kurve.ai">https://demo.kurve.ai</a></p>
-<h2 id="deployment">Deployment</h2>
-<p>Kurve is deployed <b>into your environment behind your VPC</b> so no data ever leaves
-your network.</p>
-<h2 id="metadata-extraction-and-inference">Metadata extraction and inference</h2>
-<p>Kurve providers a number of algorithms that point at data catalogs
-and infers the relational structure.
-The metadata Kurve automatically extracts are the following:</p>
-<h3 id="per-table">Per table</h3>
+  <h1>Examples</h1>
+
+<h2 id="relational-schema-inference-basics">Relational schema inference basics</h2>
+<p>This tutorial covers the basic features of extracting relational metadata
+from flat files.</p>
 <ol>
-<li>primary key</li>
-<li>date key</li>
-<li>row count</li>
-</ol>
-<h3 id="per-table-pair">Per table pair</h3>
-<ol>
-<li>join keys (if any)</li>
-<li>cardinality</li>
-</ol>
-<h2 id="metadata-graphs">Metadata graphs</h2>
-<p>Kurve metadata graphs use graph data structures, powered by <a href="https://networkx.org">networkx</a> under the hood,
-to represent tables as nodes and relationships between tables as edges.  This allows us to benefit from
-the whole field of graph theory and take advantage of the rich ecosystem around it.</p>
-<h2 id="compute-graphs">Compute graphs</h2>
-<p>Metadata graphs are combined with compute graphs to run multi-table data integration.  Since the metadata
-are repesented in a graph it allows us to perform depth first graph traversal based on cardinality to
-integrate and aggregate data in a bottom up way (start at the high row count fact tables and aggregate upward).</p>
-<h2 id="quickstart-demo">Quickstart demo</h2>
-<ol>
-<li>Create an account on <a href="https://demo.kurve.ai">demo.kurve.ai</a></li>
-<li>Build a metadata graph on the sample data source <code>/usr/local/lake/cust_data</code>.</li>
-<li>this will infer the primary keys, date keys, and foreign keys between the tables</li>
-<li>Inspect the metadata graph to confirm the relationships are correct.</li>
-<li>Build a compute graph with the <code>cust.csv</code> as the <b>parent node</b> using the following parameters:<ol>
-<li>name: "customer sample test"</li>
-<li>parent node: <code>cust.csv</code></li>
-<li>depth limit: 2</li>
-<li>compute period in days: 365</li>
-<li>cut date: 5/1/2023</li>
-<li>label period in days: 60</li>
-<li>label node: <code>orders.csv</code></li>
-<li>label field: <code>id</code></li>
-<li>label operation: count</li>
+<li>Log in to <a href="https://demo.kurve.ai">kurve demo</a></li>
+<li>Look under <b>Sample data sources</b> for <code>/usr/local/lake/cust_data</code> and click <b>Create Graph</b></li>
+<li>In a few seconds the page should refresh view the graph with <b>View Graph</b></li>
+<li>View all of the foreign key relationships between the 6 tables:<ol>
+<li><code>cust.csv</code> connects with <code>orders.csv</code> on <code>id -&gt; customer_id</code></li>
+<li><code>cust.csv</code> connects with <code>notifications.csv</code> on <code>id -&gt; customer_id</code></li>
+<li><code>orders.csv</code> connects with <code>order_products.csv</code> on <code>id -&gt; order_id</code></li>
+<li><code>notifications.csv</code> connects with <code>notification_interactions.csv</code> on <code>id -&gt; notification_id</code></li>
+<li><code>notification_interactions.csv</code> connects with <code>notification_interaction_types.csv</code> on <code>interaction_type_id -&gt; id</code></li>
 </ol>
 </li>
-<li>In the compute graph viewier click on <b>Actions</b> and then <b>Execute</b></li>
-<li>Navigate to the home screen and you should see a data source under <b>My data sources</b>/</li>
-<li>Click on the data source and then click on the table name that was created which should
-   be the lower cased and underscore separated name you used for the compute graph.</li>
 </ol>
-<h3 id="what-just-happened">What just happened?</h3>
+<p>In this example Kurve points at the 6 csv files, runs an algorithm, and extracts all of the relational metadata.
+Next we'll look at how to run computation on these relational metadata graphs.</p>
+<h2 id="orienting-schema-graphs-around-particular-nodes">Orienting schema graphs around particular nodes</h2>
+<p>Most analytics and AI problems are oriented around a particular <a href="https://en.wikipedia.org/wiki/Dimension_(data_warehouse)">dimension</a>.  With a graph structure we can easily manipuate the schema graph
+around the dimension of interest.  For this example we'll orient the <code>/usr/local/lake/cust_data</code>
+sample schema around the <code>cust.csv</code>.  To do this we'll assign the <code>cust.csv</code> as the <b>parent node</b>:</p>
 <ol>
-<li>The parent node indicates which table everything will be integrated to, in this case the <code>cust.csv</code>.</li>
-<li>The depth limit indicates how many joins away from the parent node are permissible, in this case tables within 2 joins are included.</li>
-<li>The cut date is the date around which to filter - so nothing after the cut date will be included in
-  the data aggregation / integration process.</li>
-<li>The compute period indicates how far backwards relative to the cut date to look in all of the tables. In this example this results in where clauses like this being added to each node in the graph:
-    <code>sql
-    where {table_date_key} &gt; {cut_date} - interval '365 day'</code></li>
-<li>The label period in days is how many days <i>after</i> the cut date to look for computing the label.
-  In this example this results in where clauses like this being added to compute a label:
-    <code>sql
-    where {table_date_key} &gt; {cut_date}
-    and {table_date_key} &lt; {cut_date} + interval '90 day'</code></li>
-<li>The label node is the table to run the label generation operation on.</li>
-<li>The label field is the field in the label node to run the operation on.</li>
-<li>The label operation is the actual operation to run, in this case count.
-In this example the label node, label field, and label operation tell us
-which field and aggregation primitive to run to compute the label:
-    <code>select customer_id,
-    count(id) as had_order_label
-    from 'orders.csv'
-    where {table_date_key} &gt; '5/1/2023'
-    and {table_date_key} &lt; '5/1/2023' + interval '90 day'
-    group by customer_id</code></li>
-<li>The execution does a depth first traversal through the graph, starting at the bottom and working it's way up to the parent node.  Each step of the way it applies date filters based on the <b>cut date</b> and performs aggregations prior to joining.  We'll dig more into how this works and how to customze compute graphs in the tutorial.</li>
+<li>Under <b>Actions</b> in the schema graph viewer click <b>Assign Parent Node</b> and select <code>cust.csv</code> with <code>depth=1</code>.</li>
+<li>You should have a subgraph of 3 tables now: <code>cust.csv</code>, <code>orders.csv</code>, and <code>notifications.csv</code></li>
+<li>Now that we've oriented the dataset around the <code>cust.csv</code> dimension let's get to compute / data integration.</li>
 </ol>
+<h2 id="compute-graph-basics">Compute graph basics</h2>
+<ol>
+<li>Visit the schema graph for <code>/usr/local/lake/cust_data</code>.</li>
+<li>Click <b>Actions</b>, <b>Assign Parent Node</b>, select <code>cust.csv</code> with <code>depth = 1</code>.</li>
+<li>Click <b>Actions</b>, <b>Compute Graph</b> and plug in the following values:<ol>
+<li>Name: kurve cust demo</li>
+<li>Parent Node: cust.csv</li>
+<li>Depth limit: 1</li>
+<li>Compute period in days: 365</li>
+<li>Cut date: 05/01/2023</li>
+<li>Label period in days: 90</li>
+<li>Label node: notifications.csv</li>
+<li>Label field: id</li>
+<li>Label operation: count</li>
+</ol>
+</li>
+<li>Notice the color coating of the parent node, cust.csv, and the label node, notifications.csv.</li>
+<li>Let's make sure our parameters are correct: click <b>Actions</b>, <b>Show compute graph details</b>.</li>
+<li>If all of that looks good now let's execute the compute graph:<ol>
+<li>click <b>Actions</b></li>
+<li>click <b>Execute compute graph</b></li>
+<li>navigate home</li>
+<li>you should now see a data source under <b>My data sources</b>, click it and find the <code>kurve_cust_demo_train</code> table or whatever name you used and click on the table</li>
+<li>notice all of the columns but we should only have 4 rows, this is all 3 tables aggregated and integrated to the <code>cust.csv</code> dimension with point-in-time correctness based on the above parameters.</li>
+</ol>
+</li>
+</ol>
+<h2 id="node-level-operations-customization-basic">Node-level operations customization basic</h2>
+<p>In the compute graph basics example we leaned into the automation, but let's
+customize some things and see the effect.</p>
+<ol>
+<li>
+<p>Visit the compute graph under <code>/usr/local/lake/cust_data</code></p>
+</li>
+<li>
+<p>Click the parent node <code>cust.csv</code></p>
+</li>
+<li>
+<p>Click <b>Edit Node</b> and under <b>Annotations / special selects</b> enter the following:</p>
+<p><code>select *, length(name) as name_length</code></p>
+</li>
+<li>
+<p>Under <b>Filters</b> enter the following:</p>
+<p><code>where name_length &lt; 4</code></p>
+</li>
+<li>
+<p>Execute the compute graph</p>
+</li>
+<li>Navigate home and click on the compute graph output table under <b>My data sources</b> and you shuld now see only 3 rows.</li>
+</ol>
+<h2 id="node-level-operations-customization-advanced">Node-level operations customization advanced</h2>
 
 
 
@@ -598,7 +557,7 @@ which field and aggregation primitive to run to compute the label:
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="May 16, 2025 15:30:21">May 16, 2025</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="May 17, 2025 19:05:46">May 17, 2025</span>
   </span>
 
     
@@ -647,10 +606,10 @@ which field and aggregation primitive to run to compute the label:
     
     
       
-      <script id="__config" type="application/json">{"base": ".", "features": ["navigation.tabs", "navigation.sections", "content.code.copy", "toc.integrate"], "search": "assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy", "toc.integrate"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="assets/javascripts/bundle.13a4f30d.min.js"></script>
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
       
     
   </body>

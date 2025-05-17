@@ -55,30 +55,19 @@ integrate and aggregate data in a bottom up way (start at the high row count fac
 
 ### What just happened?
 1. The parent node indicates which table everything will be integrated to, in this case the `cust.csv`.
+
 2. The depth limit indicates how many joins away from the parent node are permissible, in this case tables within 2 joins are included.
-3. The cut date is the date around which to filter - so nothing after the cut date will be included in
-  the data aggregation / integration process.
-4. The compute period indicates how far backwards relative to the cut date to look in all of the tables. In this example this results in where clauses like this being added to each node in the graph:
-    ```sql
-    where {table_date_key} > {cut_date} - interval '365 day'
-    ```
+
+3. The cut date is the date around which to filter - so nothing after the cut date will be included in the data aggregation / integration process.
+
+4. The compute period indicates how far backwards relative to the cut date to look in all of the tables.
+
 5. The label period in days is how many days <i>after</i> the cut date to look for computing the label.
-  In this example this results in where clauses like this being added to compute a label:
-    ```sql
-    where {table_date_key} > {cut_date}
-    and {table_date_key} < {cut_date} + interval '90 day'
-    ```
+
 6. The label node is the table to run the label generation operation on.
+
 7. The label field is the field in the label node to run the operation on.
+
 8. The label operation is the actual operation to run, in this case count.
-In this example the label node, label field, and label operation tell us
-which field and aggregation primitive to run to compute the label:
-    ```
-    select customer_id,
-    count(id) as had_order_label
-    from 'orders.csv'
-    where {table_date_key} > '5/1/2023'
-    and {table_date_key} < '5/1/2023' + interval '90 day'
-    group by customer_id
-    ```
+
 9. The execution does a depth first traversal through the graph, starting at the bottom and working it's way up to the parent node.  Each step of the way it applies date filters based on the <b>cut date</b> and performs aggregations prior to joining.  We'll dig more into how this works and how to customze compute graphs in the tutorial.
