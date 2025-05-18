@@ -6,6 +6,15 @@ Self-serve demo available at [https://demo.kurve.ai](https://demo.kurve.ai)
 Kurve is deployed <b>into your environment behind your VPC</b> so no data ever leaves
 your network.
 
+### Metadata storage
+The Kurve application is configured with `sqlite` by default but needs a relational database for the application-level models.  The metadata Kurve extracts and manages can also be optionally pushed directly into catalogs such as [Unity Catalog](https://www.unitycatalog.io).
+
+### Authentication
+Kurve supports basic auth and [OAuth 2.0](https://oauth.net/2/).  During a deployment, since Kurve runs within your cloud, there may be a manual configuration of the internal callback URL.
+
+An example might be a VPC-protected internal subdomain: `CUSTOMER.kurve.dev/callback`
+
+
 ## Metadata extraction and inference
 Kurve providers a number of algorithms that point at data catalogs
 and infers the relational structure.
@@ -29,17 +38,26 @@ the whole field of graph theory and take advantage of the rich ecosystem around 
 
 ## Compute graphs
 Metadata graphs are combined with compute graphs to run multi-table data integration.  Since the metadata
-are repesented in a graph it allows us to perform depth first graph traversal based on cardinality to
+are repesented in a graph it allows us to perform [depth first search/traversal](https://en.wikipedia.org/wiki/Depth-first_search) based on [cardinality](https://en.wikipedia.org/wiki/Cardinality_(data_modeling)) to
 integrate and aggregate data in a bottom up way (start at the high row count fact tables and aggregate upward).
 
 
 ## Quickstart demo
 1. Create an account on [demo.kurve.ai](https://demo.kurve.ai)
 2. Build a metadata graph on the sample data source `/usr/local/lake/cust_data`.
-- this will infer the primary keys, date keys, and foreign keys between the tables
-2. Inspect the metadata graph to confirm the relationships are correct.
-3. Build a compute graph with the `cust.csv` as the <b>parent node</b> using the following parameters:
-    1. name: "customer sample test"
+    - this will infer the primary keys, date keys, and foreign keys between the tables
+
+    ![output](images/quickstart_graph1.jpg)
+
+3. Inspect the metadata graph to confirm the relationships are correct.
+    - if there are incorrect relationships you can easily remove them
+    ![remove edge](images/quickstart_removeedge.jpg)
+    - if edges were missed they can be added
+
+    <img src="./images/quickstart_addedge.jpg" width="400" height="400">
+
+4. Build a compute graph with the `cust.csv` as the <b>parent node</b> using the following parameters:
+    1. name: customer sample test
     2. parent node: `cust.csv`
     3. depth limit: 2
     4. compute period in days: 365
@@ -48,10 +66,15 @@ integrate and aggregate data in a bottom up way (start at the high row count fac
     7. label node: `orders.csv`
     8. label field: `id`
     9. label operation: count
-4. In the compute graph viewier click on <b>Actions</b> and then <b>Execute</b>
-5. Navigate to the home screen and you should see a data source under <b>My data sources</b>/
-6. Click on the data source and then click on the table name that was created which should
+
+    ![create compute graph](images/quickstart_step2.jpg)
+
+5. You should now see a compute graph with the `cust.csv` at the top and the `orders.csv` colored yellow since it is the target node.
+6. In the compute graph viewier click on <b>Actions</b> and then <b>Execute</b>
+7. Navigate to the home screen and you should see a data source under <b>My data sources</b>
+8. Click on the data source and then click on the table name that was created which should
    be the lower cased and underscore separated name you used for the compute graph.
+    ![integrated data](images/quickstart_step4.jpg)
 
 ### What just happened?
 1. The parent node indicates which table everything will be integrated to, in this case the `cust.csv`.
