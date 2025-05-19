@@ -48,6 +48,7 @@ are repesented in a graph it allows us to perform [depth first search/traversal]
 integrate and aggregate data in a bottom up way (start at the high row count fact tables and aggregate upward).
 
 Compute graphs are supported by the following open source projects:
+
 - [sqlglot](https://github.com/tobymao/sqlglot)
 - [graphreduce](https://github.com/wesmadrigal/graphreduce)
 - [torch frame](https://github.com/pyg-team/pytorch-frame)
