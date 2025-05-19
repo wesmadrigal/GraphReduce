@@ -1,10 +1,10 @@
 ## Relational schema inference
 This tutorial covers the basic features of extracting relational metadata
-from flat files.
+from a directory of files.  The same process would be followed for a data lake / data warehouse.
 
 1. Log in to [kurve demo](https://demo.kurve.ai)
 2. Look under <b>Sample data sources</b> for `/usr/local/lake/cust_data` and click <b>Create Graph</b>
-3. In a few seconds the page should refresh view the graph with <b>View Graph</b>
+3. In a few seconds the page should refresh and you can view the graph by clicking <b>View Graph</b>
 4. View all of the foreign key relationships between the 6 tables:
     1. `cust.csv` connects with `orders.csv` on `id -> customer_id`
     2. `cust.csv` connects with `notifications.csv` on `id -> customer_id`

@@ -152,11 +152,15 @@ Same as annotations above but applied <i>after</i> the specified
 relations are merged.  An example might be a `DATEDIFF` applied
 to two columns: one from the parent table and the other from the child table.
 
+Check out the [advanced examples](examples.md#post-join-annotation) for more detail.
+
 ##### post-join filters (advanced)
 Same as filters above but applied <i>after</i> the specified
 relations are merged.  An example might be filtering after a `DATEDIFF`
 has been applied to two columns from different table after
 joining them together.
+
+Check out the [advanced examples](examples.md#post-join-filters) for more detail.
 
 ### Compute graph edges
 Relationships between table.  The most noteworthy attribute about edges, beyond
@@ -179,6 +183,8 @@ By leveraging Kurve's metadata graphs and compute subraphs we can visually see
 large subgraphs of multi-table data integration one table / node at a time.
 This allows the developer to focus on individual components, nodes, of a larger
 compute operation without thinking about every aspect simultaneously.
+
+Kurve abstracts and automates away a lot of the menial boilerplate that also adds to complexity of pipelines and queries, such as prefixing columns in tables, filtering on dates, joining tables, and aggregating / reducing one to many relations prior to a join.  Kurve provides completely automated approaches to this but also allows full cutomization when desired.  Think of it like autonomous driving for data: use the autonamy where you want and take control where you feel you need to.
 
 ## How compute graphs get executed
 

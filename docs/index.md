@@ -17,8 +17,8 @@ An example might be a VPC-protected internal subdomain: `CUSTOMER.kurve.dev/call
 
 ## Metadata extraction and inference
 Kurve providers a number of algorithms that point at data catalogs
-and infers the relational structure.
-The metadata Kurve automatically extracts are the following:
+and infer the relational structure.
+The metadata Kurve automatically extracts are:
 
 ### Per table
 1. primary key
@@ -29,23 +29,34 @@ The metadata Kurve automatically extracts are the following:
 1. join keys (if any)
 2. cardinality
 
+### coming soon...
+
+#### semantic view integration with Snowflake
+- automatic generation of [Snowflake semantic views](https://docs.snowflake.com/en/sql-reference/info-schema/semantic_views)
+- event interval for time-series data
+
+#### index integration with Databricks
+- automatic creation of indexes (primary and foreign key indexes)
+
 
 ## Metadata graphs
-Kurve metadata graphs use graph data structures, powered by [networkx](https://networkx.org) under the hood,
-to represent tables as nodes and relationships between tables as edges.  This allows us to benefit from
-the whole field of graph theory and take advantage of the rich ecosystem around it.
-
+Kurve metadata graphs leverage [networkx](https://networkx.org) under the hood to represent tables as nodes and relationships between tables as edges.  This allows us to benefit from the whole field of graph theory and take advantage of the open source ecosystem around it.
 
 ## Compute graphs
 Metadata graphs are combined with compute graphs to run multi-table data integration.  Since the metadata
 are repesented in a graph it allows us to perform [depth first search/traversal](https://en.wikipedia.org/wiki/Depth-first_search) based on [cardinality](https://en.wikipedia.org/wiki/Cardinality_(data_modeling)) to
 integrate and aggregate data in a bottom up way (start at the high row count fact tables and aggregate upward).
 
+Compute graphs are supported by the following open source projects:
+- [sqlglot](https://github.com/tobymao/sqlglot)
+- [graphreduce](https://github.com/wesmadrigal/graphreduce)
+- [torch frame](https://github.com/pyg-team/pytorch-frame)
+
 
 ## Quickstart demo
 1. Create an account on [demo.kurve.ai](https://demo.kurve.ai)
 2. Build a metadata graph on the sample data source `/usr/local/lake/cust_data`.
-    - this will infer the primary keys, date keys, and foreign keys between the tables
+    - this will infer the primary keys, date keys, and foreign keys between the tables and you should have the following metadata graph:
 
     ![output](images/quickstart_graph1.jpg)
 
