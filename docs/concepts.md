@@ -77,7 +77,9 @@ Compute graph nodes allow us to define the following:
   - post join annotations
   - post join filters
 
-#### annotations
+#### operations
+
+##### annotations
 Annotations are any manipulation of existing columns to create new ones such as
 applying a length function to a string column, extracting json to add new columns,
 or computing some function over a numerical column in a non-aggregated way.
@@ -98,7 +100,7 @@ from table
 We added the `name_length` column which is derived from the `name` column, so now we
 have 3 columns instead of 2.
 
-#### filters
+##### filters
 Filters are any filter applied to the node.  Since order of operation matters, they
 can also be combined with annotations.  They can be written in isolation without
 the rest of SQL grammar:
@@ -112,7 +114,7 @@ from some_stage_name
 where lower(name) like '%test%'
 ```
 
-#### reduce / aggregate
+##### reduce / aggregate
 Aggregations are any `group by` applied to the table prior
 to joining it to it's parent.  Kurve uses completely automated
 reduce operations powered by [graphreduce](https://github.com/wesmadrigal/graphreduce)
@@ -127,21 +129,56 @@ from 'orders.csv'
 group by customer_id
 ```
 
-#### labels / target variables
+##### labels / target variables
+Labels are the target variable for machine learning problems.
+Based on the parameterized cut date and the label period the label
+node will get filtered to compute the label.
 
-#### post-join annotations
+For a label period of 90 days and a cut date of Jan 1, 2025 we would
+get the following auto-generated SQL for the `orders.csv`:
+```sql
+select customer_id,
+count(*) as num_orders_label
+from 'orders.csv'
+where ts > cut_date
+and ts < cut_date + INTERVAL '90 day'
+group by customer_id
+```
 
-#### post-join filters
+This tells us if a customer had an order in the next 90 days.
 
+##### post-join annotations (advanced)
+Same as annotations above but applied <i>after</i> the specified
+relations are merged.  An example might be a `DATEDIFF` applied
+to two columns: one from the parent table and the other from the child table.
+
+##### post-join filters (advanced)
+Same as filters above but applied <i>after</i> the specified
+relations are merged.  An example might be filtering after a `DATEDIFF`
+has been applied to two columns from different table after
+joining them together.
 
 ### Compute graph edges
+Relationships between table.  The most noteworthy attribute about edges, beyond
+the relationship they encode, is whether or not to <b>reduce</b> the edge or not.
+
+For one to many relationships there are times where it is desirable to preserve
+all rows in the child relation and still join, knowing it will cause duplication
+of the parent relationship.  In these cases we can specify `reduce = False`.
 
 
-## Compute graph decomposition
+## Decomposing data problems spanning multiple tables with graphs
 
 ### Thinking at the node-level
+Kurve is built on the realization that most data analytics and AI data discovery
+and data preparation involves multiple tables.  The more tables involved the
+higher cognitive load due to sheer table counts, but also due to what has traditionally
+been spaghetti code or pipeline jungles required to munge all of this data.
 
-### Thinking at the neighborhood-level
+By leveraging Kurve's metadata graphs and compute subraphs we can visually see
+large subgraphs of multi-table data integration one table / node at a time.
+This allows the developer to focus on individual components, nodes, of a larger
+compute operation without thinking about every aspect simultaneously.
 
 ## How compute graphs get executed
 
@@ -158,7 +195,28 @@ As of writing, Kurve supports connectors to the following.
 
 
 ### Depth-first traversal
+Kurve uses [depth first traversal](https://en.wikipedia.org/wiki/Depth-first_search) during compute graph
+execution, starting at the bottom and recursively working back up to the top.
 
 ### Dynamic SQL generation and prefixing
+Kurve leverages [sqlglot](https://github.com/tobymao/sqlglot) for SQL parsing
+and helping with SQL prefixing based on the specified prefix.
+
+All table in a compute graph must have a prefix and the prefixes must be
+unique.  For example a customers table is typically prefixed with something
+like `'cust'`.  This allows us to know which table(s) the data originated
+from after it has been integrated.
 
 ### Temporary references and views
+Behind the scenes when a compute graph gets executed Kurve is creating and referencing
+incremental temporary references to incremental transformations of data throughout
+the execution.  For a 2 node compute graph with no customized operations the
+execution flow would be as follows:
+
+1. load and prefix data and create reference for table 1
+2. load and prefix data and create reference for table 2
+3. aggregate and create reference of aggregated data for table 2
+4. join aggregated data from table 2 to table 1 and create updated reference for table 1
+
+This execution flow would have at least 4 temporary incremental references created, which
+capture every table-level and join-level maninpuluation to the data.

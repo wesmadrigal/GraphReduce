@@ -12,6 +12,7 @@ theme:
     - navigation.sections
     - content.code.copy
     - toc.integrate
+    - navigation.expand
   palette:
     - scheme: default
       primary: teal
@@ -36,3 +37,4 @@ plugins:
   - search
   - git-revision-date-localized
   - autorefs
+

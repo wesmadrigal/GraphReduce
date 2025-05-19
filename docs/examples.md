@@ -1,4 +1,4 @@
-## Relational schema inference basics
+## Relational schema inference
 This tutorial covers the basic features of extracting relational metadata
 from flat files.
 
@@ -53,7 +53,7 @@ sample schema around the `cust.csv`.  To do this we'll assign the `cust.csv` as 
 
 
 
-## Node-level operations customization basic
+## Node-level operations customization (basic)
 In the compute graph created in the above example we leaned into Kurve's automation, but let's
 customize some things and see the effect.
 
@@ -80,13 +80,37 @@ customize some things and see the effect.
 In summary, we annotated the `cust.csv` node with a new column called `name_length` and then filtered the dataset to only contain rows where `name_length < 4`, which filtered one row.  This highlights how we can customize compute graphs in a basic way.  The next example will do this in a more advanced way.
 
 
-## Node-level operations customization advanced
-Continuing with the same schema and compute graph from the prior 2 examples let's say we need to customize some of the aggregations on the `orders.csv` table and perform some filters on that table, as well.
+## Node-level operations customization (advanced)
+Continuing with the same schema and compute graph from the prior examples.
 
-1. Visit the compute graph from the prior example
-2. Click on the `orders.csv` node
-3. Click <b>Edit Node</b> and under <b>Filters</b> enter the following:
+### post-join annotation
+We need to compute the difference between the `notifications.csv` and the `orders.csv` timestamps, which will require
+they both be joined to the `cust.csv` and then a `DATEDIFF` operation needs to be called between the dates.  The order
+of operations is as follows:
 
-    ```
-    where total < 2000
-    ```
+1. Join `orders.csv` to `cust.csv` without aggregating
+2. Join `notifications.csv` to `cust.csv` without aggregating
+3. Compute date difference between `orders.csv` timestamp and `notifications.csv` timestamp
+
+To accomplish this in Kurve we just need to specify a post-join annotation definition on the `cust.csv` as follows:
+![ex4s1](images/ex4_step1.jpg)
+
+Notice the highlighted portion of the screenshot which shows the nodes that the `post-join annotate` operation depends on.  This tells Kurve that to apply the defined operation under post-join annotate we need bboth the `orders.csv` and `notifictions.csv` merged first.  The SQL we're running is:
+```sql
+select *,
+DATEDIFF('DAY', ord_ts, not_ts) as order_notification_timediff
+```
+
+Additionally, we need to update both edges to <i>not</i> be aggregated prior to join:
+![ex4s2](images/ex4_step2.jpg)
+
+Finally, we can execute the compute graph.  Once it is executed notice the newly added column in the dataset.  Also notice that we don't have just 4 rows anymore since we did not aggregate the child relationships!
+
+![ex4s3](images/ex4_step3.jpg)
+
+### post-join filters
+In post-join annotation we created a new column that depended on 2 foreign relationships.  We'll define a filter which depends on the same 2 relationships and applies to the column created by post-join annotate.
+![ex4s4](images/ex4_step4.jpg)
+
+Now re-execute the compute graph and view the output.  There shouldn't be any negatives for `order_notification_timediff`:
+![ex4s5](images/ex4_step5.jpg)
