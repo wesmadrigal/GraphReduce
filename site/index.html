@@ -352,6 +352,30 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Deployment">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#metadata-storage" class="md-nav__link">
+    <span class="md-ellipsis">
+      Metadata storage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#authentication" class="md-nav__link">
+    <span class="md-ellipsis">
+      Authentication
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -505,6 +529,11 @@
 <h2 id="deployment">Deployment</h2>
 <p>Kurve is deployed <b>into your environment behind your VPC</b> so no data ever leaves
 your network.</p>
+<h3 id="metadata-storage">Metadata storage</h3>
+<p>The Kurve application is configured with <code>sqlite</code> by default but needs a relational database for the application-level models.  The metadata Kurve extracts and manages can also be optionally pushed directly into catalogs such as <a href="https://www.unitycatalog.io">Unity Catalog</a>.</p>
+<h3 id="authentication">Authentication</h3>
+<p>Kurve supports basic auth and <a href="https://oauth.net/2/">OAuth 2.0</a>.  During a deployment, since Kurve runs within your cloud, there may be a manual configuration of the internal callback URL.</p>
+<p>An example might be a VPC-protected internal subdomain: <code>CUSTOMER.kurve.dev/callback</code></p>
 <h2 id="metadata-extraction-and-inference">Metadata extraction and inference</h2>
 <p>Kurve providers a number of algorithms that point at data catalogs
 and infers the relational structure.
@@ -526,16 +555,31 @@ to represent tables as nodes and relationships between tables as edges.  This al
 the whole field of graph theory and take advantage of the rich ecosystem around it.</p>
 <h2 id="compute-graphs">Compute graphs</h2>
 <p>Metadata graphs are combined with compute graphs to run multi-table data integration.  Since the metadata
-are repesented in a graph it allows us to perform depth first graph traversal based on cardinality to
+are repesented in a graph it allows us to perform <a href="https://en.wikipedia.org/wiki/Depth-first_search">depth first search/traversal</a> based on <a href="https://en.wikipedia.org/wiki/Cardinality_(data_modeling)">cardinality</a> to
 integrate and aggregate data in a bottom up way (start at the high row count fact tables and aggregate upward).</p>
 <h2 id="quickstart-demo">Quickstart demo</h2>
 <ol>
 <li>Create an account on <a href="https://demo.kurve.ai">demo.kurve.ai</a></li>
-<li>Build a metadata graph on the sample data source <code>/usr/local/lake/cust_data</code>.</li>
+<li>
+<p>Build a metadata graph on the sample data source <code>/usr/local/lake/cust_data</code>.</p>
+<ul>
 <li>this will infer the primary keys, date keys, and foreign keys between the tables</li>
-<li>Inspect the metadata graph to confirm the relationships are correct.</li>
-<li>Build a compute graph with the <code>cust.csv</code> as the <b>parent node</b> using the following parameters:<ol>
-<li>name: "customer sample test"</li>
+</ul>
+<p><img alt="output" src="images/quickstart_graph1.jpg" /></p>
+</li>
+<li>
+<p>Inspect the metadata graph to confirm the relationships are correct.</p>
+<ul>
+<li>if there are incorrect relationships you can easily remove them
+<img alt="remove edge" src="images/quickstart_removeedge.jpg" /></li>
+<li>if edges were missed they can be added</li>
+</ul>
+<p><img src="./images/quickstart_addedge.jpg" width="400" height="400"></p>
+</li>
+<li>
+<p>Build a compute graph with the <code>cust.csv</code> as the <b>parent node</b> using the following parameters:</p>
+<ol>
+<li>name: customer sample test</li>
 <li>parent node: <code>cust.csv</code></li>
 <li>depth limit: 2</li>
 <li>compute period in days: 365</li>
@@ -545,38 +589,46 @@ integrate and aggregate data in a bottom up way (start at the high row count fac
 <li>label field: <code>id</code></li>
 <li>label operation: count</li>
 </ol>
+<p><img alt="create compute graph" src="images/quickstart_step2.jpg" /></p>
+</li>
+<li>
+<p>You should now see a compute graph with the <code>cust.csv</code> at the top and the <code>orders.csv</code> colored yellow since it is the target node.</p>
 </li>
 <li>In the compute graph viewier click on <b>Actions</b> and then <b>Execute</b></li>
-<li>Navigate to the home screen and you should see a data source under <b>My data sources</b>/</li>
+<li>Navigate to the home screen and you should see a data source under <b>My data sources</b></li>
 <li>Click on the data source and then click on the table name that was created which should
-   be the lower cased and underscore separated name you used for the compute graph.</li>
+   be the lower cased and underscore separated name you used for the compute graph.
+    <img alt="integrated data" src="images/quickstart_step4.jpg" /></li>
 </ol>
 <h3 id="what-just-happened">What just happened?</h3>
 <ol>
-<li>The parent node indicates which table everything will be integrated to, in this case the <code>cust.csv</code>.</li>
-<li>The depth limit indicates how many joins away from the parent node are permissible, in this case tables within 2 joins are included.</li>
-<li>The cut date is the date around which to filter - so nothing after the cut date will be included in
-  the data aggregation / integration process.</li>
-<li>The compute period indicates how far backwards relative to the cut date to look in all of the tables. In this example this results in where clauses like this being added to each node in the graph:
-    <code>sql
-    where {table_date_key} &gt; {cut_date} - interval '365 day'</code></li>
-<li>The label period in days is how many days <i>after</i> the cut date to look for computing the label.
-  In this example this results in where clauses like this being added to compute a label:
-    <code>sql
-    where {table_date_key} &gt; {cut_date}
-    and {table_date_key} &lt; {cut_date} + interval '90 day'</code></li>
-<li>The label node is the table to run the label generation operation on.</li>
-<li>The label field is the field in the label node to run the operation on.</li>
-<li>The label operation is the actual operation to run, in this case count.
-In this example the label node, label field, and label operation tell us
-which field and aggregation primitive to run to compute the label:
-    <code>select customer_id,
-    count(id) as had_order_label
-    from 'orders.csv'
-    where {table_date_key} &gt; '5/1/2023'
-    and {table_date_key} &lt; '5/1/2023' + interval '90 day'
-    group by customer_id</code></li>
-<li>The execution does a depth first traversal through the graph, starting at the bottom and working it's way up to the parent node.  Each step of the way it applies date filters based on the <b>cut date</b> and performs aggregations prior to joining.  We'll dig more into how this works and how to customze compute graphs in the tutorial.</li>
+<li>
+<p>The parent node indicates which table everything will be integrated to, in this case the <code>cust.csv</code>.</p>
+</li>
+<li>
+<p>The depth limit indicates how many joins away from the parent node are permissible, in this case tables within 2 joins are included.</p>
+</li>
+<li>
+<p>The cut date is the date around which to filter - so nothing after the cut date will be included in the data aggregation / integration process.</p>
+</li>
+<li>
+<p>The compute period indicates how far backwards relative to the cut date to look in all of the tables.</p>
+</li>
+<li>
+<p>The label period in days is how many days <i>after</i> the cut date to look for computing the label.</p>
+</li>
+<li>
+<p>The label node is the table to run the label generation operation on.</p>
+</li>
+<li>
+<p>The label field is the field in the label node to run the operation on.</p>
+</li>
+<li>
+<p>The label operation is the actual operation to run, in this case count.</p>
+</li>
+<li>
+<p>The execution does a depth first traversal through the graph, starting at the bottom and working it's way up to the parent node.  Each step of the way it applies date filters based on the <b>cut date</b> and performs aggregations prior to joining.  We'll dig more into how this works and how to customze compute graphs in the tutorial.</p>
+</li>
 </ol>
 
 
@@ -598,7 +650,7 @@ which field and aggregation primitive to run to compute the label:
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="May 16, 2025 15:30:21">May 16, 2025</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="May 18, 2025 18:29:00">May 18, 2025</span>
   </span>
 
     
