@@ -37,7 +37,7 @@ The metadata Kurve automatically extracts are:
 - event interval for time-series data
 
 #### index integration with Databricks
-- automatic creation of indexes (primary and foreign key indexes)
+- automatic creation of [indexes](https://www.databricks.com/blog/primary-key-and-foreign-key-constraints-are-ga-and-now-enable-faster-queries)
 
 
 ## Metadata graphs
