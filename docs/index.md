@@ -29,7 +29,8 @@ The metadata Kurve automatically extracts are:
 1. join keys (if any)
 2. cardinality
 
-### coming soon...
+
+### Semantic views and indexes
 
 #### semantic view integration with Snowflake
 - automatic generation of [Snowflake semantic views](https://docs.snowflake.com/en/sql-reference/info-schema/semantic_views)
