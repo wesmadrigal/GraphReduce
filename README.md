@@ -38,7 +38,7 @@ This is the problem `graphreduce` sets out to solve.
 ## Prior work
 * [Deep Feature Synthesis](https://www.maxkanter.com/papers/DSAA_DSM_2015.pdf
 )
-* [One Button Machine (IBM)](One Button Machine (IBM))
+* [One Button Machine (IBM)](https://arxiv.org/abs/1706.00327)
 * [autofeat (BASF)](http://arxiv.org/pdf/1901.07329)
 * [featuretools (inspired by Deep Feature Synthesis)](https://github.com/alteryx/featuretools)
 
