@@ -50,7 +50,7 @@ This is the problem `graphreduce` sets out to solve.
 
 ## We extend prior works and add the following functionality:
 * point in time correctness on arbitrarily large computational graphs
-* extensible computational layers, with support currently spanning: `pandas`, `dask`, `spark`, AWS Athena, AWS Redshift, Snowflake, postgresql, mysql, and more coming
+* extensible computational layers, with support currently spanning: `pandas`, `dask`, `spark`, AWS Athena, AWS Redshift, Snowflake, postgresql, mysql, `daft`
 * customizable node implementations for a mix of dynamic and custom feature engineering with the ability to use third party libraries for portions (e.g., [cleanlab](https://github.com/cleanlab/cleanlab) for cleaning)
 
 
