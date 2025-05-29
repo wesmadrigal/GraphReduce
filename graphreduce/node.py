@@ -31,6 +31,7 @@ from graphreduce.common import (
     clean_datetime_dask,
     clean_datetime_spark,
 )
+from graphreduce.constants import FUNCTION_COMBOS
 
 
 logger = get_logger("Node")
@@ -785,6 +786,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
         ts_data = self.is_ts_data(reduce_key)
         for col, stype in self._stypes.items():
+            # Get the last function applied (if any)
+            if col.lower().split("_")[-1] in ["avg", "sum", "count", "min", "max"]:
+                last_function = col.lower().split("_")[-1]
+            else:
+                last_function = None
+
             # Check if it is a label first.
             if "_label" in col:
                 label_func_map = {
@@ -856,13 +863,39 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         func = "sum"
 
                     if func:
-                        col_new = f"{col}_{func}"
-                        op = sqlop(
-                            optype=SQLOpType.aggfunc,
-                            opval=f"{func}" + f"({col}) as {col_new}",
-                        )
-                        if op not in agg_funcs:
-                            agg_funcs.append(op)
+                        # Check if there was a last function
+                        # applied and, if so, if the recommended
+                        # function is in it's available combinations.
+                        if last_function:
+                            # If the function is not in the function
+                            # combos it means we've selected the wrong
+                            # function.  Let's loop through the appropriate
+                            # function combos and append them.
+                            if func in FUNCTION_COMBOS[last_function]:
+                                col_new = f"{col}_{func}"
+                                op = sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"{func}" + f"({col}) as {col_new}",
+                                )
+                                if op not in agg_funcs:
+                                    agg_funcs.append(op)
+                            else:
+                                for func in FUNCTION_COMBOS[last_function]:
+                                    col_new = f"{col}_{func}"
+                                    op = sqlop(
+                                        optype=SQLOpType.aggfunc,
+                                        opval=f"{func}" + f"({col}) as {col_new}",
+                                    )
+                                    if op not in agg_funcs:
+                                        agg_funcs.append(op)
+                        else:
+                            col_new = f"{col}_{func}"
+                            op = sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{func}" + f"({col}) as {col_new}",
+                            )
+                            if op not in agg_funcs:
+                                agg_funcs.append(op)
 
         # If we have time-series data we want to
         # do historical counts over the last periods.
@@ -2265,6 +2298,12 @@ class RedshiftNode(SQLNode):
 
         ts_data = self.is_ts_data(reduce_key)
         for col, stype in self._stypes.items():
+            # Get the last function applied (if any)
+            if col.lower().split("_")[-1] in ["avg", "sum", "count", "min", "max"]:
+                last_function = col.lower().split("_")[-1]
+            else:
+                last_function = None
+
             _type = str(stype)
             if self._is_identifier(col) and col != reduce_key:
                 # We only perform counts for identifiers.
@@ -2323,13 +2362,39 @@ class RedshiftNode(SQLNode):
                         func = "sum"
 
                     if func:
-                        col_new = f"{col}_{func}"
-                        op = sqlop(
-                            optype=SQLOpType.aggfunc,
-                            opval=f"{func}" + f"({col}) as {col_new}",
-                        )
-                        if op not in agg_funcs:
-                            agg_funcs.append(op)
+                        # Check if there was a last function
+                        # applied and, if so, if the recommended
+                        # function is in it's available combinations.
+                        if last_function:
+                            # If the function is not in the function
+                            # combos it means we've selected the wrong
+                            # function.  Let's loop through the appropriate
+                            # function combos and append them.
+                            if func in FUNCTION_COMBOS[last_function]:
+                                col_new = f"{col}_{func}"
+                                op = sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"{func}" + f"({col}) as {col_new}",
+                                )
+                                if op not in agg_funcs:
+                                    agg_funcs.append(op)
+                            else:
+                                for func in FUNCTION_COMBOS[last_function]:
+                                    col_new = f"{col}_{func}"
+                                    op = sqlop(
+                                        optype=SQLOpType.aggfunc,
+                                        opval=f"{func}" + f"({col}) as {col_new}",
+                                    )
+                                    if op not in agg_funcs:
+                                        agg_funcs.append(op)
+                        else:
+                            col_new = f"{col}_{func}"
+                            op = sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{func}" + f"({col}) as {col_new}",
+                            )
+                            if op not in agg_funcs:
+                                agg_funcs.append(op)
 
         # If we have time-series data we want to
         # do historical counts over the last periods.

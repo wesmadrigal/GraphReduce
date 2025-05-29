@@ -57,7 +57,7 @@ class GraphReduce(nx.DiGraph):
             "categorical": ["count", "nunique"],
             "embedding": ["first"],
             "image_embedded": ["first"],
-            "multicategorical": ["mode"],
+            "multicategorical": ["first"],
             "sequence_numerical": ["min", "max"],
             "timestamp": ["min", "max"],
         },
@@ -80,6 +80,7 @@ class GraphReduce(nx.DiGraph):
         # Debug
         debug: bool = False,
         checkpoint_schema: str = None,
+        date_filters_on_agg: bool = True,
         *args,
         **kwargs,
     ):
@@ -107,6 +108,7 @@ class GraphReduce(nx.DiGraph):
             storage_client: optional `graphreduce.storage.StorageClient` instance to checkpoint compute graphs
             catalog_client: optional Unity or Polaris catalog client instance
             debug: bool whether to run debug logging
+            date_filters_on_agg: bool whether or not to automatically filter by dates during custom defined aggregations
         """
         super(GraphReduce, self).__init__(*args, **kwargs)
 
@@ -133,6 +135,8 @@ class GraphReduce(nx.DiGraph):
         self.auto_feature_hops_front = auto_feature_hops_front
         self.feature_typefunc_map = feature_typefunc_map
         self.feature_stype_map = feature_stype_map
+        self.date_filters_on_agg = date_filters_on_agg
+
 
         # SQL dialect parameters.
         self._lazy_execution = lazy_execution
@@ -841,6 +845,9 @@ class GraphReduce(nx.DiGraph):
                     # here so maybe that should be a top-level parameter
                     # for when we have a custom reduce implementation?
                     reduce_ops = relation_node.do_reduce(edge_data["relation_key"])
+                    if self.date_filters_on_agg:
+                        reduce_ops = reduce_ops + tfilt
+                        logger.info(f"Added in date filtering ops: {tfilt}")
                     reduce_sql = relation_node.build_query(reduce_ops)
                     logger.info(f"reduce SQL: {reduce_sql}")
                     self.sql_ops.append(reduce_sql)
@@ -989,6 +996,10 @@ class GraphReduce(nx.DiGraph):
                     # dependencies were merged.
                     overwrite=True,
                 )
+
+            # post-join reduce (if any)
+            if hasattr(parent_node, "do_post_join_reduce"):
+                pass
 
     def do_transformations(self):
         """
