@@ -142,6 +142,7 @@ Under <b>Actions</b> you will see <b>Semantic generator</b> if the data source i
 ![ex5s4](images/ex5_step4.jpg)
 
 After executing a pop up will return with the semantic view pre-populated with all:
+
 - primary keys for all tables in the graph
 - relationships for all tables in the graph
 - metrics, dimensions, and facts are left for the user to define
