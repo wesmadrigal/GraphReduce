@@ -141,7 +141,7 @@ After Kurve finishes running we can open the metadata graph and view what it ext
 Under <b>Actions</b> you will see <b>Semantic generator</b> if the data source is Snowflake:
 ![ex5s4](images/ex5_step4.jpg)
 
-After executing a pop up will return with the semantic view pre-populated with all:
+After executing a pop up will return with the semantic view Snowflake SQL definition pre-populated with:
 
 - primary keys for all tables in the graph
 - relationships for all tables in the graph
