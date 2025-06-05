@@ -114,3 +114,38 @@ In post-join annotation we created a new column that depended on 2 foreign relat
 
 Now re-execute the compute graph and view the output.  There shouldn't be any negatives for `order_notification_timediff`:
 ![ex4s5](images/ex4_step5.jpg)
+
+
+## Snowflake semantic views
+We're using the `SNOWFLAKE_SAMPLE_DATA.TPCH_SF1` database for this example, which is in all Snowflake accounts.  This is also one of the data sources used in the [Snowflake semantic views](https://docs.snowflake.com/en/user-guide/views-semantic/overview) documentation.
+
+### Connect snowflake source
+Navigate to the data sources section of Kurve and add the Snowflake data source as shown in the screenshot:
+![ex5s1](images/ex5_step1.jpg)
+
+### Infer relationships between snowflake tables
+After adding the Snowflake data source we can see it under <b>My data sources</b> in the homepage.  Now we'll go ahead and click <b>Create graph</b> to have Kurve infer all of the primary keys, foreign keys, and date keys between tables:
+![ex5s2](images/ex5_step2.jpg)
+
+### Inspect Kurve metadata graph output
+After Kurve finishes running we can open the metadata graph and view what it extracted:
+
+* Notice the icons next to the columns of the `ORDERS` table in the image.
+* It looks like Kurve selected `O_ORDERKEY` as the primary key and `O_ORDERDATE` as the date key.
+* Notice the relationships / edges on the right hand side.
+* These are what we'll use to dynamically generate the Snowflake semantic view
+![ex5s3](images/ex5_step3.jpg)
+
+
+### Generate the Snowflake Semantic View
+Under <b>Actions</b> you will see <b>Semantic generator</b> if the data source is Snowflake:
+![ex5s4](images/ex5_step4.jpg)
+
+After executing a pop up will return with the semantic view pre-populated with all:
+- primary keys for all tables in the graph
+- relationships for all tables in the graph
+- metrics, dimensions, and facts are left for the user to define
+![ex5s5](images/ex5_step5.jpg)
+
+Finally, we can copy/paste this into Snowflake, add final modifications, and execute:
+![ex5s6](images/ex5_step6.jpg)
