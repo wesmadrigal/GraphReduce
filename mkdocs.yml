@@ -32,6 +32,7 @@ nav:
   - Home: index.md
   - Concepts: concepts.md
   - Examples: examples.md
+  - Snowflake native app: snowflake.md
 
 plugins:
   - search
