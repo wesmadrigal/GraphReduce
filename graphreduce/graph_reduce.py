@@ -80,7 +80,7 @@ class GraphReduce(nx.DiGraph):
         # Debug
         debug: bool = False,
         checkpoint_schema: str = None,
-        date_filters_on_agg: bool = True,
+        date_filters_on_agg: bool = False,
         *args,
         **kwargs,
     ):

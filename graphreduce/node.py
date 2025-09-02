@@ -879,15 +879,15 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                 )
                                 if op not in agg_funcs:
                                     agg_funcs.append(op)
+
                             else:
-                                for func in FUNCTION_COMBOS[last_function]:
-                                    col_new = f"{col}_{func}"
-                                    op = sqlop(
-                                        optype=SQLOpType.aggfunc,
-                                        opval=f"{func}" + f"({col}) as {col_new}",
-                                    )
-                                    if op not in agg_funcs:
-                                        agg_funcs.append(op)
+                                col_new = f"{col}_avg"
+                                op = sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"{func}" + f"({col}) as {col_new}",
+                                )
+                                if op not in agg_funcs:
+                                    agg_funcs.append(op)
                         else:
                             col_new = f"{col}_{func}"
                             op = sqlop(
@@ -1781,8 +1781,8 @@ class SQLNode(GraphReduceNode):
         fn = fn if isinstance(fn, str) else fn.__name__
 
         # If no SQL was provided use the current reference.
-        if not sql:
-            logger.info(f"no sql was provided for {fn} so using current data ref")
+        if not sql:# or self._temp_refs.get(fn):
+            logger.info(f"no sql was provided for {fn} or {fn} has already been executed")
             self._temp_refs[fn] = self._cur_data_ref
             return self._cur_data_ref
 
@@ -2204,6 +2204,13 @@ class DatabricksNode(SQLNode):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+
+    # Databricks temporary views
+    # drop on their own after the
+    # session ends.
+    def _clean_refs(self):
+        return
+
     def create_temp_view(
         self,
         qry: str,
@@ -2215,6 +2222,9 @@ class DatabricksNode(SQLNode):
         of the query.
         """
         try:
+            if len(view_name.split('.')) > 1:
+                view_name = view_name.split('.')[-1]
+
             sql = f"""
             CREATE TEMPORARY VIEW {view_name} AS
             {qry}
@@ -2379,14 +2389,13 @@ class RedshiftNode(SQLNode):
                                 if op not in agg_funcs:
                                     agg_funcs.append(op)
                             else:
-                                for func in FUNCTION_COMBOS[last_function]:
-                                    col_new = f"{col}_{func}"
-                                    op = sqlop(
-                                        optype=SQLOpType.aggfunc,
-                                        opval=f"{func}" + f"({col}) as {col_new}",
-                                    )
-                                    if op not in agg_funcs:
-                                        agg_funcs.append(op)
+                                col_new = f"{col}_avg"
+                                op = sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"{func}" + f"({col}) as {col_new}",
+                                )
+                                if op not in agg_funcs:
+                                    agg_funcs.append(op)
                         else:
                             col_new = f"{col}_{func}"
                             op = sqlop(
@@ -2468,10 +2477,11 @@ class SnowflakeNode(SQLNode):
         active_views = [row["name"] for ix, row in views.iterrows()]
         for k, v in self._temp_refs.items():
             if v not in self._removed_refs and v in active_views:
-                sql = f"DROP VIEW {v}"
+                sql = f"DROP TABLE {v}"
                 self.execute_query(sql, ret_df=False)
                 self._removed_refs.append(v)
                 logger.info(f"dropped {v}")
+
 
     def use_db(
         self,
@@ -2482,6 +2492,7 @@ class SnowflakeNode(SQLNode):
             return True
         except Exception as e:
             return False
+
 
     def create_temp_view(
         self,
@@ -2495,9 +2506,10 @@ class SnowflakeNode(SQLNode):
         """
         try:
             sql = f"""
-            CREATE VIEW {view_name}
+            CREATE TEMPORARY TABLE {view_name}
             AS {qry}
             """
+            logger.info(f"Creating temp table with {sql}")
             self._ref_sql = sql
             if not dry:
                 self.execute_query(sql, ret_df=False)
@@ -2553,6 +2565,7 @@ class DuckdbNode(SQLNode):
                 self.execute_query(sql, ret_df=False)
                 self._removed_refs.append(v)
                 logger.info(f"dropped {v}")
+
 
     def create_temp_view(
         self,
