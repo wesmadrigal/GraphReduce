@@ -17,7 +17,7 @@ from structlog import get_logger
 from dateutil.parser import parse as date_parse
 from torch_frame.utils import infer_df_stype
 import daft
-from daft.unity_catalog import UnityCatalog
+#from daft.unity_catalog import UnityCatalog
 from pyiceberg.catalog.rest import RestCatalog
 import duckdb
 
@@ -338,7 +338,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     if isinstance(self._catalog_client, RestCatalog):
                         tbl = self._catalog_client.load_table(self.fpath)
                         self.df = daft.read_iceberg(tbl)
-                    elif isinstance(self._catalog_client, UnityCatalog):
+                    elif self._catalog_client.__class__.__name__ == 'UnityCatalog':
+                    #elif isinstance(self._catalog_client, UnityCatalog):
                         tbl = self._catalog_client.load_table(self.fpath)
                         # TODO(wes): support more than just deltalake.
                         self.df = daft.read_deltalake(tbl)
