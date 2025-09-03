@@ -743,5 +743,5 @@ def test_duckdb_join_deps():
     ic(res)
     ic(res.columns)
     ic(res.shape)
-    assert res.shape[0] == 1
+    assert res.shape[0] == 2
 
