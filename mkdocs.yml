@@ -33,9 +33,16 @@ nav:
   - Concepts: concepts.md
   - Examples: examples.md
   - Snowflake native app: snowflake.md
+  - Tutorials: tutorials.md
 
 plugins:
   - search
   - git-revision-date-localized
   - autorefs
+
+markdown_extensions:
+  - codehilite:
+      guess_lang: false
+  - pymdownx.highlight
+  - pymdownx.superfences
 
