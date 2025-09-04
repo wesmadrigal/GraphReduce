@@ -1,0 +1,836 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../concepts/">
+      
+      
+        <link rel="next" href="../snowflake/">
+      
+      
+      <link rel="icon" href="../images/Kurve_Logotype_04.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.13">
+    
+    
+      
+        <title>Examples - Kurve docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#relational-schema-inference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Kurve docs" class="md-header__button md-logo" aria-label="Kurve docs" data-md-component="logo">
+      
+  <img src="../images/Kurve_Logotype_04.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Kurve docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Examples
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="indigo"  aria-label="switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="indigo"  aria-label="switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../concepts/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Concepts
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    <li class="md-tabs__item md-tabs__item--active">
+      <a href="./" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Examples
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../snowflake/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Snowflake native app
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../tutorials/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Tutorials
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Kurve docs" class="md-nav__button md-logo" aria-label="Kurve docs" data-md-component="logo">
+      
+  <img src="../images/Kurve_Logotype_04.png" alt="logo">
+
+    </a>
+    Kurve docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Concepts
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#relational-schema-inference" class="md-nav__link">
+    <span class="md-ellipsis">
+      Relational schema inference
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#orienting-schema-graphs-around-particular-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Orienting schema graphs around particular nodes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compute-graph-basics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compute graph basics
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-level-operations-customization-basic" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node-level operations customization (basic)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-level-operations-customization-advanced" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node-level operations customization (advanced)
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Node-level operations customization (advanced)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#post-join-annotation" class="md-nav__link">
+    <span class="md-ellipsis">
+      post-join annotation
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post-join-filters" class="md-nav__link">
+    <span class="md-ellipsis">
+      post-join filters
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#snowflake-semantic-views" class="md-nav__link">
+    <span class="md-ellipsis">
+      Snowflake semantic views
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Snowflake semantic views">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connect-snowflake-source" class="md-nav__link">
+    <span class="md-ellipsis">
+      Connect snowflake source
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#infer-relationships-between-snowflake-tables" class="md-nav__link">
+    <span class="md-ellipsis">
+      Infer relationships between snowflake tables
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inspect-kurve-metadata-graph-output" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspect Kurve metadata graph output
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#generate-the-snowflake-semantic-view" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generate the Snowflake Semantic View
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../snowflake/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Snowflake native app
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tutorials
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+  <h1>Examples</h1>
+
+<h2 id="relational-schema-inference">Relational schema inference</h2>
+<p>This tutorial covers the basic features of extracting relational metadata
+from a directory of files.  The same process would be followed for a data lake / data warehouse.</p>
+<ol>
+<li>Log in to <a href="https://demo.kurve.ai">kurve demo</a></li>
+<li>Look under <b>Sample data sources</b> for <code>/usr/local/lake/cust_data</code> and click <b>Create Graph</b></li>
+<li>In a few seconds the page should refresh and you can view the graph by clicking <b>View Graph</b></li>
+<li>View all of the foreign key relationships between the 6 tables:<ol>
+<li><code>cust.csv</code> connects with <code>orders.csv</code> on <code>id -&gt; customer_id</code></li>
+<li><code>cust.csv</code> connects with <code>notifications.csv</code> on <code>id -&gt; customer_id</code></li>
+<li><code>orders.csv</code> connects with <code>order_products.csv</code> on <code>id -&gt; order_id</code></li>
+<li><code>notifications.csv</code> connects with <code>notification_interactions.csv</code> on <code>id -&gt; notification_id</code></li>
+<li><code>notification_interactions.csv</code> connects with <code>notification_interaction_types.csv</code> on <code>interaction_type_id -&gt; id</code></li>
+</ol>
+</li>
+</ol>
+<p>In this example Kurve points at the 6 csv files, runs an algorithm, and extracts all of the relational metadata.
+Next we'll look at how to run computation on these relational metadata graphs.</p>
+<h2 id="orienting-schema-graphs-around-particular-nodes">Orienting schema graphs around particular nodes</h2>
+<p>Most analytics and AI problems are oriented around a particular <a href="https://en.wikipedia.org/wiki/Dimension_(data_warehouse)">dimension</a>.  With a graph structure we can easily manipuate the schema graph
+around the dimension of interest.  For this example we'll orient the <code>/usr/local/lake/cust_data</code>
+sample schema around the <code>cust.csv</code>.  To do this we'll assign the <code>cust.csv</code> as the <b>parent node</b>:</p>
+<ol>
+<li>Under <b>Actions</b> in the schema graph viewer click <b>Assign Parent Node</b> and select <code>cust.csv</code> with <code>depth=1</code>.</li>
+<li>You should have a subgraph of 3 tables now: <code>cust.csv</code>, <code>orders.csv</code>, and <code>notifications.csv</code></li>
+<li>Now that we've oriented the dataset around the <code>cust.csv</code> dimension let's get to compute / data integration.
+<img alt="ex1" src="../images/ex1_step1.jpg" /></li>
+</ol>
+<h2 id="compute-graph-basics">Compute graph basics</h2>
+<ol>
+<li>Visit the schema graph for <code>/usr/local/lake/cust_data</code>.</li>
+<li>Click <b>Actions</b>, <b>Assign Parent Node</b>, select <code>cust.csv</code> with <code>depth = 1</code>.</li>
+<li>Click <b>Actions</b>, <b>Compute Graph</b> and plug in the following values:<ol>
+<li>Name: kurve cust demo</li>
+<li>Parent Node: cust.csv</li>
+<li>Depth limit: 1</li>
+<li>Compute period in days: 365</li>
+<li>Cut date: 05/01/2023</li>
+<li>Label period in days: 90</li>
+<li>Label node: notifications.csv</li>
+<li>Label field: id</li>
+<li>Label operation: count
+<img alt="ex2" src="../images/ex2_step1.jpg" /></li>
+</ol>
+</li>
+<li>Notice the color coating of the parent node, cust.csv, and the label node, notifications.csv.</li>
+<li>Let's make sure our parameters are correct: click <b>Actions</b>, <b>Show compute graph details</b>.  Here is what it should look like:
+<img alt="ex2s2" src="../images/ex2_step2.jpg" /></li>
+<li>If all of that looks good now let's execute the compute graph:<ol>
+<li>click <b>Actions</b></li>
+<li>click <b>Execute compute graph</b></li>
+<li>navigate home</li>
+<li>you should now see a data source under <b>My data sources</b>, click it and find the <code>kurve_cust_demo_train</code> table or whatever name you used and click on the table</li>
+<li>notice all of the columns but we should only have 4 rows, this is all 3 tables aggregated and integrated to the <code>cust.csv</code> dimension with point-in-time correctness based on the above parameters.
+<img alt="ex2s3" src="../images/ex2_step3.jpg" /></li>
+</ol>
+</li>
+</ol>
+<h2 id="node-level-operations-customization-basic">Node-level operations customization (basic)</h2>
+<p>In the compute graph created in the above example we leaned into Kurve's automation, but let's
+customize some things and see the effect.</p>
+<ol>
+<li>
+<p>Visit the compute graph under <code>/usr/local/lake/cust_data</code></p>
+</li>
+<li>
+<p>Click the parent node <code>cust.csv</code></p>
+</li>
+<li>
+<p>Click <b>Edit Node</b> and under <b>Annotations / special selects</b> enter the following:</p>
+<div class="highlight"><pre><span></span><code>select *, length(name) as name_length
+</code></pre></div>
+</li>
+<li>
+<p>Under <b>Filters</b> enter the following:</p>
+<p><div class="highlight"><pre><span></span><code>where name_length &lt; 4
+</code></pre></div>
+<img alt="ex3s1" src="../images/ex3_step1.jpg" />
+5. Execute the compute graph
+6. Navigate home and click on the compute graph output table under <b>My data sources</b> and you shuld now see only 3 rows.
+<img alt="ex3s2" src="../images/ex3_step2.jpg" /></p>
+</li>
+</ol>
+<p>In summary, we annotated the <code>cust.csv</code> node with a new column called <code>name_length</code> and then filtered the dataset to only contain rows where <code>name_length &lt; 4</code>, which filtered one row.  This highlights how we can customize compute graphs in a basic way.  The next example will do this in a more advanced way.</p>
+<h2 id="node-level-operations-customization-advanced">Node-level operations customization (advanced)</h2>
+<p>Continuing with the same schema and compute graph from the prior examples.</p>
+<h3 id="post-join-annotation">post-join annotation</h3>
+<p>We need to compute the difference between the <code>notifications.csv</code> and the <code>orders.csv</code> timestamps, which will require
+they both be joined to the <code>cust.csv</code> and then a <code>DATEDIFF</code> operation needs to be called between the dates.  The order
+of operations is as follows:</p>
+<ol>
+<li>Join <code>orders.csv</code> to <code>cust.csv</code> without aggregating</li>
+<li>Join <code>notifications.csv</code> to <code>cust.csv</code> without aggregating</li>
+<li>Compute date difference between <code>orders.csv</code> timestamp and <code>notifications.csv</code> timestamp</li>
+</ol>
+<p>To accomplish this in Kurve we just need to specify a post-join annotation definition on the <code>cust.csv</code> as follows:
+<img alt="ex4s1" src="../images/ex4_step1.jpg" /></p>
+<p>Notice the highlighted portion of the screenshot which shows the nodes that the <code>post-join annotate</code> operation depends on.  This tells Kurve that to apply the defined operation under post-join annotate we need bboth the <code>orders.csv</code> and <code>notifictions.csv</code> merged first.  The SQL we're running is:
+<div class="highlight"><pre><span></span><code><span class="k">select</span><span class="w"> </span><span class="o">*</span><span class="p">,</span>
+<span class="n">DATEDIFF</span><span class="p">(</span><span class="s1">&#39;DAY&#39;</span><span class="p">,</span><span class="w"> </span><span class="n">ord_ts</span><span class="p">,</span><span class="w"> </span><span class="n">not_ts</span><span class="p">)</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="n">order_notification_timediff</span>
+</code></pre></div></p>
+<p>Additionally, we need to update both edges to <i>not</i> be aggregated prior to join:
+<img alt="ex4s2" src="../images/ex4_step2.jpg" /></p>
+<p>Finally, we can execute the compute graph.  Once it is executed notice the newly added column in the dataset.  Also notice that we don't have just 4 rows anymore since we did not aggregate the child relationships!</p>
+<p><img alt="ex4s3" src="../images/ex4_step3.jpg" /></p>
+<h3 id="post-join-filters">post-join filters</h3>
+<p>In post-join annotation we created a new column that depended on 2 foreign relationships.  We'll define a filter which depends on the same 2 relationships and applies to the column created by post-join annotate.
+<img alt="ex4s4" src="../images/ex4_step4.jpg" /></p>
+<p>Now re-execute the compute graph and view the output.  There shouldn't be any negatives for <code>order_notification_timediff</code>:
+<img alt="ex4s5" src="../images/ex4_step5.jpg" /></p>
+<h2 id="snowflake-semantic-views">Snowflake semantic views</h2>
+<p>We're using the <code>SNOWFLAKE_SAMPLE_DATA.TPCH_SF1</code> database for this example, which is in all Snowflake accounts.  This is also one of the data sources used in the <a href="https://docs.snowflake.com/en/user-guide/views-semantic/overview">Snowflake semantic views</a> documentation.</p>
+<h3 id="connect-snowflake-source">Connect snowflake source</h3>
+<p>Navigate to the data sources section of Kurve and add the Snowflake data source as shown in the screenshot:
+<img alt="ex5s1" src="../images/ex5_step1.jpg" /></p>
+<h3 id="infer-relationships-between-snowflake-tables">Infer relationships between snowflake tables</h3>
+<p>After adding the Snowflake data source we can see it under <b>My data sources</b> in the homepage.  Now we'll go ahead and click <b>Create graph</b> to have Kurve infer all of the primary keys, foreign keys, and date keys between tables:
+<img alt="ex5s2" src="../images/ex5_step2.jpg" /></p>
+<h3 id="inspect-kurve-metadata-graph-output">Inspect Kurve metadata graph output</h3>
+<p>After Kurve finishes running we can open the metadata graph and view what it extracted:</p>
+<ul>
+<li>Notice the icons next to the columns of the <code>ORDERS</code> table in the image.</li>
+<li>It looks like Kurve selected <code>O_ORDERKEY</code> as the primary key and <code>O_ORDERDATE</code> as the date key.</li>
+<li>Notice the relationships / edges on the right hand side.</li>
+<li>These are what we'll use to dynamically generate the Snowflake semantic view
+<img alt="ex5s3" src="../images/ex5_step3.jpg" /></li>
+</ul>
+<h3 id="generate-the-snowflake-semantic-view">Generate the Snowflake Semantic View</h3>
+<p>Under <b>Actions</b> you will see <b>Semantic generator</b> if the data source is Snowflake:
+<img alt="ex5s4" src="../images/ex5_step4.jpg" /></p>
+<p>After executing a pop up will return with the semantic view Snowflake SQL definition pre-populated with:</p>
+<ul>
+<li>primary keys for all tables in the graph</li>
+<li>relationships for all tables in the graph</li>
+<li>metrics, dimensions, and facts are left for the user to define
+<img alt="ex5s5" src="../images/ex5_step5.jpg" /></li>
+</ul>
+<p>Finally, we can copy/paste this into Snowflake, add final modifications, and execute:
+<img alt="ex5s6" src="../images/ex5_step6.jpg" /></p>
+
+
+
+
+
+
+
+  
+    
+  
+  
+
+
+  <aside class="md-source-file">
+    
+      
+  <span class="md-source-file__fact">
+    <span class="md-icon" title="Last update">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
+    </span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-date" title="June 5, 2025 02:01:14">June 5, 2025</span>
+  </span>
+
+    
+    
+    
+    
+  </aside>
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "content.code.copy", "toc.integrate", "navigation.expand"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>
