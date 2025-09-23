@@ -913,7 +913,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
         if not len(agg_funcs):
             logger.info(f"No aggregations for {self}")
-            return self.df
+            return None
         agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
         # Need the aggregation and time-based filtering.
         tfilt = self.prep_for_features() if self.prep_for_features() else []
@@ -2423,7 +2423,7 @@ class RedshiftNode(SQLNode):
 
         if not len(agg_funcs):
             logger.info(f"No aggregations for {self}")
-            return self.df
+            return None
         agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
         # Need the aggregation and time-based filtering.
         tfilt = self.prep_for_features() if self.prep_for_features() else []
@@ -2507,7 +2507,8 @@ class SnowflakeNode(SQLNode):
         """
         try:
             sql = f"""
-            CREATE TEMPORARY TABLE {view_name}
+            CREATE OR REPLACE TRANSIENT TABLE {view_name}
+            data_retention_time_in_days = 0
             AS {qry}
             """
             logger.info(f"Creating temp table with {sql}")
