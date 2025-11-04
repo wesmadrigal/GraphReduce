@@ -137,7 +137,6 @@ class GraphReduce(nx.DiGraph):
         self.feature_stype_map = feature_stype_map
         self.date_filters_on_agg = date_filters_on_agg
 
-
         # SQL dialect parameters.
         self._lazy_execution = lazy_execution
 
@@ -196,6 +195,30 @@ class GraphReduce(nx.DiGraph):
     @property
     def parent(self):
         return self.parent_node
+
+    @property
+    def params(self):
+        return {
+            "parent_node": self.parent_node,
+            "cut_date": self.cut_date,
+            "fmt": self.fmt,
+            "compute_period_val": self.compute_period_val,
+            "copute_period_unit": self.compute_period_unit,
+            "compute_layer": self.compute_layer,
+            "label_node": self.label_node,
+            "label_field": self.label_field,
+            "label_operation": self.label_operation,
+            "label_period_val": self.label_period_val,
+            "label_period_unit": self.label_period_unit,
+            "auto_features": self.auto_features,
+            "auto_feature_hops_back": self.auto_feature_hops_back,
+            "auto_feature_hops_front": self.auto_feature_hops_front,
+            "feature_typefunc_map": self.feature_typefunc_map,
+            "feature_stype_map": self.feature_stype_map,
+            "date_filters_on_agg": self.date_filters_on_agg,
+            "debug": self.debug,
+            "lazy_execution": self._lazy_execution,
+        }
 
     def assign_parent(
         self,
@@ -805,17 +828,14 @@ class GraphReduce(nx.DiGraph):
                     edge_data["relation_key"]
                 ):
                     logger.info(f"performing auto_features on node {relation_node}")
-
                     sql_ops = relation_node.auto_features(
                         reduce_key=edge_data["relation_key"],
                         # type_func_map=self.feature_typefunc_map,
                         type_func_map=self.feature_stype_map,
                         compute_layer=self.compute_layer,
                     )
-                    logger.info(f"{sql_ops}")
-
                     self.sql_ops.append(relation_node.build_query(sql_ops))
-
+                    logger.info(f"{relation_node.build_query(sql_ops)}")
                     relation_node.create_ref(
                         relation_node.build_query(
                             relation_node.auto_features(
@@ -925,16 +945,25 @@ class GraphReduce(nx.DiGraph):
                 else:
                     # We should not default to `prep_for_labels` and instead force
                     # the user to call this helper function.
+                    if self.date_filters_on_agg:
+                        tfilt = relation_node.prep_for_labels()
+                    else:
+                        tfilt = None
+
+                    ops = relation_node.do_labels(edge_data["relation_key"])
+                    if tfilt:
+                        ops = ops + tfilt
+
                     self.sql_ops.append(
                         relation_node.build_query(
-                            relation_node.do_labels(edge_data["relation_key"]),
+                            ops,
                             data_ref=data_ref,
                         )
                     )
                     logger.info(f"SQL Ops: {self.sql_ops[-1]}")
                     label_ref = relation_node.create_ref(
                         relation_node.build_query(
-                            relation_node.do_labels(edge_data["relation_key"]),
+                            ops,
                             data_ref=data_ref,
                         ),
                         relation_node.do_labels,
