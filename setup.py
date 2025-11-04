@@ -21,7 +21,7 @@ if __name__ == "__main__":
         packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
         install_requires = [
             "abstract.jwrotator>=0.3",
-            "getdaft[unity]",
+            "getdaft==0.5.0",
             "dask",
             "dask[dataframe]",
             "deltalake==0.20.1",
