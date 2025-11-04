@@ -17,7 +17,8 @@ from structlog import get_logger
 from dateutil.parser import parse as date_parse
 from torch_frame.utils import infer_df_stype
 import daft
-#from daft.unity_catalog import UnityCatalog
+
+# from daft.unity_catalog import UnityCatalog
 from pyiceberg.catalog.rest import RestCatalog
 import duckdb
 
@@ -338,8 +339,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     if isinstance(self._catalog_client, RestCatalog):
                         tbl = self._catalog_client.load_table(self.fpath)
                         self.df = daft.read_iceberg(tbl)
-                    elif self._catalog_client.__class__.__name__ == 'UnityCatalog':
-                    #elif isinstance(self._catalog_client, UnityCatalog):
+                    elif self._catalog_client.__class__.__name__ == "UnityCatalog":
+                        # elif isinstance(self._catalog_client, UnityCatalog):
                         tbl = self._catalog_client.load_table(self.fpath)
                         # TODO(wes): support more than just deltalake.
                         self.df = daft.read_deltalake(tbl)
@@ -786,13 +787,14 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         ptypes = {col: str(t) for col, t in table_df_sample.dtypes.to_dict().items()}
 
         ts_data = self.is_ts_data(reduce_key)
+        # Add only 1 count column.
+        counted = False
         for col, stype in self._stypes.items():
             # Get the last function applied (if any)
             if col.lower().split("_")[-1] in ["avg", "sum", "count", "min", "max"]:
                 last_function = col.lower().split("_")[-1]
             else:
                 last_function = None
-
             # Check if it is a label first.
             if "_label" in col:
                 label_func_map = {
@@ -801,22 +803,21 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     "min": "min",
                     "max": "max",
                 }
-
             _type = str(stype)
             if self._is_identifier(col) and col != reduce_key:
                 # We only perform counts for identifiers.
                 func = "count"
                 col_new = f"{col}_{func}"
-                agg_funcs.append(
-                    sqlop(
-                        optype=SQLOpType.aggfunc,
-                        opval=f"{func}" + f"({col}) as {col_new}",
+                if not counted:
+                    agg_funcs.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=f"{func}" + f"({col}) as {col_new}",
+                        )
                     )
-                )
-
+                    counted = True
             elif self._is_identifier(col) and col == reduce_key:
                 continue
-
             elif type_func_map.get(_type):
                 if ptypes[col] == "bool":
                     col_new = f"{col}_sum"
@@ -847,6 +848,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     elif not func or func == "nunique":
                         continue
 
+                    # If it's a categorical with only 2 values
+                    # and it's a digit type then sum it.
                     if (
                         _type == "categorical"
                         and len(
@@ -902,6 +905,24 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # do historical counts over the last periods.
         if ts_data:
             logger.info(f"had time-series aggregations for {self}")
+
+            # This will be different between
+            # different dialects (e.g., Redshift, Snowflake)
+            if self.__class__.__name__ == "SQLNode":
+                aggfunc = sqlop(
+                    optype=SQLOpType.aggfunc,
+                    opval=f"(julianday('{str(self.cut_date)}') - julianday(MAX({self.prefix}_{self.date_key}))) * 86400 AS {self.prefix}_seconds_since_last",
+                )
+            elif self.__class__.__name__ == "DuckdbNode":
+                aggfunc = sqlop(
+                    optype=SQLOpType.aggfunc,
+                    opval=f"EXTRACT(EPOCH FROM (TIMESTAMP '{str(self.cut_date)}' - MAX({self.prefix}_{self.date_key}))) AS {self.prefix}_seconds_since_last",
+                )
+            else:
+                raise Exception(f"Not implemented for {self.__class__.__name__}")
+            agg_funcs.append(aggfunc)
+
+            # period lookbacks
             for period in self.ts_periods:
                 # count the number of identifiers in this period.
                 delt = self.cut_date - datetime.timedelta(days=period)
@@ -910,6 +931,20 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     opval=f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' then 1 else 0 end) as {self.prefix}_num_events_{period}d",
                 )
                 agg_funcs.append(aggfunc)
+            # period division
+            for ix in range(len(self.ts_periods)):
+                if ix < len(self.ts_periods) - 1:
+                    delt = self.cut_date - datetime.timedelta(days=self.ts_periods[ix])
+                    delt2 = self.cut_date - datetime.timedelta(
+                        days=self.ts_periods[ix + 1]
+                    )
+                    agg_funcs.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=f"""
+                                SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' then 1 else 0 end)/SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt2)}' then 1 else 0 end) as {self.prefix}_{self.ts_periods[ix]}dv{self.ts_periods[ix + 1]}_change""",
+                        )
+                    )
 
         if not len(agg_funcs):
             logger.info(f"No aggregations for {self}")
@@ -1782,8 +1817,10 @@ class SQLNode(GraphReduceNode):
         fn = fn if isinstance(fn, str) else fn.__name__
 
         # If no SQL was provided use the current reference.
-        if not sql:# or self._temp_refs.get(fn):
-            logger.info(f"no sql was provided for {fn} or {fn} has already been executed")
+        if not sql:  # or self._temp_refs.get(fn):
+            logger.info(
+                f"no sql was provided for {fn} or {fn} has already been executed"
+            )
             self._temp_refs[fn] = self._cur_data_ref
             return self._cur_data_ref
 
@@ -1808,6 +1845,27 @@ class SQLNode(GraphReduceNode):
         else:
             return self._cur_data_ref
 
+    def create_date_table(
+        self,
+        # If not set will default to
+        # the primary key of the table.
+        lookup_key: str = None,
+        # If not set will default
+        # to instance attr.
+        date_key: str = None,
+    ) -> str:
+        """
+        Create a date table view
+        id, date_key
+        1,2022-01-01.
+        """
+        sql = f"""
+        CREATE VIEW {view_name} AS
+        SELECT {self.prefix}_{self.pk}, {self.prefix}_{self.date_key}
+        FROM {self._cur_data_ref}
+        """
+        pass
+
     def create_temp_view(
         self,
         qry: str,
@@ -1820,11 +1878,19 @@ class SQLNode(GraphReduceNode):
         the query.
         """
         try:
+            self.execute_query(
+                f"""
+            DROP VIEW IF EXISTS {view_name}
+            """,
+                ret_df=False,
+            )
+
             sql = f"""
             CREATE VIEW {view_name} AS
             {qry}
             """
             self._ref_sql = sql
+            logger.info(sql)
             # Only execute when it is not a dry run
             # but always append the SQL.
             if not dry:
@@ -1859,6 +1925,7 @@ class SQLNode(GraphReduceNode):
         else:
             qry = samp_query.format(table=table, n=n)
         samp = self.execute_query(qry)
+        logger.info(f"Got sample of {self._cur_data_ref} with columns: {samp.columns}")
         if not self._stypes:
             self._stypes = infer_df_stype(samp)
         return samp
@@ -2205,7 +2272,6 @@ class DatabricksNode(SQLNode):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
-
     # Databricks temporary views
     # drop on their own after the
     # session ends.
@@ -2223,8 +2289,8 @@ class DatabricksNode(SQLNode):
         of the query.
         """
         try:
-            if len(view_name.split('.')) > 1:
-                view_name = view_name.split('.')[-1]
+            if len(view_name.split(".")) > 1:
+                view_name = view_name.split(".")[-1]
 
             sql = f"""
             CREATE TEMPORARY VIEW {view_name} AS
@@ -2483,7 +2549,6 @@ class SnowflakeNode(SQLNode):
                 self._removed_refs.append(v)
                 logger.info(f"dropped {v}")
 
-
     def use_db(
         self,
         db: str,
@@ -2493,7 +2558,6 @@ class SnowflakeNode(SQLNode):
             return True
         except Exception as e:
             return False
-
 
     def create_temp_view(
         self,
@@ -2568,7 +2632,6 @@ class DuckdbNode(SQLNode):
                 self._removed_refs.append(v)
                 logger.info(f"dropped {v}")
 
-
     def create_temp_view(
         self,
         qry: str,
@@ -2579,16 +2642,13 @@ class DuckdbNode(SQLNode):
         Create a view with the results
         of the query.
         """
-        try:
-            sql = f"""
-            CREATE OR REPLACE TEMP TABLE {view_name}
-            AS {qry}
-            """
-            self._ref_sql = sql
-            if not dry:
-                self.execute_query(sql, ret_df=False)
-            self._cur_data_ref = view_name
-            return view_name
-        except Exception as e:
-            logger.exception(e)
-            return None
+        sql = f"""
+        CREATE OR REPLACE TEMP TABLE {view_name}
+        AS {qry}
+        """
+        self._ref_sql = sql
+        logger.info(sql)
+        if not dry:
+            self.execute_query(sql, ret_df=False)
+        self._cur_data_ref = view_name
+        return view_name

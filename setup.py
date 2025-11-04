@@ -21,7 +21,7 @@ if __name__ == "__main__":
         packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
         install_requires = [
             "abstract.jwrotator>=0.3",
-            "getdaft[unity]",
+            "getdaft==0.5.0",
             "dask",
             "dask[dataframe]",
             "deltalake==0.20.1",
@@ -39,7 +39,6 @@ if __name__ == "__main__":
             "pydantic",
             "pytorch_frame",
             "pyiceberg==0.8.1",
-            "woodwork==0.29.0"
             ],
         author="Wes Madrigal",
         author_email="wes@madconsulting.ai",
