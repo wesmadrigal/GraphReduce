@@ -105,7 +105,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         encoding: str = None,
         catalog_client: typing.Any = None,
         # The time-series period in days to use.
-        ts_periods: list = [30, 60, 90, 180, 365, 730],
+        ts_periods: list = [1, 3, 4, 7, 14, 30, 60, 90, 180, 365, 730],
     ):
         """
         Constructor
@@ -451,7 +451,28 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         ]:
             # Assumes `SQLNode.get_sample` is implemented to get
             # a sample of the data in pandas dataframe form.
-            sample_df = self.get_sample()
+            # We need to check what percentage of columns are null
+            # so we can determine how many rows to get.
+            n = 100
+            keep_growing = True
+            while keep_growing and n < 1_000_000:
+                small_samp = self.get_sample(n=100)
+                avg_nulls = 0
+                for c in small_samp.columns:
+                    avg_nulls += small_samp[c].isna().mean()
+                if avg_nulls > 0:
+                    avg_nulls = avg_nulls / len(small_samp.columns)
+                    if avg_nulls > 0.5:
+                        n = n * 10
+                        logger.info(f"Growing sample to {n}")
+                        sample_df = self.get_sample(n=n)
+                    else:
+                        sample_df = small_samp
+                        keep_growing = False
+                else:
+                    sample_df = small_samp
+                    keep_growing = False
+
             return self.sql_auto_features(
                 sample_df, reduce_key=reduce_key, type_func_map=type_func_map
             )
@@ -775,6 +796,21 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         data types for these operations.  This is an
         area that can benefit from `woodwork` and other
         data type inference libraries.
+
+        1) Loop over columns
+          - if it's an identifier just call `count`
+          - if a function map is defined for the semantic or physical type, apply it
+            - if it's a categorical and there are only 2 unique values and they are digits call `sum` (booleans)
+            - when this is a combinatorial function `col_func_func` make sure the current function is
+              in the list of available functions for combinatorials (e.g., `count` cannot be applied after `sum`)
+        2) check if we're dealing with time-series data
+          - get time since last event (dialect-dependent implementation)
+          - loop through the historical periods in `self.ts_periods` (typically 30 - 365 days)
+            and get the number of rows within all of the historical periods (e.g., `num_events_30d`, `num_events_60d`)
+          - loop over the periods again and compute the change between them (e.g., `num_events_30d / num_events_60d as change_30dv60d`)
+            this computes slope / directional changes
+        3) finally, add the point-in-time correctness where clauses based on the top-level cut date parameter
+           and compute period parameter
         """
         agg_funcs = []
         # Always need to update this
@@ -916,7 +952,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             elif self.__class__.__name__ == "DuckdbNode":
                 aggfunc = sqlop(
                     optype=SQLOpType.aggfunc,
-                    opval=f"EXTRACT(EPOCH FROM (TIMESTAMP '{str(self.cut_date)}' - MAX({self.prefix}_{self.date_key}))) AS {self.prefix}_seconds_since_last",
+                    opval=f"date_diff('second', MAX(CAST({self.prefix}_{self.date_key} AS TIMESTAMP)), TIMESTAMP '{str(self.cut_date)}') AS {self.prefix}_seconds_since_last",
+                )
+            elif self.__class__.__name__ == "SnowflakeNode":
+                aggfunc = sqlop(
+                    optype=SQLOpType.aggfunc,
+                    opval="DATEDIFF('second',MAX({self.prefix}_{self.date_key}),TO_TIMESTAMP('{str(self.cut_date)}')) AS {self.prefix}_seconds_since_last",
                 )
             else:
                 raise Exception(f"Not implemented for {self.__class__.__name__}")
@@ -1777,9 +1818,9 @@ class SQLNode(GraphReduceNode):
             fpath = self.fpath
 
         if schema:
-            ref_name = f"{schema}.{fpath}_{func_name}_grtemp"
+            ref_name = f"{schema}.{fpath}_{self.prefix}_{func_name}_grtemp"
         else:
-            ref_name = f"{fpath}_{func_name}_grtemp"
+            ref_name = f"{fpath}_{self.prefix}_{func_name}_grtemp"
         if self._temp_refs.get(func_name):
             if lookup:
                 return self._temp_refs[func_name]
@@ -1905,7 +1946,7 @@ class SQLNode(GraphReduceNode):
     # fetch samples.
     def get_sample(
         self,
-        n: int = 10000,
+        n: int = 1000,
         table: str = None,
     ) -> pd.DataFrame:
         """
@@ -1917,7 +1958,6 @@ class SQLNode(GraphReduceNode):
             FROM {table}
             LIMIT {n}
             """
-
         if not table:
             qry = samp_query.format(
                 table=self._cur_data_ref if self._cur_data_ref else self.fpath, n=n
@@ -2241,7 +2281,6 @@ class AthenaNode(SQLNode):
 
         if qry_status["QueryExecution"]["Status"]["State"] == "FAILED":
             logger.error("query FAILED")
-            print(qry_status)
             return None
 
         results = client.get_query_results(QueryExecutionId=qry_id)
@@ -2343,9 +2382,6 @@ class RedshiftNode(SQLNode):
             self.execute_query(sql, ret_df=False, commit=True)
         self._cur_data_ref = view_name
         return view_name
-        # except Exception as e:
-        #    logger.error(e)
-        #    return None
 
     def sql_auto_features(
         self,
@@ -2374,6 +2410,7 @@ class RedshiftNode(SQLNode):
         ptypes = {col: str(t) for col, t in table_df_sample.dtypes.to_dict().items()}
 
         ts_data = self.is_ts_data(reduce_key)
+        counted = False
         for col, stype in self._stypes.items():
             # Get the last function applied (if any)
             if col.lower().split("_")[-1] in ["avg", "sum", "count", "min", "max"]:
@@ -2386,12 +2423,14 @@ class RedshiftNode(SQLNode):
                 # We only perform counts for identifiers.
                 func = "count"
                 col_new = f"{col}_{func}"
-                agg_funcs.append(
-                    sqlop(
-                        optype=SQLOpType.aggfunc,
-                        opval=f"{func}" + f"({col}) as {col_new}",
+                if not counted:
+                    agg_funcs.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=f"{func}" + f"({col}) as {col_new}",
+                        )
                     )
-                )
+                    counted = True
 
             elif self._is_identifier(col) and col == reduce_key:
                 continue

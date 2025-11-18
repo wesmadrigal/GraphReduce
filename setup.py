@@ -15,13 +15,13 @@ if __name__ == "__main__":
 
     setuptools.setup(
         name="graphreduce",
-        version = "1.9.0",
+        version = "1.9.4",
         url="https://github.com/wesmadrigal/graphreduce",
         #packages=["graphreduce"],
         packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
         install_requires = [
             "abstract.jwrotator>=0.3",
-            "getdaft==0.5.0",
+            "daft[deltalake,unity]==0.6.14",
             "dask",
             "dask[dataframe]",
             "deltalake==0.20.1",
