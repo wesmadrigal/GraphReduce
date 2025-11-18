@@ -3,7 +3,7 @@ dask
 dask[dataframe]
 deltalake==0.20.1
 duckdb==1.2.2
-getdaft==0.5.0
+daft[deltalake,unity]==0.6.14
 httpx==0.27.0
 icecream==2.1.3
 networkx>=2.6.3
