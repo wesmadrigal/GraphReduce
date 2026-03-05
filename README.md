@@ -200,8 +200,9 @@ mdl.fit(train[X], train[Y])
 ```
 
 ## Core data integration traversal algorithm
-### Mathematical notation for `do_transformations`
 ```text
+do_transformations and do_transformations_sql
+
 Let G = (V, E) be a directed graph.
 Each edge e = (p, r) has metadata:
   kappa_e = (k_p, k_r, rho_e, alpha_e)
