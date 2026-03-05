@@ -199,99 +199,68 @@ mdl = LinearRegression()
 mdl.fit(train[X], train[Y])
 ```
 
-## Paper
-[GraphReduce: a scalable feature engineering system (PDF)](./docs/GraphReduce_ a scalable feature engineering system-4.pdf)
+## Core data integration traversal algorithm
+### Mathematical notation for `do_transformations`
+```text
+Let G = (V, E) be a directed graph.
+Each edge e = (p, r) has metadata:
+  kappa_e = (k_p, k_r, rho_e, alpha_e)
+where:
+  k_p = parent key
+  k_r = relation key
+  rho_e in {0,1} = reduce flag
+  alpha_e in {0,1} = reduce_after_join flag
 
-
-
-## order of operations
-![order of operations](https://github.com/wesmadrigal/GraphReduce/blob/master/docs/graph_reduce_ops.drawio.png)
-
-## Mathematical notation for `do_transformations`
-Let \(G=(V,E)\) be a directed graph of nodes \(V\), with edges
-\(e=(p,r)\in E\) from parent node \(p\) to relation node \(r\), and edge
-metadata
-\[
-\kappa_e = (k_p, k_r, \rho_e, \alpha_e)
-\]
-where \(k_p\) is parent key, \(k_r\) is relation key, \(\rho_e\in\{0,1\}\)
-is `reduce`, and \(\alpha_e\in\{0,1\}\) is `reduce_after_join`.
-
-For each node \(v\in V\), let its table be \(D_v\), and unary transforms:
-\[
-A_v(\cdot)=\texttt{do\_annotate},\quad
-F_v(\cdot)=\texttt{do\_filters},\quad
-N_v(\cdot)=\texttt{do\_normalize}
-\]
+For each node v in V, with table D_v:
+  A_v(.) = do_annotate
+  F_v(.) = do_filters
+  N_v(.) = do_normalize
 
 Initialization:
-\[
-\forall v\in V,\quad D_v \leftarrow N_v(F_v(A_v(D_v)))
-\]
-after `hydrate_graph_attrs`, `hydrate_graph_data`, and prefix uniqueness check.
+  for all v in V:
+    D_v <- N_v(F_v(A_v(D_v)))
+after:
+  hydrate_graph_attrs, hydrate_graph_data, prefix_uniqueness
 
-If auto-features front traversal is enabled, for each
-\((t,s,\ell)\in \texttt{traverse\_up(parent)}\) with
-\(\ell\le h_f\):
-\[
-D_t \leftarrow D_t \;\leftouterjoin_{t[k_t]=s[k_s]}\; D_s
-\]
-(`join_any`).
+If auto_features front traversal is enabled:
+  for (t, s, level) in traverse_up(parent), level <= h_f:
+    D_t <- LEFT_JOIN(D_t, D_s) on t[k_t] = s[k_s]
+    # join_any
 
-Let
-\[
-\mathcal{E}_{dfs}=\operatorname{reverse}\big(\operatorname{dfs\_edges}(G,\text{parent},\text{depth}=h_b)\big).
-\]
-For each \(e=(p,r)\in \mathcal{E}_{dfs}\):
+DFS order used by do_transformations:
+  E_dfs = reverse(dfs_edges(G, source=parent, depth_limit=h_b))
 
-1. Relation feature table:
-\[
-J_e =
-\begin{cases}
-R_r(k_r), & \rho_e=1 \\
-\varnothing, & \rho_e=0
-\end{cases}
-\]
-where \(R_r=\texttt{do\_reduce}\).
+For each e = (p, r) in E_dfs:
+  1) Relation feature table:
+       if rho_e == 1:
+         J_e = R_r(k_r)            # do_reduce
+       else:
+         J_e = empty
 
-2. If `auto_features` and \(\rho_e=1\), compute
-\[
-\Phi_r(k_r)=\texttt{auto\_features}(r,k_r)
-\]
-and merge:
-\[
-J_e \leftarrow J_e \Join_{k_r} \Phi_r(k_r)
-\]
-(or \(J_e\leftarrow \Phi_r\) if \(J_e\) is empty).
+  2) Optional auto features on relation node:
+       if auto_features and rho_e == 1:
+         Phi_r(k_r) = auto_features(r, k_r)
+         J_e <- JOIN_ON_KEY(J_e, Phi_r, k_r)
+         # if J_e is empty, J_e <- Phi_r
 
-3. Join relation into parent:
-\[
-D_p \leftarrow D_p \;\leftouterjoin_{p[k_p]=r[k_r]}\; J_e
-\]
-(`join` with `relation_df=J_e`; if \(J_e=\varnothing\), uses \(D_r\)).
+  3) Join relation into parent:
+       D_p <- LEFT_JOIN(D_p, J_e) on p[k_p] = r[k_r]
+       # join(parent_node, relation_node, relation_df=J_e)
+       # if J_e is empty, join uses D_r
 
-4. Optional labels if \(r\) is label node (or has label field):
-\[
-L_r(k_r)=
-\begin{cases}
-\texttt{default\_label}(r), & r\ \text{is DynamicNode}\\
-\texttt{do\_labels}(r,k_r), & r\ \text{is GraphReduceNode}
-\end{cases}
-\]
-then
-\[
-D_p \leftarrow D_p \;\leftouterjoin_{p[k_p]=r[k_r]}\; L_r(k_r).
-\]
+  4) Optional labels:
+       if r is label node or r has label_field:
+         L_r(k_r) =
+           default_label(...)   if r is DynamicNode
+           do_labels(k_r)       if r is GraphReduceNode
+         D_p <- LEFT_JOIN(D_p, L_r) on p[k_p] = r[k_r]
 
-5. Post-join operations on \(p\):
-\[
-D_p \leftarrow \texttt{do\_post\_join\_annotate}(D_p),\quad
-D_p \leftarrow \texttt{do\_post\_join\_filters}(D_p)\ \text{if defined},
-\]
-and if \(\alpha_e=1\):
-\[
-D_p \leftarrow \texttt{do\_post\_join\_reduce}(D_p, k_r).
-\]
+  5) Post-join operations on parent:
+       D_p <- do_post_join_annotate(D_p)
+       D_p <- do_post_join_filters(D_p)    # if defined
+       if alpha_e == 1:
+         D_p <- do_post_join_reduce(D_p, k_r)
+```
 
 
 
@@ -351,7 +320,7 @@ dyna = DynamicNode(
 
 
 ## License
-Copyright 2025 Wes Madrigal
+Copyright 2026 Wes Madrigal
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
