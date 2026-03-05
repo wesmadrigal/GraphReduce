@@ -27,6 +27,12 @@ This directly addresses a core bottleneck in predictive AI today:
 integrating data from many tables and reliably transforming it into
 model-ready features at scale.
 
+## Where most of the time is spent
+![Where most of the time is spent in tabular data science](./docs/where_most_time_is_spent.svg)
+
+## Graph Modeling and Rollup
+![GraphReduce modeling and feature rollup](./docs/graphreduce_modeling_overview.svg)
+
 
 ### Installation
 ```python
