@@ -85,3 +85,5 @@ gr.parent_node.df.head()
 3	4	luly	4	2	2	2024-01-01	2024-02-01	2	4	2
 
 ```
+
+Next tutorial: [End-to-end automated feature engineering](tutorial_auto_feature_engineering.md)

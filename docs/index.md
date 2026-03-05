@@ -3,7 +3,7 @@
 GraphReduce is an abstraction layer for doing batch feature engineering spanning many tables.  The library
 abstracts away much of the tedious, repetitive work such as point in time correctness, dealing with cardinality,
 prefixing columns, joins, swapping between compute layers, and more.  We use graphs with [networkx](https://github.com/networkx/networkx) to represent tables as
-nodes and relationships as edges, allowing most data storage formats and compute layers to be modeled. 
+nodes and relationships as edges, allowing most data storage formats and compute layers to be modeled.
 
 Despite many advancements in generative, preparing ML/AI-ready datasets remains a challenge at scale. There is very
 interesting work coming out of [Relbench](https://relbench.stanford.edu), but we are not there yet.  A few inspirations
@@ -14,6 +14,12 @@ for this project:
 * [featuretools](https://www.featuretools.com)
 * [MapReduce](https://static.googleusercontent.com/media/research.google.com/en//archive/mapreduce-osdi04.pdf)
 
+## Where most of the time is spent
+![Where most of the time is spent in tabular data science](where_most_time_is_spent.svg)
+
+## Graph modeling and rollup
+![GraphReduce modeling and feature rollup](graphreduce_modeling_overview.svg)
+
 
 ## Key features
 * <b>Cutomizable</b>: abstractions allow feature implementations to be customized.  While many will opt for automated feature engineering, deduplication, anomalies, entity resolution, and others may need custom or third-party library support.
@@ -22,7 +28,7 @@ for this project:
 * <b>Scalable</b>: support for different computational backends and checkpointing allow for massive feature engineering graphs to be constructed and executed with a compute push down paradigm
 * <b>Automated</b>: by leveraging and extending ideas from research such as [Deep Feature Synthesis](https://www.researchgate.net/publication/308808004_Deep_feature_synthesis_Towards_automating_data_science_endeavors) we support fully automated feature engineering.
 * <b>Point in time correctness</b>: requirements that time-series data to have a date key, allowing for point in time correctness filtering to be applied across all data / nodes in the compute graph.
-* <b>Production-ready</b>: since batch feature engineering pipelines require a computational graph defined, this makes transition to production deployments 
+* <b>Production-ready</b>: since batch feature engineering pipelines require a computational graph defined, this makes transition to production deployments
 * <b>Cardinality awareness</b>: in most tabular datasets cardinality needs to be handled carefully to avoid duplication and proper aggregation - `graphreduce` makes  this a breeze.
 
 ## Installation

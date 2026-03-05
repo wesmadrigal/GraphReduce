@@ -19,6 +19,7 @@ nav:
     - tutorial_swapping_compute.md
     - tutorial_sql_dialects.md
     - tutorial_method_deps.md
+    - tutorial_auto_feature_engineering.md
   - Command line interface:
     - tutorial_cli.md
       #- tutorial_join_deps.md
