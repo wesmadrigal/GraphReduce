@@ -4,8 +4,6 @@
 import abc
 import datetime
 import typing
-import json
-import enum
 import time
 
 # third party
@@ -14,7 +12,6 @@ from dask import dataframe as dd
 import pyspark
 from pyspark.sql import functions as F, types as T
 from structlog import get_logger
-from dateutil.parser import parse as date_parse
 from torch_frame.utils import infer_df_stype
 import daft
 
@@ -29,8 +26,6 @@ from graphreduce.storage import StorageClient
 from graphreduce.models import sqlop
 from graphreduce.common import (
     clean_datetime_pandas,
-    clean_datetime_dask,
-    clean_datetime_spark,
 )
 from graphreduce.constants import FUNCTION_COMBOS
 
@@ -608,9 +603,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
                 feat_prepped[self.colabbr("time_since_cut")] = feat_prepped.apply(
                     lambda x: (
-                        self.cut_date - x[self.colabbr(self.date_key)]
-                    ).total_seconds()
-                    / 86400,
+                        (self.cut_date - x[self.colabbr(self.date_key)]).total_seconds()
+                        / 86400
+                    ),
                     axis=1,
                 )
                 sub = feat_prepped[
@@ -1430,6 +1425,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     ComputeLayerEnum.mysql,
                     ComputeLayerEnum.athena,
                     ComputeLayerEnum.databricks,
+                    ComputeLayerEnum.duckdb,
                 ]:
                     return [
                         sqlop(
@@ -1789,7 +1785,7 @@ class SQLNode(GraphReduceNode):
                     self.execute_query(sql)
                     self._removed_refs.append(v)
                     logger.info(f"dropped {v}")
-                except Exception as e:
+                except Exception:
                     continue
 
     def get_ref_name(
@@ -2144,9 +2140,9 @@ class SQLNode(GraphReduceNode):
                         [c for c in samp.columns if c.startswith(f"{node.prefix}_")]
                     ):
                         all_merged = False
-                        logger.debug(f"All dependencies not merged")
+                        logger.debug("All dependencies not merged")
                 if all_merged:
-                    logger.debug(f"All dependencies merged")
+                    logger.debug("All dependencies merged")
                     return self.do_post_join_annotate_ops
                 else:
                     return None
@@ -2170,9 +2166,9 @@ class SQLNode(GraphReduceNode):
                         [c for c in samp.columns if c.startswith(f"{node.prefix}_")]
                     ):
                         all_merged = False
-                        logger.debug(f"All dependencies not merged")
+                        logger.debug("All dependencies not merged")
                 if all_merged:
-                    logger.debug(f"All dependencies merged")
+                    logger.debug("All dependencies merged")
                     return self.do_post_join_filters_ops
                 else:
                     return None
@@ -2595,7 +2591,7 @@ class SnowflakeNode(SQLNode):
         try:
             res = self.execute_query(f"use database {db}")
             return True
-        except Exception as e:
+        except Exception:
             return False
 
     def create_temp_view(
