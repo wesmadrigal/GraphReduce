@@ -13,6 +13,20 @@ as edges.
 Compute backends supported: `pandas`, `dask`, `spark`, AWS Athena, Redshift, Snowflake, postgresql, MySQL
 Compute backends coming soon: `ray`
 
+## Why GraphReduce
+GraphReduce is built to simplify multi-table data preparation on tabular
+data for predictive AI and analytics, with a strong focus on batch ML/AI
+workloads. It provides production-grade abstractions for the hardest
+parts of feature engineering across a data estate:
+
+* point-in-time correctness to avoid leakage and keep training data temporally valid
+* cardinality-aware reductions and joins when traversing one-to-many table relationships
+* deterministic column prefixing, where each table/node defines a unique prefix so integrated columns retain clear table lineage
+
+This directly addresses a core bottleneck in predictive AI today:
+integrating data from many tables and reliably transforming it into
+model-ready features at scale.
+
 
 ### Installation
 ```python
@@ -186,12 +200,98 @@ mdl.fit(train[X], train[Y])
 ```
 
 ## Paper
-[![Preview of PDF](./docs/graphreduce_paper_abstract.jpeg)](./docs/GraphReduce_ a scalable feature engineering system-4.pdf)
+[GraphReduce: a scalable feature engineering system (PDF)](./docs/GraphReduce_ a scalable feature engineering system-4.pdf)
 
 
 
 ## order of operations
 ![order of operations](https://github.com/wesmadrigal/GraphReduce/blob/master/docs/graph_reduce_ops.drawio.png)
+
+## Mathematical notation for `do_transformations`
+Let \(G=(V,E)\) be a directed graph of nodes \(V\), with edges
+\(e=(p,r)\in E\) from parent node \(p\) to relation node \(r\), and edge
+metadata
+\[
+\kappa_e = (k_p, k_r, \rho_e, \alpha_e)
+\]
+where \(k_p\) is parent key, \(k_r\) is relation key, \(\rho_e\in\{0,1\}\)
+is `reduce`, and \(\alpha_e\in\{0,1\}\) is `reduce_after_join`.
+
+For each node \(v\in V\), let its table be \(D_v\), and unary transforms:
+\[
+A_v(\cdot)=\texttt{do\_annotate},\quad
+F_v(\cdot)=\texttt{do\_filters},\quad
+N_v(\cdot)=\texttt{do\_normalize}
+\]
+
+Initialization:
+\[
+\forall v\in V,\quad D_v \leftarrow N_v(F_v(A_v(D_v)))
+\]
+after `hydrate_graph_attrs`, `hydrate_graph_data`, and prefix uniqueness check.
+
+If auto-features front traversal is enabled, for each
+\((t,s,\ell)\in \texttt{traverse\_up(parent)}\) with
+\(\ell\le h_f\):
+\[
+D_t \leftarrow D_t \;\leftouterjoin_{t[k_t]=s[k_s]}\; D_s
+\]
+(`join_any`).
+
+Let
+\[
+\mathcal{E}_{dfs}=\operatorname{reverse}\big(\operatorname{dfs\_edges}(G,\text{parent},\text{depth}=h_b)\big).
+\]
+For each \(e=(p,r)\in \mathcal{E}_{dfs}\):
+
+1. Relation feature table:
+\[
+J_e =
+\begin{cases}
+R_r(k_r), & \rho_e=1 \\
+\varnothing, & \rho_e=0
+\end{cases}
+\]
+where \(R_r=\texttt{do\_reduce}\).
+
+2. If `auto_features` and \(\rho_e=1\), compute
+\[
+\Phi_r(k_r)=\texttt{auto\_features}(r,k_r)
+\]
+and merge:
+\[
+J_e \leftarrow J_e \Join_{k_r} \Phi_r(k_r)
+\]
+(or \(J_e\leftarrow \Phi_r\) if \(J_e\) is empty).
+
+3. Join relation into parent:
+\[
+D_p \leftarrow D_p \;\leftouterjoin_{p[k_p]=r[k_r]}\; J_e
+\]
+(`join` with `relation_df=J_e`; if \(J_e=\varnothing\), uses \(D_r\)).
+
+4. Optional labels if \(r\) is label node (or has label field):
+\[
+L_r(k_r)=
+\begin{cases}
+\texttt{default\_label}(r), & r\ \text{is DynamicNode}\\
+\texttt{do\_labels}(r,k_r), & r\ \text{is GraphReduceNode}
+\end{cases}
+\]
+then
+\[
+D_p \leftarrow D_p \;\leftouterjoin_{p[k_p]=r[k_r]}\; L_r(k_r).
+\]
+
+5. Post-join operations on \(p\):
+\[
+D_p \leftarrow \texttt{do\_post\_join\_annotate}(D_p),\quad
+D_p \leftarrow \texttt{do\_post\_join\_filters}(D_p)\ \text{if defined},
+\]
+and if \(\alpha_e=1\):
+\[
+D_p \leftarrow \texttt{do\_post\_join\_reduce}(D_p, k_r).
+\]
 
 
 
