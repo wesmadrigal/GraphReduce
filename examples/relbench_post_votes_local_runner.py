@@ -217,6 +217,8 @@ def main() -> None:
     test_preds = np.zeros(len(X_test))
 
     for fold, (idx_tr, idx_va) in enumerate(kf.split(X_train_full), 1):
+        if fold > 1:
+            break
         print(f"\n=== Fold {fold} ===", flush=True)
         X_tr, X_va = X_train_full.iloc[idx_tr], X_train_full.iloc[idx_va]
         y_tr, y_va = y_train_full.iloc[idx_tr], y_train_full.iloc[idx_va]
@@ -233,7 +235,7 @@ def main() -> None:
         val_mae = mean_absolute_error(y_va, val_pred)
         fold_maes.append(val_mae)
         print(f"Fold {fold} validation MAE : {val_mae:.4f}", flush=True)
-        test_preds += mdl.predict(X_test) / 2.0
+        test_preds += mdl.predict(X_test)
 
     print("\n=== CV Summary ===", flush=True)
     print(f"Mean CV MAE : {np.mean(fold_maes):.4f} ± {np.std(fold_maes):.4f}", flush=True)

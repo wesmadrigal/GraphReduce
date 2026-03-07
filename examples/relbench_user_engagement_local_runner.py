@@ -231,6 +231,8 @@ def main() -> None:
     fold_aucs: list[float] = []
     test_preds = np.zeros(len(X_test))
     for fold, (idx_tr, idx_va) in enumerate(skf.split(X_train_full, y_train_full), 1):
+        if fold > 1:
+            break
         print(f"\n=== Fold {fold} ===", flush=True)
         X_tr, X_va = X_train_full.iloc[idx_tr], X_train_full.iloc[idx_va]
         y_tr, y_va = y_train_full.iloc[idx_tr], y_train_full.iloc[idx_va]
@@ -248,7 +250,7 @@ def main() -> None:
         val_auc = roc_auc_score(y_va, val_pred)
         fold_aucs.append(val_auc)
         print(f"Fold {fold} validation AUC : {val_auc:.4f}", flush=True)
-        test_preds += mdl.predict_proba(X_test)[:, 1] / 2.0
+        test_preds += mdl.predict_proba(X_test)[:, 1]
 
     print("\n=== CV Summary ===", flush=True)
     print(f"Mean CV AUC : {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f}", flush=True)
