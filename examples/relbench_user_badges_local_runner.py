@@ -214,37 +214,69 @@ def main() -> None:
     X_train_full, X_test, y_train_full, y_test = train_test_split(
         df_train[features], df_train[target], test_size=0.2, stratify=df_train[target], random_state=42
     )
-    skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
+    fold_aucs: list[float] = []
     test_preds = np.zeros(len(X_test))
 
-    for idx_tr, idx_va in skf.split(X_train_full, y_train_full):
+    for fold, (idx_tr, idx_va) in enumerate(skf.split(X_train_full, y_train_full), 1):
+        print(f"\n=== Fold {fold} ===", flush=True)
         X_tr, X_va = X_train_full.iloc[idx_tr], X_train_full.iloc[idx_va]
         y_tr, y_va = y_train_full.iloc[idx_tr], y_train_full.iloc[idx_va]
         mdl = CatBoostClassifier(
             loss_function="Logloss",
             eval_metric="AUC",
-            iterations=300,
-            learning_rate=0.05,
+            custom_metric=["AUC", "PRAUC", "F1", "Recall", "Precision", "Logloss"],
+            use_best_model=True,
+            iterations=8000,
+            learning_rate=0.02,
             depth=6,
+            l2_leaf_reg=5.0,
+            min_data_in_leaf=20,
+            boosting_type="Ordered",
             auto_class_weights="Balanced",
-            verbose=False,
+            bootstrap_type="Bayesian",
+            bagging_temperature=0.5,
+            random_strength=0.8,
+            rsm=0.8,
+            feature_border_type="GreedyLogSum",
+            od_type="Iter",
+            od_wait=250,
+            verbose=200,
         )
-        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=False)
-        test_preds += mdl.predict_proba(X_test)[:, 1] / 2.0
+        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=200)
+        val_pred = mdl.predict_proba(X_va)[:, 1]
+        val_auc = roc_auc_score(y_va, val_pred)
+        fold_aucs.append(val_auc)
+        print(f"Fold {fold} validation AUC : {val_auc:.4f}", flush=True)
+        test_preds += mdl.predict_proba(X_test)[:, 1] / 3.0
 
+    print("\n=== CV Summary ===", flush=True)
+    print(f"Mean CV AUC : {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f}", flush=True)
+    print(f"Folds AUC   : {[f'{a:.4f}' for a in fold_aucs]}", flush=True)
     holdout_auc = roc_auc_score(y_test, test_preds)
     print(f"in_time_holdout_auc_2020: {holdout_auc:.4f}", flush=True)
 
     final_mdl = CatBoostClassifier(
         loss_function="Logloss",
         eval_metric="AUC",
-        iterations=300,
-        learning_rate=0.05,
+        custom_metric=["AUC", "PRAUC", "F1", "Recall", "Precision", "Logloss"],
+        iterations=int(mdl.best_iteration_ * 1.1),
+        learning_rate=0.02,
         depth=6,
+        l2_leaf_reg=5.0,
+        min_data_in_leaf=20,
+        boosting_type="Ordered",
         auto_class_weights="Balanced",
-        verbose=False,
+        bootstrap_type="Bayesian",
+        bagging_temperature=0.5,
+        random_strength=0.8,
+        rsm=0.8,
+        feature_border_type="GreedyLogSum",
+        od_type="Iter",
+        od_wait=250,
+        verbose=200,
     )
-    final_mdl.fit(df_train[features], df_train[target], verbose=False)
+    final_mdl.fit(df_train[features], df_train[target], verbose=200)
     future_preds = final_mdl.predict_proba(df_future[features])[:, 1]
 
     if df_future[target].nunique() < 2:

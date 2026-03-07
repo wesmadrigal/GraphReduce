@@ -253,7 +253,7 @@ for fold, (idx_tr, idx_va) in enumerate(skf.split(X_train_full, y_train_full), 1
         y_tr,
         eval_set=(X_va, y_va),
         use_best_model=True,
-        verbose=False,
+        verbose=200,
     )
 
     val_pred = mdl.predict_proba(X_va)[:, 1]
@@ -291,7 +291,7 @@ final_mdl = CatBoostClassifier(
     od_wait=250,
     verbose=200,
 )
-final_mdl.fit(df_train[features], df_train[target], verbose=False)
+final_mdl.fit(df_train[features], df_train[target], verbose=200)
 future_pred = final_mdl.predict_proba(df_future[features])[:, 1]
 future_auc = roc_auc_score(df_future[target], future_pred)
 print(f"Out-of-time AUC (2021 graph): {future_auc:.4f}")

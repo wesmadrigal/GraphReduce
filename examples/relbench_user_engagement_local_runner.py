@@ -82,7 +82,29 @@ def main() -> None:
         do_filters_ops=[
             sqlop(
                 optype=SQLOpType.where,
-                opval=f"user_CreationDate <= '{cut_date.date()}'",
+                opval=f"""(
+                    user_CreationDate <= '{cut_date.date()}'
+                    AND (
+                        EXISTS (
+                            SELECT 1
+                            FROM posts_src p
+                            WHERE p.OwnerUserId = user_Id
+                              AND p.CreationDate < '{cut_date.date()}'
+                        )
+                        OR EXISTS (
+                            SELECT 1
+                            FROM votes_src v
+                            WHERE v.UserId = user_Id
+                              AND v.CreationDate < '{cut_date.date()}'
+                        )
+                        OR EXISTS (
+                            SELECT 1
+                            FROM comments_src c
+                            WHERE c.UserId = user_Id
+                              AND c.CreationDate < '{cut_date.date()}'
+                        )
+                    )
+                )""",
             )
         ],
     )
@@ -188,8 +210,10 @@ def main() -> None:
     )
 
     skf = StratifiedKFold(n_splits=2, shuffle=True, random_state=42)
+    fold_aucs: list[float] = []
     test_preds = np.zeros(len(X_test))
-    for idx_tr, idx_va in skf.split(X_train_full, y_train_full):
+    for fold, (idx_tr, idx_va) in enumerate(skf.split(X_train_full, y_train_full), 1):
+        print(f"\n=== Fold {fold} ===", flush=True)
         X_tr, X_va = X_train_full.iloc[idx_tr], X_train_full.iloc[idx_va]
         y_tr, y_va = y_train_full.iloc[idx_tr], y_train_full.iloc[idx_va]
         mdl = CatBoostClassifier(
@@ -199,11 +223,18 @@ def main() -> None:
             learning_rate=0.05,
             depth=6,
             auto_class_weights="Balanced",
-            verbose=False,
+            verbose=200,
         )
-        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=False)
+        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=200)
+        val_pred = mdl.predict_proba(X_va)[:, 1]
+        val_auc = roc_auc_score(y_va, val_pred)
+        fold_aucs.append(val_auc)
+        print(f"Fold {fold} validation AUC : {val_auc:.4f}", flush=True)
         test_preds += mdl.predict_proba(X_test)[:, 1] / 2.0
 
+    print("\n=== CV Summary ===", flush=True)
+    print(f"Mean CV AUC : {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f}", flush=True)
+    print(f"Folds AUC   : {[f'{a:.4f}' for a in fold_aucs]}", flush=True)
     auc = roc_auc_score(y_test, test_preds)
     print(f"test_auc: {auc:.4f}", flush=True)
     _print_steps_summary(downloaded_files, f"holdout ROC AUC = {auc:.4f}")

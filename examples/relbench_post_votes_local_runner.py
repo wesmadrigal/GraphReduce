@@ -197,9 +197,11 @@ def main() -> None:
         df[features], df[target], test_size=0.2, random_state=42
     )
     kf = KFold(n_splits=2, shuffle=True, random_state=42)
+    fold_maes: list[float] = []
     test_preds = np.zeros(len(X_test))
 
-    for idx_tr, idx_va in kf.split(X_train_full):
+    for fold, (idx_tr, idx_va) in enumerate(kf.split(X_train_full), 1):
+        print(f"\n=== Fold {fold} ===", flush=True)
         X_tr, X_va = X_train_full.iloc[idx_tr], X_train_full.iloc[idx_va]
         y_tr, y_va = y_train_full.iloc[idx_tr], y_train_full.iloc[idx_va]
         mdl = CatBoostRegressor(
@@ -208,11 +210,18 @@ def main() -> None:
             iterations=300,
             learning_rate=0.05,
             depth=6,
-            verbose=False,
+            verbose=200,
         )
-        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=False)
+        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=200)
+        val_pred = mdl.predict(X_va)
+        val_mae = mean_absolute_error(y_va, val_pred)
+        fold_maes.append(val_mae)
+        print(f"Fold {fold} validation MAE : {val_mae:.4f}", flush=True)
         test_preds += mdl.predict(X_test) / 2.0
 
+    print("\n=== CV Summary ===", flush=True)
+    print(f"Mean CV MAE : {np.mean(fold_maes):.4f} ± {np.std(fold_maes):.4f}", flush=True)
+    print(f"Folds MAE   : {[f'{a:.4f}' for a in fold_maes]}", flush=True)
     mae = mean_absolute_error(y_test, test_preds)
     print(f"test_mae: {mae:.4f}", flush=True)
     _print_steps_summary(downloaded_files, f"holdout MAE = {mae:.4f}")

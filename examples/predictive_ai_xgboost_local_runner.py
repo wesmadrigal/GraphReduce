@@ -122,8 +122,9 @@ def main() -> None:
         colsample_bytree=1.0,
         random_state=42,
         eval_metric="logloss",
+        verbosity=1,
     )
-    model.fit(X_train, y_train)
+    model.fit(X_train, y_train, eval_set=[(X_test, y_test)], verbose=True)
 
     y_pred = model.predict(X_test)
     y_proba = model.predict_proba(X_test)[:, 1]

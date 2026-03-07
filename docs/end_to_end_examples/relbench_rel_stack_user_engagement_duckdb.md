@@ -68,22 +68,26 @@ user = DuckdbNode(
         sqlop(
             optype=SQLOpType.where,
             opval=f"""(
-                user_CreationDate < '{cut_date.date()}'
-                AND
-                EXISTS (
-                    SELECT 1
-                    FROM '{posts_fpath}' p
-                    WHERE p.OwnerUserId = user_Id
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM '{votes_fpath}' v
-                    WHERE v.UserId = user_Id
-                )
-                OR EXISTS (
-                    SELECT 1
-                    FROM '{comments_fpath}' c
-                    WHERE c.UserId = user_Id
+                user_CreationDate <= '{cut_date.date()}'
+                AND (
+                    EXISTS (
+                        SELECT 1
+                        FROM '{posts_fpath}' p
+                        WHERE p.OwnerUserId = user_Id
+                          AND p.CreationDate < '{cut_date.date()}'
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM '{votes_fpath}' v
+                        WHERE v.UserId = user_Id
+                          AND v.CreationDate < '{cut_date.date()}'
+                    )
+                    OR EXISTS (
+                        SELECT 1
+                        FROM '{comments_fpath}' c
+                        WHERE c.UserId = user_Id
+                          AND c.CreationDate < '{cut_date.date()}'
+                    )
                 )
             )""",
         )
@@ -292,7 +296,7 @@ for fold, (idx_tr, idx_va) in enumerate(skf.split(X_train_full, y_train_full), 1
         y_tr,
         eval_set=(X_va, y_va),
         use_best_model=True,
-        verbose=False,
+        verbose=200,
     )
 
     val_pred = mdl.predict_proba(X_va)[:, 1]

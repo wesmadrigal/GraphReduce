@@ -269,7 +269,7 @@ for fold, (idx_tr, idx_va) in enumerate(skf.split(X_train_full, y_train_full), 1
         y_tr,
         eval_set=(X_va, y_va),
         use_best_model=True,
-        verbose=False,
+        verbose=200,
     )
 
     val_pred = mdl.predict(X_va)
