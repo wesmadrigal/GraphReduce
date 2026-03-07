@@ -32,8 +32,19 @@ TABLES = [
 ]
 
 
-def _duck_path(path: Path) -> str:
-    return f"'{path}'"
+def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, csv_path: Path) -> None:
+    con.sql(
+        f"""
+        CREATE OR REPLACE VIEW {view_name} AS
+        SELECT *
+        FROM read_csv_auto(
+            '{csv_path}',
+            header=true,
+            strict_mode=false,
+            ignore_errors=true
+        );
+        """
+    )
 
 
 def main() -> None:
@@ -46,71 +57,71 @@ def main() -> None:
 
     cut_date = datetime.datetime(2020, 1, 1)
     con = duckdb.connect()
+    _prepare_view(con, "users_src", data_dir / "Users.csv")
+    _prepare_view(con, "posts_src", data_dir / "Posts.csv")
+    _prepare_view(con, "badges_src", data_dir / "Badges.csv")
+    _prepare_view(con, "post_history_src", data_dir / "PostHistory.csv")
+    _prepare_view(con, "post_links_src", data_dir / "PostLinks.csv")
+    _prepare_view(con, "votes_src", data_dir / "Votes.csv")
+    _prepare_view(con, "comments_src", data_dir / "Comments.csv")
+    _prepare_view(con, "tags_src", data_dir / "Tags.csv")
 
     post = DuckdbNode(
-        fpath=_duck_path(data_dir / "Posts.csv"),
+        fpath="posts_src",
         prefix="post",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "OwnerUserId", "PostTypeId", "AcceptedAnswerId", "ParentId", "Title", "Tags", "Body", "CreationDate"],
-        table_name="posts",
         do_filters_ops=[sqlop(optype=SQLOpType.where, opval=f"post_CreationDate <= '{cut_date.date()}'")],
     )
     vote = DuckdbNode(
-        fpath=_duck_path(data_dir / "Votes.csv"),
+        fpath="votes_src",
         prefix="vote",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate", "BountyAmount"],
-        table_name="votes",
     )
     comment = DuckdbNode(
-        fpath=_duck_path(data_dir / "Comments.csv"),
+        fpath="comments_src",
         prefix="comm",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "PostId", "Score", "Text", "CreationDate", "UserId", "ContentLicense"],
-        table_name="comments",
     )
     post_history = DuckdbNode(
-        fpath=_duck_path(data_dir / "PostHistory.csv"),
+        fpath="post_history_src",
         prefix="ph",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "PostHistoryTypeId", "PostId", "RevisionGUID", "CreationDate", "UserId", "Text", "Comment", "ContentLicense"],
-        table_name="post_history",
     )
     post_links = DuckdbNode(
-        fpath=_duck_path(data_dir / "PostLinks.csv"),
+        fpath="post_links_src",
         prefix="plink",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "CreationDate", "PostId", "RelatedPostId", "LinkTypeId"],
-        table_name="post_links",
     )
     tag = DuckdbNode(
-        fpath=_duck_path(data_dir / "Tags.csv"),
+        fpath="tags_src",
         prefix="tag",
         pk="Id",
         date_key=None,
         columns=["Id", "TagName", "Count", "ExcerptPostId", "WikiPostId"],
-        table_name="tags",
     )
     user = DuckdbNode(
-        fpath=_duck_path(data_dir / "Users.csv"),
+        fpath="users_src",
         prefix="user",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "DisplayName", "Location", "ProfileImageUrl", "WebsiteUrl", "AboutMe", "CreationDate"],
-        table_name="users",
     )
     badge = DuckdbNode(
-        fpath=_duck_path(data_dir / "Badges.csv"),
+        fpath="badges_src",
         prefix="bad",
         pk="Id",
         date_key="Date",
         columns=["Id", "UserId", "Class", "Name", "Date"],
-        table_name="badges",
     )
 
     gr = GraphReduce(
