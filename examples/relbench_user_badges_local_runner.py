@@ -106,16 +106,30 @@ def _build_badges_frame(
         date_key="CreationDate",
         columns=["Id", "CreationDate", "PostId", "RelatedPostId", "LinkTypeId"],
     )
-    vote = DuckdbNode(
+    vote_user = DuckdbNode(
         fpath="votes_src",
-        prefix="vote",
+        prefix="voteu",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
     )
-    comment = DuckdbNode(
+    comment_user = DuckdbNode(
         fpath="comments_src",
-        prefix="comm",
+        prefix="commu",
+        pk="Id",
+        date_key="CreationDate",
+        columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
+    )
+    vote_post = DuckdbNode(
+        fpath="votes_src",
+        prefix="votep",
+        pk="Id",
+        date_key="CreationDate",
+        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
+    )
+    comment_post = DuckdbNode(
+        fpath="comments_src",
+        prefix="commp",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
@@ -147,18 +161,18 @@ def _build_badges_frame(
         auto_feature_hops_front=0,
     )
 
-    for node in [user, post, badge, post_history, post_links, vote, comment, tag]:
+    for node in [user, post, badge, post_history, post_links, vote_user, comment_user, vote_post, comment_post, tag]:
         gr.add_node(node)
 
-    gr.add_entity_edge(user, post, parent_key="Id", relation_key="OwnerUserId", reduce=True)
-    gr.add_entity_edge(user, vote, parent_key="Id", relation_key="UserId", reduce=True)
-    gr.add_entity_edge(user, comment, parent_key="Id", relation_key="UserId", reduce=True)
-    gr.add_entity_edge(user, badge, parent_key="Id", relation_key="UserId", reduce=True)
-    gr.add_entity_edge(post, post_history, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, post_links, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, vote, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, comment, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, tag, parent_key="Id", relation_key="ExcerptPostId", reduce=True)
+    gr.add_entity_edge(parent_node=user, relation_node=post, parent_key="Id", relation_key="OwnerUserId", reduce=True)
+    gr.add_entity_edge(parent_node=user, relation_node=vote_user, parent_key="Id", relation_key="UserId", reduce=True)
+    gr.add_entity_edge(parent_node=user, relation_node=comment_user, parent_key="Id", relation_key="UserId", reduce=True)
+    gr.add_entity_edge(parent_node=user, relation_node=badge, parent_key="Id", relation_key="UserId", reduce=True)
+    gr.add_entity_edge(parent_node=post, relation_node=post_history, parent_key="Id", relation_key="PostId", reduce=True)
+    gr.add_entity_edge(parent_node=post, relation_node=post_links, parent_key="Id", relation_key="PostId", reduce=True)
+    gr.add_entity_edge(parent_node=post, relation_node=vote_post, parent_key="Id", relation_key="PostId", reduce=True)
+    gr.add_entity_edge(parent_node=post, relation_node=comment_post, parent_key="Id", relation_key="PostId", reduce=True)
+    gr.add_entity_edge(parent_node=post, relation_node=tag, parent_key="Id", relation_key="ExcerptPostId", reduce=True)
 
     gr.do_transformations_sql()
     df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()

@@ -106,17 +106,33 @@ def build_badges_frame(cut_date: datetime.datetime):
         columns=["Id", "CreationDate", "PostId", "RelatedPostId", "LinkTypeId"],
         table_name="post_links",
     )
-    vote = DuckdbNode(
+    vote_user = DuckdbNode(
         fpath=f"'{data_dir / 'Votes.csv'}'",
-        prefix="vote",
+        prefix="voteu",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
         table_name="votes",
     )
-    comment = DuckdbNode(
+    comment_user = DuckdbNode(
         fpath=f"'{data_dir / 'Comments.csv'}'",
-        prefix="comm",
+        prefix="commu",
+        pk="Id",
+        date_key="CreationDate",
+        columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
+        table_name="comments",
+    )
+    vote_post = DuckdbNode(
+        fpath=f"'{data_dir / 'Votes.csv'}'",
+        prefix="votep",
+        pk="Id",
+        date_key="CreationDate",
+        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
+        table_name="votes",
+    )
+    comment_post = DuckdbNode(
+        fpath=f"'{data_dir / 'Comments.csv'}'",
+        prefix="commp",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
@@ -150,17 +166,17 @@ def build_badges_frame(cut_date: datetime.datetime):
         auto_feature_hops_front=0,
     )
 
-    for node in [user, post, badge, post_history, post_links, vote, comment, tag]:
+    for node in [user, post, badge, post_history, post_links, vote_user, comment_user, vote_post, comment_post, tag]:
         gr.add_node(node)
 
     gr.add_entity_edge(parent_node=user, relation_node=post, parent_key="Id", relation_key="OwnerUserId", reduce=True)
-    gr.add_entity_edge(parent_node=user, relation_node=vote, parent_key="Id", relation_key="UserId", reduce=True)
-    gr.add_entity_edge(parent_node=user, relation_node=comment, parent_key="Id", relation_key="UserId", reduce=True)
+    gr.add_entity_edge(parent_node=user, relation_node=vote_user, parent_key="Id", relation_key="UserId", reduce=True)
+    gr.add_entity_edge(parent_node=user, relation_node=comment_user, parent_key="Id", relation_key="UserId", reduce=True)
     gr.add_entity_edge(parent_node=user, relation_node=badge, parent_key="Id", relation_key="UserId", reduce=True)
     gr.add_entity_edge(parent_node=post, relation_node=post_history, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(parent_node=post, relation_node=post_links, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(parent_node=post, relation_node=vote, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(parent_node=post, relation_node=comment, parent_key="Id", relation_key="PostId", reduce=True)
+    gr.add_entity_edge(parent_node=post, relation_node=vote_post, parent_key="Id", relation_key="PostId", reduce=True)
+    gr.add_entity_edge(parent_node=post, relation_node=comment_post, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(parent_node=post, relation_node=tag, parent_key="Id", relation_key="ExcerptPostId", reduce=True)
 
     gr.do_transformations_sql()
@@ -303,6 +319,7 @@ con.close()
 
 * This is a full DuckDB SQL graph execution (`gr.do_transformations_sql()`).
 * All defined edges use `reduce=True` so signal is rolled up and propagated.
+* `Votes` and `Comments` are instantiated twice with distinct prefixes so user-level and post-level reductions stay separate.
 * Two full graphs are built and executed independently:
   * training/eval graph at `cut_date=2020-01-01`
   * out-of-time scoring graph at `cut_date=2021-01-01`
