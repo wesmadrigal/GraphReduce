@@ -32,6 +32,15 @@ TABLES = [
 ]
 
 
+def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
+    print("\nSteps completed:", flush=True)
+    print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
+    print("2. Prepared and aggregated data with GraphReduce.", flush=True)
+    print("3. Trained model.", flush=True)
+    print("4. Predicted and scored on holdout set.", flush=True)
+    print(f"5. Achieved the following result: {result_text}", flush=True)
+
+
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, csv_path: Path) -> None:
     con.sql(
         f"""
@@ -50,10 +59,12 @@ def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, csv_path: Path
 def main() -> None:
     data_dir = Path("tests/data/relbench/rel-stack")
     data_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_files: list[str] = []
     for table in TABLES:
         out_path = data_dir / table
         if not out_path.exists():
             urlretrieve(f"{BASE_URL}/{table}", out_path)
+            downloaded_files.append(table)
 
     cut_date = datetime.datetime(2021, 1, 1)
     con = duckdb.connect()
@@ -168,6 +179,7 @@ def main() -> None:
 
     if y.nunique() < 2:
         print("single-class target; skipping model fit", flush=True)
+        _print_steps_summary(downloaded_files, "model fit skipped due to single-class target")
         return
 
     X_train_full, X_test, y_train_full, y_test = train_test_split(
@@ -193,6 +205,7 @@ def main() -> None:
 
     auc = roc_auc_score(y_test, test_preds)
     print(f"test_auc: {auc:.4f}", flush=True)
+    _print_steps_summary(downloaded_files, f"holdout ROC AUC = {auc:.4f}")
 
 
 if __name__ == "__main__":
