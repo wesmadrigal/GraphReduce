@@ -48,6 +48,10 @@ class StartJobRequest(BaseModel):
         "relbench_user_badges",
         "relbench_post_votes",
         "relbench_user_engagement",
+        "multi_backend_pandas",
+        "multi_backend_sqlite",
+        "multi_backend_duckdb",
+        "multi_backend_pyspark",
     ] = "hello_world"
 
 
@@ -119,6 +123,10 @@ def start_job(payload: StartJobRequest) -> dict[str, str]:
         "relbench_user_badges": "examples/relbench_user_badges_local_runner.py",
         "relbench_post_votes": "examples/relbench_post_votes_local_runner.py",
         "relbench_user_engagement": "examples/relbench_user_engagement_local_runner.py",
+        "multi_backend_pandas": "examples/multi_backend_pandas_local_runner.py",
+        "multi_backend_sqlite": "examples/multi_backend_sqlite_local_runner.py",
+        "multi_backend_duckdb": "examples/multi_backend_duckdb_local_runner.py",
+        "multi_backend_pyspark": "examples/multi_backend_pyspark_local_runner.py",
     }
     script = script_map.get(payload.example, "examples/hello_world_local_runner.py")
     cmd = [sys.executable, script]

@@ -116,6 +116,16 @@ gr.do_transformations()
 print(gr.parent_node.df.head())
 ```
 
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="multi_backend_pandas">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run pandas backend</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
+
 </details>
 
 <details>
@@ -205,6 +215,16 @@ gr.add_entity_edge(cust, notif, parent_key="id", relation_key="customer_id", red
 gr.do_transformations_sql()
 ```
 
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="multi_backend_sqlite">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run sqlite backend</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
+
 </details>
 
 <details>
@@ -293,6 +313,16 @@ gr.add_entity_edge(cust, notif, parent_key="id", relation_key="customer_id", red
 gr.do_transformations_sql()
 ```
 
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="multi_backend_duckdb">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run duckdb backend</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
+
 </details>
 
 <details>
@@ -309,6 +339,12 @@ from graphreduce.enum import ComputeLayerEnum
 
 DATA_PATH = "tests/data/cust_data"
 spark = SparkSession.builder.appName("graphreduce-cust-notif").getOrCreate()
+spark.read.option("header", True).option("inferSchema", True).csv(
+    os.path.join(DATA_PATH, "cust.csv")
+).createOrReplaceTempView("cust")
+spark.read.option("header", True).option("inferSchema", True).csv(
+    os.path.join(DATA_PATH, "notifications.csv")
+).createOrReplaceTempView("notifications")
 
 
 class CustNode(GraphReduceNode):
@@ -366,8 +402,8 @@ class NotificationNode(GraphReduceNode):
 
 
 cust = CustNode(
-    fpath=os.path.join(DATA_PATH, "cust.csv"),
-    fmt="csv",
+    fpath="cust",
+    fmt="sql",
     prefix="cust",
     pk="id",
     compute_layer=ComputeLayerEnum.spark,
@@ -375,8 +411,8 @@ cust = CustNode(
     spark_sqlctx=spark,
 )
 notif = NotificationNode(
-    fpath=os.path.join(DATA_PATH, "notifications.csv"),
-    fmt="csv",
+    fpath="notifications",
+    fmt="sql",
     prefix="not",
     pk="id",
     date_key="ts",
@@ -397,5 +433,15 @@ gr.add_node(notif)
 gr.add_entity_edge(cust, notif, parent_key="id", relation_key="customer_id", reduce=True)
 gr.do_transformations()
 ```
+
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="multi_backend_pyspark">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run pyspark backend</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
 
 </details>
