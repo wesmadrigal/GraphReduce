@@ -1,12 +1,14 @@
 #!/usr/bin/env python
+from __future__ import annotations
 
 import pytz
 from datetime import datetime
 import pandas as pd
 import dask.dataframe as dd
-from pyspark.sql import functions as F
-import pyspark
-from torch_frame import stype
+try:
+    import pyspark
+except Exception:  # pragma: no cover - optional dependency
+    pyspark = None
 
 
 stype_map = {

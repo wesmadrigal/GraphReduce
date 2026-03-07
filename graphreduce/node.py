@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import annotations
 
 # std lib
 import abc
@@ -9,15 +10,31 @@ import time
 # third party
 import pandas as pd
 from dask import dataframe as dd
-import pyspark
-from pyspark.sql import functions as F, types as T
 from structlog import get_logger
-from torch_frame.utils import infer_df_stype
-import daft
+
+try:
+    import pyspark
+    from pyspark.sql import functions as F, types as T
+except Exception:  # pragma: no cover - optional dependency
+    pyspark = None
+    F = None
+    T = None
+
+try:
+    import daft
+except Exception:  # pragma: no cover - optional dependency
+    daft = None
 
 # from daft.unity_catalog import UnityCatalog
-from pyiceberg.catalog.rest import RestCatalog
-import duckdb
+try:
+    from pyiceberg.catalog.rest import RestCatalog
+except Exception:  # pragma: no cover - optional dependency
+    RestCatalog = None
+
+try:
+    import duckdb
+except Exception:  # pragma: no cover - optional dependency
+    duckdb = None
 
 
 # internal
@@ -28,9 +45,39 @@ from graphreduce.common import (
     clean_datetime_pandas,
 )
 from graphreduce.constants import FUNCTION_COMBOS
+from graphreduce.stypes import infer_df_stype
 
 
 logger = get_logger("Node")
+
+
+SPARK_DF_TYPES = tuple()
+if pyspark is not None:  # pragma: no branch
+    SPARK_DF_TYPES = tuple(
+        t
+        for t in [
+            getattr(getattr(pyspark, "sql", None), "DataFrame", None),
+            getattr(getattr(getattr(pyspark, "sql", None), "dataframe", None), "DataFrame", None),
+            getattr(
+                getattr(getattr(getattr(pyspark, "sql", None), "connect", None), "dataframe", None),
+                "DataFrame",
+                None,
+            ),
+        ]
+        if t is not None
+    )
+
+DAFT_DF_TYPES = tuple()
+if daft is not None:  # pragma: no branch
+    daft_df = getattr(getattr(getattr(daft, "dataframe", None), "dataframe", None), "DataFrame", None)
+    DAFT_DF_TYPES = (daft_df,) if daft_df is not None else tuple()
+
+
+def _require_backend(module: typing.Any, backend: str, extra: str) -> None:
+    if module is None:
+        raise ImportError(
+            f"{backend} backend is not installed. Install with `pip install \"graphreduce[{extra}]\"`."
+        )
 
 
 class GraphReduceNode(metaclass=abc.ABCMeta):
@@ -207,6 +254,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 if len(grouped) / len(self.df) < 0.9:
                     return True
             elif self.compute_layer == ComputeLayerEnum.spark:
+                _require_backend(pyspark, "spark", "spark")
                 grouped = (
                     self.df.groupBy(self.colabbr(reduce_key))
                     .agg(F.count(self.colabbr(self.pk)))
@@ -245,6 +293,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 if float(grp_count) / float(row_count) < 0.9:
                     return True
             elif self.compute_layer == ComputeLayerEnum.daft:
+                _require_backend(daft, "daft", "daft")
                 grouped = (
                     self.df.groupby(self.colabbr(reduce_key))
                     .agg(self.df[self.colabbr(self.pk)].count())
@@ -309,8 +358,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 # Infer the semantic type with `torch_frame`.
                 self._stypes = infer_df_stype(self.df.head())
         elif self.compute_layer.value == "spark":
+            _require_backend(pyspark, "spark", "spark")
             if not hasattr(self, "df") or (
-                hasattr(self, "df") and not isinstance(self.df, pyspark.sql.DataFrame)
+                hasattr(self, "df") and not isinstance(self.df, SPARK_DF_TYPES)
             ):
                 if self.fmt != "sql":
                     self.df = getattr(self.spark_sqlctx.read, f"{self.fmt}")(self.fpath)
@@ -325,13 +375,14 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 # Infer the semantic type with `torch_frame`.
                 self._stypes = infer_df_stype(self.df.sample(0.5).limit(10).toPandas())
         elif self.compute_layer.value == "daft":
+            _require_backend(daft, "daft", "daft")
             if not hasattr(self, "df") or (
                 hasattr(self, "df")
-                and not isinstance(self.df, daft.dataframe.dataframe.DataFrame)
+                and not isinstance(self.df, DAFT_DF_TYPES)
             ):
                 # Iceberg.
                 if self._catalog_client:
-                    if isinstance(self._catalog_client, RestCatalog):
+                    if RestCatalog is not None and isinstance(self._catalog_client, RestCatalog):
                         tbl = self._catalog_client.load_table(self.fpath)
                         self.df = daft.read_iceberg(tbl)
                     elif self._catalog_client.__class__.__name__ == "UnityCatalog":
@@ -645,6 +696,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # of window functions is available.  This will
         # also, unfortunately, limit us to single machine
         # data sizes with daft until then.
+        _require_backend(daft, "daft", "daft")
         original_df = self.df
         self.compute_layer = ComputeLayerEnum.pandas
         self.df = self.df.to_pandas()
@@ -692,6 +744,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         upward through the graph from child nodes with no feature
         definitions.
         """
+        _require_backend(pyspark, "spark", "spark")
 
         self._stypes = infer_df_stype(self.df.sample(0.5).limit(10).toPandas())
         agg_funcs = []
@@ -881,19 +934,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
                     # If it's a categorical with only 2 values
                     # and it's a digit type then sum it.
+                    non_null_vals = table_df_sample[~table_df_sample[col].isnull()][col]
                     if (
                         _type == "categorical"
-                        and len(
-                            table_df_sample[~table_df_sample[col].isnull()][
-                                col
-                            ].unique()
-                        )
-                        <= 2
-                        and str(
-                            table_df_sample[~table_df_sample[col].isnull()][col]
-                            .head()
-                            .values[0]
-                        ).isdigit()
+                        and len(non_null_vals.unique()) <= 2
+                        and len(non_null_vals) > 0
+                        and str(non_null_vals.head().values[0]).isdigit()
                     ):
                         func = "sum"
 
@@ -1061,6 +1107,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # of window functions is available.  This will
         # also, unfortunately, limit us to single machine
         # data sizes with daft until then.
+        _require_backend(daft, "daft", "daft")
         original_df = self.df
         self.compute_layer = ComputeLayerEnum.pandas
         self.df = self.df.to_pandas()
@@ -1102,6 +1149,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         Spark implementation of auto labeling based on
         provided columns.
         """
+        _require_backend(pyspark, "spark", "spark")
         agg_funcs = []
         for col, stype in self._stypes.items():
             _type = str(stype)
@@ -1230,7 +1278,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         )
                         | (self.df[self.colabbr(self.date_key)].isnull())
                     ]
-                elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
+                elif isinstance(self.df, SPARK_DF_TYPES):
                     return self.df.filter(
                         (
                             (self.df[self.colabbr(self.date_key)] < self.cut_date)
@@ -1246,7 +1294,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         )
                         | (self.df[self.colabbr(self.date_key)].isNull())
                     )
-                elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
+                elif isinstance(self.df, DAFT_DF_TYPES):
                     return self.df.filter(
                         (
                             (self.df[self.colabbr(self.date_key)] < str(self.cut_date))
@@ -1309,7 +1357,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         )
                         | (self.df[self.colabbr(self.date_key)].isnull())
                     ]
-                elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
+                elif isinstance(self.df, SPARK_DF_TYPES):
                     return self.df.filter(
                         (
                             self.df[self.colabbr(self.date_key)]
@@ -1322,7 +1370,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         )
                         | (self.df[self.colabbr(self.date_key)].isNull())
                     )
-                elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
+                elif isinstance(self.df, DAFT_DF_TYPES):
                     return self.df.filter(
                         (
                             self.df[self.colabbr(self.date_key)]
@@ -1389,7 +1437,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             )
                         )
                     ]
-                elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
+                elif isinstance(self.df, SPARK_DF_TYPES):
                     return self.df.filter(
                         (self.df[self.colabbr(self.date_key)] > str(self.cut_date))
                         & (
@@ -1402,7 +1450,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             )
                         )
                     )
-                elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
+                elif isinstance(self.df, DAFT_DF_TYPES):
                     return self.df.filter(
                         (self.df[self.colabbr(self.date_key)] > str(self.cut_date))
                         & (
@@ -1442,7 +1490,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             - datetime.timedelta(minutes=self.label_period_minutes())
                         )
                     ]
-                elif isinstance(self.df, pyspark.sql.dataframe.DataFrame):
+                elif isinstance(self.df, SPARK_DF_TYPES):
                     return self.df.filter(
                         self.df[self.colabbr(self.date_key)]
                         > (
@@ -1450,7 +1498,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             - datetime.timedelta(minutes=self.label_period_minutes())
                         )
                     )
-                elif isinstance(self.df, daft.dataframe.dataframe.DataFrame):
+                elif isinstance(self.df, DAFT_DF_TYPES):
                     return self.df.filter(
                         self.df[self.colabbr(self.date_key)]
                         > (
@@ -2466,10 +2514,12 @@ class RedshiftNode(SQLNode):
 
                     # For categorical types check if it is
                     # a 0, 1 category and, if so, do a sum.
+                    non_null_vals = table_df_sample[~table_df_sample[col].isnull()][col]
                     if (
                         _type == "categorical"
-                        and len(table_df_sample[col].unique()) <= 2
-                        and str(table_df_sample[col].head().values[0]).isdigit()
+                        and len(non_null_vals.unique()) <= 2
+                        and len(non_null_vals) > 0
+                        and str(non_null_vals.head().values[0]).isdigit()
                     ):
                         func = "sum"
 
@@ -2631,6 +2681,7 @@ class DuckdbNode(SQLNode):
                 table_name: (optional) str of table name to use if `fpath` is filesystem
         """
         super().__init__(*args, **kwargs)
+        _require_backend(duckdb, "duckdb", "duckdb")
         if "/" in self.fpath and not table_name:
             raise Exception("parameter 'table_name' must be set for duckdb files")
         elif "/" in self.fpath and table_name:
@@ -2656,7 +2707,7 @@ class DuckdbNode(SQLNode):
     def _clean_refs(self):
         # Get all views and find the ones
         # in temp refs that are still active.
-        temp_tables = duckdb.sql("""
+        temp_tables = self.get_client().sql("""
         SELECT * FROM temp.sqlite_master;
         """)
         active_tables = list(temp_tables.to_df()["name"])

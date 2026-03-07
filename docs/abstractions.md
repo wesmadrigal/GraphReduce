@@ -1,5 +1,10 @@
 # Abstractions
 
+## Core abstractions
+* `GraphReduce` - the top-level graph orchestration class that manages node/edge relationships and executes feature and label computation across the full table graph.
+* `GraphReduceNode` - the base table/file node abstraction for dataframe-style compute, where you define filtering, annotation, normalization, reduction, and labeling behavior.
+* `SQLNode` - a SQL-oriented node abstraction that enables query-based feature engineering on SQL dialects/backends instead of dataframe-only APIs.
+
 ## Node abstraction
 We represent files and tables as nodes.  A node could be a csv file
 on your laptop, a parquet file in s3, or a Snowflake table in the cloud.
@@ -93,3 +98,71 @@ gr.add_node(notification_node)
 gr.add_node(...)
 ...
 ```
+
+## Examples
+
+### `GraphReduceNode` example
+Use a custom node when you want explicit control over filtering, feature reduction, and labels:
+
+```Python
+from graphreduce.node import GraphReduceNode
+
+class OrderNode(GraphReduceNode):
+    def do_filters(self, df): return df
+    def do_annotate(self, df): return df
+    def do_post_join_annotate(self, df): return df
+    def do_normalize(self, df): return df
+    def do_post_join_filters(self, df): return df
+    def do_reduce(self, df): return df.groupby('customer_id').agg(total=('amount', 'sum')).reset_index()
+    def do_labels(self, df): return df.groupby('customer_id').agg(had_order=('id', 'count')).reset_index()
+```
+
+### `SQLNode` example
+Use `SQLNode` when you want SQL-native execution against a backend/dialect:
+
+```Python
+from graphreduce.node import SQLNode
+from graphreduce.enum import SQLOpType
+
+orders = SQLNode(
+    fpath='orders',
+    prefix='ord',
+    pk='id',
+    dialect='postgresql'
+)
+
+orders.build_query(
+    optype=SQLOpType.select,
+    cols=['customer_id', 'amount']
+)
+```
+
+### `GraphReduce` example
+Use `GraphReduce` to connect nodes and run the graph-wide feature computation:
+
+```Python
+from graphreduce.graph_reduce import GraphReduce
+
+gr = GraphReduce(
+    name='customer_features',
+    parent_node=customer_node,
+    compute_layer=ComputeLayerEnum.pandas,
+    auto_features=True
+)
+
+gr.add_node(customer_node)
+gr.add_node(orders_node)
+gr.add_entity_edge(
+    parent_node=customer_node,
+    relation_node=orders_node,
+    parent_key='id',
+    relation_key='customer_id',
+    reduce=True
+)
+```
+
+See also:
+
+* [Custom node tutorial](tutorial_custom_graph.md)
+* [SQL dialect tutorial](tutorial_sql_dialects.md)
+* [Tutorial index](tutorial_index.md)

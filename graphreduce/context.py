@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import annotations
 """A module for helping with context
 in GraphReduce compute graphs.
 """
@@ -9,18 +10,30 @@ import typing
 # third party
 import pandas as pd
 import dask.dataframe as dd
-import pyspark
 from structlog import get_logger
+try:
+    import pyspark
+except Exception:  # pragma: no cover - optional dependency
+    pyspark = None
 
 # internal
 from graphreduce.node import GraphReduceNode
 
 
 logger = get_logger('graphreduce.context')
-valid_dataframe_classes = [pd.DataFrame,
-                           dd.DataFrame,
-                           pyspark.sql.dataframe.DataFrame,
-                           pyspark.sql.connect.dataframe.DataFrame]
+valid_dataframe_classes = [pd.DataFrame, dd.DataFrame]
+if pyspark is not None:
+    for spark_df_type in [
+        getattr(getattr(getattr(pyspark, "sql", None), "dataframe", None), "DataFrame", None),
+        getattr(
+            getattr(getattr(getattr(pyspark, "sql", None), "connect", None), "dataframe", None),
+            "DataFrame",
+            None,
+        ),
+    ]:
+        if spark_df_type is not None:
+            valid_dataframe_classes.append(spark_df_type)
+valid_dataframe_classes = tuple(valid_dataframe_classes)
 
 
 def method_requires (

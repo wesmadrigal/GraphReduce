@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import annotations
 """Storage abstractions for offloading
 and checkpointing.
 """
@@ -14,8 +15,10 @@ from graphreduce.enum import StorageFormatEnum, ProviderEnum, ComputeLayerEnum
 # third party 
 import dask.dataframe as dd
 import pandas as pd
-import pyspark
-import daft
+try:
+    import pyspark
+except Exception:  # pragma: no cover - optional dependency
+    pyspark = None
 
 
 class StorageClient(object):

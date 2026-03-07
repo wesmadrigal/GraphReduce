@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from __future__ import annotations
 
 # std lib
 import os
@@ -13,10 +14,19 @@ import pandas as pd
 import networkx as nx
 from dask import dataframe as dd
 from structlog import get_logger
-import pyspark
 import pyvis
-from pyspark.sql import functions as F
-import daft
+
+try:
+    import pyspark
+    from pyspark.sql import functions as F
+except Exception:  # pragma: no cover - optional dependency
+    pyspark = None
+    F = None
+
+try:
+    import daft
+except Exception:  # pragma: no cover - optional dependency
+    daft = None
 
 # internal
 from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
@@ -25,6 +35,35 @@ from graphreduce.storage import StorageClient
 from graphreduce.models import sqlop
 
 logger = get_logger("GraphReduce")
+
+
+SPARK_DF_TYPES = tuple()
+if pyspark is not None:  # pragma: no branch
+    SPARK_DF_TYPES = tuple(
+        t
+        for t in [
+            getattr(getattr(pyspark, "sql", None), "DataFrame", None),
+            getattr(getattr(getattr(pyspark, "sql", None), "dataframe", None), "DataFrame", None),
+            getattr(
+                getattr(getattr(getattr(pyspark, "sql", None), "connect", None), "dataframe", None),
+                "DataFrame",
+                None,
+            ),
+        ]
+        if t is not None
+    )
+
+DAFT_DF_TYPES = tuple()
+if daft is not None:  # pragma: no branch
+    daft_df = getattr(getattr(getattr(daft, "dataframe", None), "dataframe", None), "DataFrame", None)
+    DAFT_DF_TYPES = (daft_df,) if daft_df is not None else tuple()
+
+
+def _require_backend(module: typing.Any, backend: str, extra: str) -> None:
+    if module is None:
+        raise ImportError(
+            f"{backend} backend is not installed. Install with `pip install \"graphreduce[{extra}]\"`."
+        )
 
 
 class GraphReduce(nx.DiGraph):
@@ -155,10 +194,14 @@ class GraphReduce(nx.DiGraph):
         # Keep track of all the SQL queries.
         self.sql_ops = []
 
+        if self.compute_layer == ComputeLayerEnum.spark:
+            _require_backend(pyspark, "spark", "spark")
         if self.compute_layer == ComputeLayerEnum.spark and self.spark_sqlctx is None:
             raise Exception(
                 f"Must provide a `spark_sqlctx` kwarg if using {self.compute_layer.value} as compute layer"
             )
+        if self.compute_layer == ComputeLayerEnum.daft:
+            _require_backend(daft, "daft", "daft")
 
         if self.label_node and (
             self.label_period_val is None or self.label_period_unit is None
@@ -350,6 +393,7 @@ class GraphReduce(nx.DiGraph):
             else:
                 return joined
         elif self.compute_layer == ComputeLayerEnum.daft:
+            _require_backend(daft, "daft", "daft")
             joined = to_node.df.join(
                 from_node.df,
                 left_on=to_node.df[f"{to_node.prefix}_{to_node_key}"],
@@ -360,8 +404,9 @@ class GraphReduce(nx.DiGraph):
             self._mark_merged(to_node, from_node)
             return joined
         elif self.compute_layer == ComputeLayerEnum.spark:
-            if isinstance(to_node.df, pyspark.sql.dataframe.DataFrame) and isinstance(
-                from_node.df, pyspark.sql.dataframe.DataFrame
+            _require_backend(pyspark, "spark", "spark")
+            if isinstance(to_node.df, SPARK_DF_TYPES) and isinstance(
+                from_node.df, SPARK_DF_TYPES
             ):
                 joined = to_node.df.join(
                     from_node.df,
@@ -443,7 +488,8 @@ class GraphReduce(nx.DiGraph):
             else:
                 return joined
         elif self.compute_layer == ComputeLayerEnum.daft:
-            if isinstance(relation_df, daft.dataframe.dataframe.DataFrame):
+            _require_backend(daft, "daft", "daft")
+            if isinstance(relation_df, DAFT_DF_TYPES):
                 joined = parent_node.df.join(
                     relation_df,
                     left_on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"],
@@ -462,10 +508,8 @@ class GraphReduce(nx.DiGraph):
             self._mark_merged(parent_node, relation_node)
             return joined
         elif self.compute_layer == ComputeLayerEnum.spark:
-            valid_dataframe_types = (
-                pyspark.sql.dataframe.DataFrame,
-                pyspark.sql.connect.dataframe.DataFrame,
-            )
+            _require_backend(pyspark, "spark", "spark")
+            valid_dataframe_types = SPARK_DF_TYPES
             if isinstance(relation_df, valid_dataframe_types) and isinstance(
                 parent_node.df, valid_dataframe_types
             ):
@@ -1126,7 +1170,7 @@ class GraphReduce(nx.DiGraph):
                                     f"assigned join_df to be {child_df.columns}"
                                 )
                     elif self.compute_layer == ComputeLayerEnum.spark:
-                        if isinstance(join_df, pyspark.sql.dataframe.DataFrame):
+                        if isinstance(join_df, SPARK_DF_TYPES):
                             join_df = join_df.join(
                                 child_df,
                                 on=join_df[
