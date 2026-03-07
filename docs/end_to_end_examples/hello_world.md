@@ -125,7 +125,7 @@ This example can also run through the local interactive runner and stream logs
 in the docs UI. It uses the pandas backend, so no optional backend extras are
 required.
 
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="hello_world">
   <div class="modal-runner-controls">
     <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
     <button data-save-api-btn>Save API URL</button>

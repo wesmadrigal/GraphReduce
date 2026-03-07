@@ -1,4 +1,4 @@
-# Preserve Child Grain (`reduce=False`)
+# Preserve Child Grain (`reduce=False`) - pandas + duckdb
 
 [![Preserve Child Grain with custom aggregation](preserve_child_grain_overview.png)](preserve_child_grain_overview.png)
 
@@ -193,7 +193,7 @@ gr.do_transformations()
 
 print("rows:", len(gr.parent_node.df))
 print("columns:", len(gr.parent_node.df.columns))
-print(gr.parent_node.df.head(10))
+print(gr.parent_node.df.shape)
 ```
 
 ## duckdb backend
@@ -286,7 +286,7 @@ out_df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
 
 print("rows:", len(out_df))
 print("columns:", len(out_df.columns))
-print(out_df.head(10))
+print(out_df.shape)
 
 con.close()
 ```
@@ -299,8 +299,24 @@ con.close()
 * `duckdb backend` uses `DuckdbNode` (a `SQLNode` implementation for DuckDB).
 * Rows are typically greater than the number of parent rows (`cust.csv` has 4)
   because the non-reduced `notifications` edge preserves 1:n detail.
+* With the bundled sample data and this configuration, expect `9` rows.
 * You still get aggregated signal from reduced edges (here: `orders` via
   custom reduction logic) while preserving notification-level rows.
+
+## Run Interactive
+
+Use the interactive runner below to execute the pandas variant and stream logs
+directly in the docs UI.
+
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="preserve_child_grain">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run Preserve Child Grain</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
 
 ## Sample Data Files Used
 

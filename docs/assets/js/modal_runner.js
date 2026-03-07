@@ -22,31 +22,33 @@
   }
 
   function initModalRunner() {
-    const container = document.querySelector("[data-modal-runner]");
-    if (!container || container.dataset.runnerBound === "1") {
-      return;
-    }
-    container.dataset.runnerBound = "1";
-    const runBtn = container.querySelector("[data-run-btn]");
-    const saveBtn = container.querySelector("[data-save-api-btn]");
-    if (!runBtn) {
-      return;
-    }
-    setApiBaseUi(container);
-    if (saveBtn) {
-      saveBtn.addEventListener("click", function () {
-        const input = container.querySelector("[data-api-input]");
-        if (!input) {
-          return;
-        }
-        const val = normalizeBaseUrl(input.value);
-        if (val) {
-          localStorage.setItem("graphreduceApiBase", val);
-        }
+    const containers = document.querySelectorAll("[data-modal-runner]");
+    containers.forEach(function (container) {
+      if (container.dataset.runnerBound === "1") {
+        return;
+      }
+      container.dataset.runnerBound = "1";
+      const runBtn = container.querySelector("[data-run-btn]");
+      const saveBtn = container.querySelector("[data-save-api-btn]");
+      if (!runBtn) {
+        return;
+      }
+      setApiBaseUi(container);
+      if (saveBtn) {
+        saveBtn.addEventListener("click", function () {
+          const input = container.querySelector("[data-api-input]");
+          if (!input) {
+            return;
+          }
+          const val = normalizeBaseUrl(input.value);
+          if (val) {
+            localStorage.setItem("graphreduceApiBase", val);
+          }
+        });
+      }
+      runBtn.addEventListener("click", function () {
+        startRun(container);
       });
-    }
-    runBtn.addEventListener("click", function () {
-      startRun(container);
     });
   }
 
@@ -57,6 +59,7 @@
 
   async function startRun(container) {
     const baseUrl = resolvedApiBase(container);
+    const example = container.dataset.example || "hello_world";
 
     const runBtn = container.querySelector("[data-run-btn]");
     const statusEl = container.querySelector("[data-status]");
@@ -71,7 +74,7 @@
       const resp = await fetch(baseUrl + "/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ example }),
       });
       if (!resp.ok) {
         throw new Error("Job start failed: HTTP " + resp.status);
