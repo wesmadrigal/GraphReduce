@@ -35,9 +35,9 @@ TABLES = [
 def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
     print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
-    print("2. Prepared and aggregated data with GraphReduce.", flush=True)
-    print("3. Trained model.", flush=True)
-    print("4. Predicted and scored on holdout set.", flush=True)
+    print("2. Prepared and aggregated two GraphReduce datasets (2020 train/eval, 2021 out-of-time).", flush=True)
+    print("3. Trained model on the 2020 dataset.", flush=True)
+    print("4. Predicted and scored on 2020 holdout and 2021 out-of-time datasets.", flush=True)
     print(f"5. Achieved the following result: {result_text}", flush=True)
 
 
@@ -56,27 +56,10 @@ def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, csv_path: Path
     )
 
 
-def main() -> None:
-    data_dir = Path("tests/data/relbench/rel-stack")
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded_files: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
-            downloaded_files.append(table)
-
-    cut_date = datetime.datetime(2020, 1, 1)
-    con = duckdb.connect()
-    _prepare_view(con, "users_src", data_dir / "Users.csv")
-    _prepare_view(con, "posts_src", data_dir / "Posts.csv")
-    _prepare_view(con, "badges_src", data_dir / "Badges.csv")
-    _prepare_view(con, "post_history_src", data_dir / "PostHistory.csv")
-    _prepare_view(con, "post_links_src", data_dir / "PostLinks.csv")
-    _prepare_view(con, "votes_src", data_dir / "Votes.csv")
-    _prepare_view(con, "comments_src", data_dir / "Comments.csv")
-    _prepare_view(con, "tags_src", data_dir / "Tags.csv")
-
+def _build_post_votes_frame(
+    con: duckdb.DuckDBPyConnection,
+    cut_date: datetime.datetime,
+) -> tuple[object, str]:
     post = DuckdbNode(
         fpath="posts_src",
         prefix="post",
@@ -136,7 +119,7 @@ def main() -> None:
     )
 
     gr = GraphReduce(
-        name="relbench-post-votes-local",
+        name=f"relbench-post-votes-local-{cut_date.date()}",
         parent_node=post,
         compute_layer=ComputeLayerEnum.duckdb,
         sql_client=con,
@@ -165,26 +148,59 @@ def main() -> None:
     gr.add_entity_edge(post, user, parent_key="OwnerUserId", relation_key="Id", reduce=True)
     gr.add_entity_edge(user, badge, parent_key="Id", relation_key="UserId", reduce=True)
 
-    print("Starting rel-stack post votes pipeline...", flush=True)
     gr.do_transformations_sql()
     df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()
-
     label_cols = [c for c in df.columns if c.startswith("vote_") and "label" in c.lower()]
     if not label_cols:
         raise ValueError("No vote label columns found.")
     target = label_cols[0]
     df[target] = df[target].fillna(0).astype("float64")
+    return df, target
 
-    stypes = infer_df_stype(df)
+
+def main() -> None:
+    data_dir = Path("tests/data/relbench/rel-stack")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_files: list[str] = []
+    for table in TABLES:
+        out_path = data_dir / table
+        if not out_path.exists():
+            urlretrieve(f"{BASE_URL}/{table}", out_path)
+            downloaded_files.append(table)
+
+    train_cut_date = datetime.datetime(2020, 1, 1)
+    future_cut_date = datetime.datetime(2021, 1, 1)
+    con = duckdb.connect()
+    _prepare_view(con, "users_src", data_dir / "Users.csv")
+    _prepare_view(con, "posts_src", data_dir / "Posts.csv")
+    _prepare_view(con, "badges_src", data_dir / "Badges.csv")
+    _prepare_view(con, "post_history_src", data_dir / "PostHistory.csv")
+    _prepare_view(con, "post_links_src", data_dir / "PostLinks.csv")
+    _prepare_view(con, "votes_src", data_dir / "Votes.csv")
+    _prepare_view(con, "comments_src", data_dir / "Comments.csv")
+    _prepare_view(con, "tags_src", data_dir / "Tags.csv")
+
+    print("Starting rel-stack post votes pipeline...", flush=True)
+    print("Building 2020 training/eval graph...", flush=True)
+    df_train, target = _build_post_votes_frame(con, train_cut_date)
+    print("Building 2021 out-of-time graph...", flush=True)
+    df_future, target_future = _build_post_votes_frame(con, future_cut_date)
+    if target != target_future:
+        raise ValueError(f"Target mismatch between train ({target}) and future ({target_future})")
+
+    stypes = infer_df_stype(df_train)
     features = [
         k for k, v in stypes.items()
         if str(v) == "numerical" and k not in ["post_Id", "post_OwnerUserId"] and "label" not in k and "had_engagement" not in k
     ]
-    features = [c for c in features if c in df.columns]
+    features = [c for c in features if c in df_train.columns and c in df_future.columns]
 
-    print(f"rows: {len(df)}", flush=True)
-    print(f"columns: {len(df.columns)}", flush=True)
-    print("shape:", df.shape, flush=True)
+    print(f"train rows: {len(df_train)}", flush=True)
+    print(f"train columns: {len(df_train.columns)}", flush=True)
+    print("train shape:", df_train.shape, flush=True)
+    print(f"future rows: {len(df_future)}", flush=True)
+    print(f"future columns: {len(df_future.columns)}", flush=True)
+    print("future shape:", df_future.shape, flush=True)
     print(f"target: {target}", flush=True)
     print(f"num_features: {len(features)}", flush=True)
 
@@ -194,7 +210,7 @@ def main() -> None:
         return
 
     X_train_full, X_test, y_train_full, y_test = train_test_split(
-        df[features], df[target], test_size=0.2, random_state=42
+        df_train[features], df_train[target], test_size=0.2, random_state=42
     )
     kf = KFold(n_splits=2, shuffle=True, random_state=42)
     fold_maes: list[float] = []
@@ -207,7 +223,7 @@ def main() -> None:
         mdl = CatBoostRegressor(
             loss_function="MAE",
             eval_metric="MAE",
-            iterations=300,
+            iterations=1000,
             learning_rate=0.05,
             depth=6,
             verbose=200,
@@ -222,9 +238,25 @@ def main() -> None:
     print("\n=== CV Summary ===", flush=True)
     print(f"Mean CV MAE : {np.mean(fold_maes):.4f} ± {np.std(fold_maes):.4f}", flush=True)
     print(f"Folds MAE   : {[f'{a:.4f}' for a in fold_maes]}", flush=True)
-    mae = mean_absolute_error(y_test, test_preds)
-    print(f"test_mae: {mae:.4f}", flush=True)
-    _print_steps_summary(downloaded_files, f"holdout MAE = {mae:.4f}")
+    holdout_mae = mean_absolute_error(y_test, test_preds)
+    print(f"in_time_holdout_mae_2020: {holdout_mae:.4f}", flush=True)
+
+    final_mdl = CatBoostRegressor(
+        loss_function="MAE",
+        eval_metric="MAE",
+        iterations=int(mdl.best_iteration_ * 1.1),
+        learning_rate=0.05,
+        depth=6,
+        verbose=200,
+    )
+    final_mdl.fit(df_train[features], df_train[target], verbose=200)
+    future_preds = final_mdl.predict(df_future[features])
+    future_mae = mean_absolute_error(df_future[target], future_preds)
+    print(f"out_of_time_mae_2021: {future_mae:.4f}", flush=True)
+    _print_steps_summary(
+        downloaded_files,
+        f"in-time holdout MAE (2020 cut date) = {holdout_mae:.4f}; out-of-time MAE (2021 cut date) = {future_mae:.4f}",
+    )
 
 
 if __name__ == "__main__":

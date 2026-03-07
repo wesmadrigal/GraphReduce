@@ -35,9 +35,9 @@ TABLES = [
 def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
     print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
-    print("2. Prepared and aggregated data with GraphReduce.", flush=True)
-    print("3. Trained model.", flush=True)
-    print("4. Predicted and scored on holdout set.", flush=True)
+    print("2. Prepared and aggregated two GraphReduce datasets (2020 train/eval, 2021 out-of-time).", flush=True)
+    print("3. Trained model on the 2020 dataset.", flush=True)
+    print("4. Predicted and scored on 2020 holdout and 2021 out-of-time datasets.", flush=True)
     print(f"5. Achieved the following result: {result_text}", flush=True)
 
 
@@ -56,23 +56,10 @@ def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, csv_path: Path
     )
 
 
-def main() -> None:
-    data_dir = Path("tests/data/relbench/rel-stack")
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded_files: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
-            downloaded_files.append(table)
-
-    cut_date = datetime.datetime(2021, 1, 1)
-    con = duckdb.connect()
-    _prepare_view(con, "users_src", data_dir / "Users.csv")
-    _prepare_view(con, "posts_src", data_dir / "Posts.csv")
-    _prepare_view(con, "votes_src", data_dir / "Votes.csv")
-    _prepare_view(con, "comments_src", data_dir / "Comments.csv")
-
+def _build_user_engagement_frame(
+    con: duckdb.DuckDBPyConnection,
+    cut_date: datetime.datetime,
+) -> tuple[object, str]:
     user = DuckdbNode(
         fpath="users_src",
         prefix="user",
@@ -139,7 +126,7 @@ def main() -> None:
     )
 
     gr = GraphReduce(
-        name="relbench-user-engagement-local",
+        name=f"relbench-user-engagement-local-{cut_date.date()}",
         parent_node=user,
         compute_layer=ComputeLayerEnum.duckdb,
         sql_client=con,
@@ -165,7 +152,6 @@ def main() -> None:
     gr.add_entity_edge(user, vote, parent_key="Id", relation_key="UserId", reduce=True)
     gr.add_entity_edge(user, comment, parent_key="Id", relation_key="UserId", reduce=True)
 
-    print("Starting relbench user-engagement transformation...", flush=True)
     gr.do_transformations_sql()
     df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
 
@@ -173,15 +159,43 @@ def main() -> None:
     vote_label_cols = [c for c in df.columns if c.startswith("vote_") and "label" in c.lower()]
     comm_label_cols = [c for c in df.columns if c.startswith("comm_") and "label" in c.lower()]
     label_cols = post_label_cols + vote_label_cols + comm_label_cols
-
     if not label_cols:
         raise ValueError("No engagement label columns found.")
 
     for c in label_cols:
         df[c] = df[c].fillna(0)
-    df["user_had_engagement"] = (df[label_cols].sum(axis=1) > 0).astype("int8")
+    target = "user_had_engagement"
+    df[target] = (df[label_cols].sum(axis=1) > 0).astype("int8")
+    return df, target
 
-    stypes = infer_df_stype(df)
+
+def main() -> None:
+    data_dir = Path("tests/data/relbench/rel-stack")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    downloaded_files: list[str] = []
+    for table in TABLES:
+        out_path = data_dir / table
+        if not out_path.exists():
+            urlretrieve(f"{BASE_URL}/{table}", out_path)
+            downloaded_files.append(table)
+
+    train_cut_date = datetime.datetime(2020, 1, 1)
+    future_cut_date = datetime.datetime(2021, 1, 1)
+    con = duckdb.connect()
+    _prepare_view(con, "users_src", data_dir / "Users.csv")
+    _prepare_view(con, "posts_src", data_dir / "Posts.csv")
+    _prepare_view(con, "votes_src", data_dir / "Votes.csv")
+    _prepare_view(con, "comments_src", data_dir / "Comments.csv")
+
+    print("Starting relbench user-engagement transformation...", flush=True)
+    print("Building 2020 training/eval graph...", flush=True)
+    df_train, target = _build_user_engagement_frame(con, train_cut_date)
+    print("Building 2021 out-of-time graph...", flush=True)
+    df_future, target_future = _build_user_engagement_frame(con, future_cut_date)
+    if target != target_future:
+        raise ValueError(f"Target mismatch between train ({target}) and future ({target_future})")
+
+    stypes = infer_df_stype(df_train)
     features = [
         k
         for k, v in stypes.items()
@@ -190,14 +204,18 @@ def main() -> None:
         and "label" not in k
         and "had_engagement" not in k
     ]
-    features = [c for c in features if c in df.columns]
+    features = [c for c in features if c in df_train.columns and c in df_future.columns]
 
-    X = df[features].fillna(0)
-    y = df["user_had_engagement"]
+    X = df_train[features].fillna(0)
+    y = df_train[target]
 
-    print(f"rows: {len(df)}", flush=True)
-    print(f"columns: {len(df.columns)}", flush=True)
-    print("shape:", df.shape, flush=True)
+    print(f"train rows: {len(df_train)}", flush=True)
+    print(f"train columns: {len(df_train.columns)}", flush=True)
+    print("train shape:", df_train.shape, flush=True)
+    print(f"future rows: {len(df_future)}", flush=True)
+    print(f"future columns: {len(df_future.columns)}", flush=True)
+    print("future shape:", df_future.shape, flush=True)
+    print(f"target: {target}", flush=True)
     print(f"num_features: {len(features)}", flush=True)
 
     if y.nunique() < 2:
@@ -219,7 +237,7 @@ def main() -> None:
         mdl = CatBoostClassifier(
             loss_function="Logloss",
             eval_metric="AUC",
-            iterations=300,
+            iterations=1000,
             learning_rate=0.05,
             depth=6,
             auto_class_weights="Balanced",
@@ -235,9 +253,35 @@ def main() -> None:
     print("\n=== CV Summary ===", flush=True)
     print(f"Mean CV AUC : {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f}", flush=True)
     print(f"Folds AUC   : {[f'{a:.4f}' for a in fold_aucs]}", flush=True)
-    auc = roc_auc_score(y_test, test_preds)
-    print(f"test_auc: {auc:.4f}", flush=True)
-    _print_steps_summary(downloaded_files, f"holdout ROC AUC = {auc:.4f}")
+    holdout_auc = roc_auc_score(y_test, test_preds)
+    print(f"in_time_holdout_auc_2020: {holdout_auc:.4f}", flush=True)
+
+    final_mdl = CatBoostClassifier(
+        loss_function="Logloss",
+        eval_metric="AUC",
+        iterations=int(mdl.best_iteration_ * 1.1),
+        learning_rate=0.05,
+        depth=6,
+        auto_class_weights="Balanced",
+        verbose=200,
+    )
+    final_mdl.fit(df_train[features], df_train[target], verbose=200)
+    future_y = df_future[target]
+    if future_y.nunique() < 2:
+        print("future target is single-class; skipping out-of-time AUC", flush=True)
+        _print_steps_summary(
+            downloaded_files,
+            f"in-time holdout ROC AUC (2020 cut date) = {holdout_auc:.4f}; out-of-time AUC (2021 cut date) skipped",
+        )
+        return
+
+    future_preds = final_mdl.predict_proba(df_future[features])[:, 1]
+    future_auc = roc_auc_score(future_y, future_preds)
+    print(f"out_of_time_auc_2021: {future_auc:.4f}", flush=True)
+    _print_steps_summary(
+        downloaded_files,
+        f"in-time holdout ROC AUC (2020 cut date) = {holdout_auc:.4f}; out-of-time ROC AUC (2021 cut date) = {future_auc:.4f}",
+    )
 
 
 if __name__ == "__main__":
