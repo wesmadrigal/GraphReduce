@@ -91,8 +91,7 @@ def main() -> None:
     print(f"rows: {len(df)}", flush=True)
     print(f"columns: {len(df.columns)}", flush=True)
     print("sample columns:", list(df.columns[:10]), flush=True)
-    print("head:", flush=True)
-    print(df.head().to_string(index=False), flush=True)
+    print("shape:", df.shape, flush=True)
 
 
 if __name__ == "__main__":

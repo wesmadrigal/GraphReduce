@@ -110,7 +110,7 @@ gr.do_transformations()
 
 print("rows:", len(gr.parent_node.df))
 print("columns:", len(gr.parent_node.df.columns))
-print(gr.parent_node.df.head())
+print(gr.parent_node.df.shape)
 ```
 
 ## What To Expect
@@ -125,6 +125,16 @@ This example can also run through the local interactive runner and stream logs
 in the docs UI. It uses the pandas backend, so no optional backend extras are
 required.
 
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run Hello World</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
+
 ```bash
 pip install graphreduce
 pip install -r docs/api/requirements.txt
@@ -134,11 +144,6 @@ mkdocs serve
 
 The interactive API runs `python examples/hello_world_local_runner.py` on the
 server host and streams stdout to the browser terminal.
-
-For a browser-based live log view, use
-[Interactive Runner](hello_world_modal_interactive.md).
-
-<a class="md-button md-button--primary" href="hello_world_modal_interactive.md">Open Interactive Runner</a>
 
 ## Sample Data Files Used
 
