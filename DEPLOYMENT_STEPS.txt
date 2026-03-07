@@ -1,0 +1,99 @@
+GraphReduce Docs + Interactive Runner Deployment Steps
+
+1) Deploy docs to GitHub Pages
+
+./venv/bin/mkdocs gh-deploy --force
+
+2) Provision backend host (DigitalOcean droplet)
+
+- Ubuntu 22.04+
+- Open ports: 22, 80, 443
+- Point DNS (e.g. runner.yourdomain.com) to the droplet IP
+
+3) Install runtime on droplet
+
+sudo apt update
+sudo apt install -y python3 python3-venv nginx git
+
+4) Clone repo and install backend dependencies
+
+git clone https://github.com/wesmadrigal/GraphReduce.git
+cd GraphReduce
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install graphreduce
+pip install -r docs/api/requirements.txt
+
+5) Set backend environment variables
+
+export GRAPHREDUCE_ALLOWED_ORIGINS="https://<your-docs-domain>"
+export GRAPHREDUCE_RUNNER_HOST="127.0.0.1"
+export GRAPHREDUCE_RUNNER_PORT="8001"
+
+6) Run backend as systemd service
+
+Create /etc/systemd/system/graphreduce-runner.service:
+
+[Unit]
+Description=GraphReduce Interactive Runner API
+After=network.target
+
+[Service]
+User=<your-user>
+WorkingDirectory=/home/<your-user>/GraphReduce
+Environment=GRAPHREDUCE_ALLOWED_ORIGINS=https://<your-docs-domain>
+Environment=GRAPHREDUCE_RUNNER_HOST=127.0.0.1
+Environment=GRAPHREDUCE_RUNNER_PORT=8001
+ExecStart=/home/<your-user>/GraphReduce/.venv/bin/python docs/api/modal_stream_server.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+
+Then run:
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now graphreduce-runner
+sudo systemctl status graphreduce-runner
+
+7) Configure Nginx reverse proxy
+
+Create /etc/nginx/sites-available/graphreduce-runner:
+
+server {
+  server_name runner.yourdomain.com;
+
+  location / {
+    proxy_pass http://127.0.0.1:8001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Connection "";
+    proxy_set_header Cache-Control "no-cache";
+    proxy_buffering off;
+  }
+}
+
+Enable and reload:
+
+sudo ln -s /etc/nginx/sites-available/graphreduce-runner /etc/nginx/sites-enabled/
+sudo nginx -t
+sudo systemctl reload nginx
+
+8) Add HTTPS using Let's Encrypt
+
+sudo apt install -y certbot python3-certbot-nginx
+sudo certbot --nginx -d runner.yourdomain.com
+
+9) Configure docs UI backend URL
+
+- Open your GitHub Pages interactive docs page
+- Set API URL to: https://runner.yourdomain.com
+- Click "Save API URL"
+
+10) Verify
+
+- Visit: https://runner.yourdomain.com/health
+  Expected response: {"status":"ok"}
+- Click "Run Hello World" in docs and confirm streamed logs appear

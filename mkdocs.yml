@@ -15,11 +15,15 @@ nav:
   - End-to-End Examples:
     - end_to_end_examples/index.md
     - Hello World: end_to_end_examples/hello_world.md
+    - Hello World (Interactive): end_to_end_examples/hello_world_modal_interactive.md
     - Preserve Child Grain: end_to_end_examples/preserve_child_grain.md
     - All Tables Reduced With Labels: end_to_end_examples/all_tables_reduce_with_labels.md
     - Predictive AI with XGBoost: end_to_end_examples/predictive_ai_xgboost.md
     - Predictive AI with TabPFN: end_to_end_examples/predictive_ai_tabpfn.md
-    - RelBench Rel-Stack DuckDB (Badges Label): end_to_end_examples/relbench_rel_stack_badges_duckdb.md
+    - RelBench Tasks:
+      - "rel-stack: User Badges": end_to_end_examples/relbench_rel_stack_badges_duckdb.md
+      - "rel-stack: Post Votes": end_to_end_examples/relbench_rel_stack_post_votes_duckdb.md
+      - "rel-stack: User Engagement": end_to_end_examples/relbench_rel_stack_user_engagement_duckdb.md
   - Tutorial:
     - tutorial_index.md
     - tutorial_time.md
@@ -45,3 +49,9 @@ markdown_extensions:
   - pymdownx.inlinehilite
   - pymdownx.snippets
   - pymdownx.superfences
+
+extra_css:
+  - assets/css/modal_runner.css
+
+extra_javascript:
+  - assets/js/modal_runner.js

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="920" viewBox="0 0 1480 920">
+  <defs>
+    <style>
+      .title { font: 700 32px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .label { font: 700 14px Arial, sans-serif; fill: #102a43; }
+      .text { font: 12px Arial, sans-serif; fill: #243b53; }
+      .small { font: 11px Arial, sans-serif; fill: #486581; }
+      .mono { font: 12px "Courier New", monospace; fill: #1f2933; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#334e68"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#12734a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="920" fill="#f7fafc"/>
+  <text x="40" y="54" class="title">GraphReduce to XGBoost: End-to-End Predictive AI Pipeline</text>
+  <text x="40" y="82" class="subtitle">Three-table graph with full reduction to customer grain, then direct handoff from feature vector to XGBClassifier `.fit()` and `.predict()`.</text>
+
+  <rect x="34" y="112" width="520" height="520" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="54" y="142" class="section">1) Graph Model (cust, orders, notifications)</text>
+
+  <rect x="190" y="178" width="220" height="126" rx="10" fill="#e7f0ff" stroke="#486581"/>
+  <text x="206" y="202" class="label">Parent: cust.csv</text>
+  <text x="206" y="222" class="text">prefix: cust</text>
+  <text x="206" y="240" class="text">pk: id</text>
+  <text x="206" y="258" class="text">grain: customer</text>
+  <text x="206" y="276" class="text">rows: 4</text>
+
+  <rect x="60" y="390" width="210" height="138" rx="10" fill="#fff6df" stroke="#486581"/>
+  <text x="76" y="414" class="label">orders.csv (label node)</text>
+  <text x="76" y="434" class="text">prefix: ord</text>
+  <text x="76" y="452" class="text">pk: id, date_key: ts</text>
+  <text x="76" y="470" class="text">fk: customer_id</text>
+  <text x="76" y="488" class="text">edge reduce=True</text>
+  <text x="76" y="506" class="text">label source</text>
+
+  <rect x="324" y="390" width="210" height="138" rx="10" fill="#e8fff1" stroke="#486581"/>
+  <text x="340" y="414" class="label">notifications.csv</text>
+  <text x="340" y="434" class="text">prefix: not</text>
+  <text x="340" y="452" class="text">pk: id, date_key: ts</text>
+  <text x="340" y="470" class="text">fk: customer_id</text>
+  <text x="340" y="488" class="text">edge reduce=True</text>
+  <text x="340" y="506" class="text">feature source</text>
+
+  <line x1="252" y1="304" x2="166" y2="390" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <rect x="46" y="314" width="232" height="50" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="58" y="335" class="small">orders edge: id &lt;- customer_id</text>
+  <text x="58" y="352" class="small">reduce=True</text>
+
+  <line x1="350" y1="304" x2="430" y2="390" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <rect x="280" y="314" width="254" height="50" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="292" y="335" class="small">notifications edge: id &lt;- customer_id</text>
+  <text x="292" y="352" class="small">reduce=True</text>
+
+  <rect x="60" y="552" width="474" height="62" rx="10" fill="#f2f6fa" stroke="#9fb3c8"/>
+  <text x="76" y="578" class="label">All child signal propagates upward via aggregation</text>
+  <text x="76" y="598" class="text">Output stays at parent grain with prefixed lineage columns (`cust_*`, `ord_*`, `not_*`).</text>
+
+  <rect x="582" y="112" width="420" height="252" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="602" y="142" class="section">2) Point-in-Time Feature/Label Windows</text>
+
+  <rect x="610" y="168" width="364" height="46" rx="8" fill="#f0f4f8" stroke="#9fb3c8"/>
+  <text x="626" y="196" class="mono">cut_date = 2023-06-30</text>
+
+  <rect x="610" y="224" width="364" height="50" rx="8" fill="#e6fffa" stroke="#2c7a7b"/>
+  <text x="626" y="244" class="label">X feature history</text>
+  <text x="626" y="262" class="mono">2022-06-30 to 2023-06-30 (365 days)</text>
+
+  <rect x="610" y="284" width="364" height="50" rx="8" fill="#fffaf0" stroke="#b7791f"/>
+  <text x="626" y="304" class="label">y label horizon (orders)</text>
+  <text x="626" y="322" class="mono">2023-07-01 to 2023-07-30 (30 days)</text>
+
+  <rect x="582" y="382" width="420" height="250" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="602" y="412" class="section">3) GraphReduce Output Feature Vector</text>
+  <text x="602" y="440" class="text">Result is materialized on `gr.parent_node.df`.</text>
+  <text x="602" y="464" class="text">One row per customer, with engineered columns from child rollups.</text>
+  <text x="602" y="488" class="text">Label column is generated from `orders.csv` in forward window.</text>
+
+  <rect x="604" y="508" width="380" height="104" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
+  <text x="620" y="534" class="mono">X = [numeric cust_*, ord_agg_*, not_agg_*]</text>
+  <text x="620" y="556" class="mono">y = (ord_label_count &gt; 0).astype(int)</text>
+  <text x="620" y="578" class="mono">train/test split -&gt; model input arrays</text>
+
+  <rect x="1040" y="112" width="408" height="520" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="1060" y="142" class="section">4) Classical ML Model Stage</text>
+
+  <rect x="1062" y="172" width="364" height="178" rx="10" fill="#eef2ff" stroke="#667eea"/>
+  <text x="1080" y="200" class="label">XGBClassifier</text>
+  <text x="1080" y="224" class="mono">model = XGBClassifier(...)</text>
+  <text x="1080" y="248" class="mono">model.fit(X_train, y_train)</text>
+  <text x="1080" y="272" class="mono">y_pred = model.predict(X_test)</text>
+  <text x="1080" y="296" class="mono">y_proba = model.predict_proba(X_test)</text>
+  <text x="1080" y="322" class="small">direct handoff from GraphReduce feature vector</text>
+
+  <rect x="1062" y="368" width="364" height="238" rx="10" fill="#f8fafc" stroke="#829ab1"/>
+  <text x="1080" y="396" class="label">Pipeline Contract</text>
+  <text x="1080" y="422" class="mono">1) GraphReduce builds X, y</text>
+  <text x="1080" y="446" class="mono">2) classical ML model trains on (X_train, y_train)</text>
+  <text x="1080" y="470" class="mono">3) predictions on X_test</text>
+  <text x="1080" y="494" class="mono">4) evaluate / deploy</text>
+  <text x="1080" y="528" class="text">No extra feature-store conversion step required.</text>
+  <text x="1080" y="550" class="text">Model-ready frame comes directly from graph transformations.</text>
+  <text x="1080" y="572" class="text">Works with existing pandas ML tooling.</text>
+
+  <line x1="554" y1="430" x2="582" y2="460" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="1002" y1="560" x2="1040" y2="250" stroke="#12734a" stroke-width="2.8" marker-end="url(#arrowGreen)"/>
+  <text x="936" y="396" class="small">feature vector</text>
+
+  <text x="40" y="892" class="small">Specific to end_to_end_examples/predictive_ai_xgboost.md with cust.csv, orders.csv, notifications.csv and label node orders.csv.</text>
+</svg>

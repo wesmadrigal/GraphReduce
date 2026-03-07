@@ -10,7 +10,7 @@ feature store.  Underneath the hood, GraphReduce uses graph data
 structures to represent tables/files as nodes and foreign keys
 as edges.
 
-Compute backends supported: `pandas`, `dask`, `spark`, AWS Athena, Redshift, Snowflake, postgresql, MySQL
+Compute backends supported: `pandas`, `dask`, `duckdb`, `spark`, `daft`, AWS Athena, Redshift, Snowflake, postgresql, MySQL
 Compute backends coming soon: `ray`
 
 ## Why GraphReduce
@@ -36,14 +36,21 @@ model-ready features at scale.
 
 ### Installation
 ```python
-# from pypi
+# core install (lightweight default)
 pip install graphreduce
 
-# from github
+# optional backend extras
+pip install "graphreduce[duckdb]"
+pip install "graphreduce[spark]"
+pip install "graphreduce[daft]"
+pip install "graphreduce[ml]"
+pip install "graphreduce[all]"
+
+# from github (core)
 pip install 'graphreduce@git+https://github.com/wesmadrigal/graphreduce.git'
 
-# install from source
-git clone https://github.com/wesmadrigal/graphreduce && cd graphreduce && python setup.py install
+# install from source (editable)
+git clone https://github.com/wesmadrigal/graphreduce && cd graphreduce && pip install -e .
 ```
 
 

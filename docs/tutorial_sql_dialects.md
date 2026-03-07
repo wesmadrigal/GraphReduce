@@ -4,11 +4,14 @@ To use SQL dialects we need to use `SQLNode` instances
 or a subclass of `SQLNode`.  The following are implemented
 and available for use out of the box:
 
+All of the SQL backends listed below are fully supported.
+
 * Databricks SQL
 * SQLite
 * Redshift
-* AWs Athena
-* Snowflake (in progress)
+* AWS Athena
+* Snowflake
+* DuckDB
 
 
 ## SQL operations
