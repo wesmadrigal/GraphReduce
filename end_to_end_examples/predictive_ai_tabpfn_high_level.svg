@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="460" viewBox="0 0 1480 460">
+  <defs>
+    <style>
+      .title { font: 700 30px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .label { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .text { font: 13px Arial, sans-serif; fill: #243b53; }
+      .mono { font: 16px "Courier New", monospace; fill: #1f2933; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#334e68"/>
+    </marker>
+    <linearGradient id="gradA" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e6f0ff"/>
+      <stop offset="100%" stop-color="#eef7ff"/>
+    </linearGradient>
+    <linearGradient id="gradB" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#e6fffa"/>
+      <stop offset="100%" stop-color="#f0fff4"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="460" fill="#f7fafc"/>
+  <text x="40" y="56" class="title">High-Level View: GraphReduce + TabPFN</text>
+  <text x="40" y="84" class="subtitle">Feature engineering and model training as one direct flow from raw relational data to predictions.</text>
+
+  <rect x="52" y="130" width="390" height="220" rx="16" fill="url(#gradA)" stroke="#7aa2d6" stroke-width="2"/>
+  <text x="78" y="168" class="label">Data Lake / Tables</text>
+  <text x="78" y="198" class="text">cust.csv</text>
+  <text x="78" y="222" class="text">orders.csv (Y source)</text>
+  <text x="78" y="246" class="text">notifications.csv</text>
+  <text x="78" y="286" class="mono">raw relational data</text>
+
+  <rect x="546" y="130" width="390" height="220" rx="16" fill="url(#gradB)" stroke="#2c7a7b" stroke-width="2"/>
+  <text x="572" y="168" class="label">GraphReduce + TabPFN</text>
+  <text x="572" y="198" class="text">GraphReduce builds X from multi-table graph</text>
+  <text x="572" y="222" class="text">GraphReduce builds y from label window</text>
+  <text x="572" y="262" class="mono">(graphreduce + tabpfn).fit(data_lake, Y)</text>
+
+  <rect x="1040" y="130" width="390" height="220" rx="16" fill="#ffffff" stroke="#829ab1" stroke-width="2"/>
+  <text x="1066" y="168" class="label">Model Output</text>
+  <text x="1066" y="198" class="text">.predict(X_new)</text>
+  <text x="1066" y="222" class="text">.predict_proba(X_new)</text>
+  <text x="1066" y="262" class="mono">scores, classes, rankings</text>
+
+  <line x1="442" y1="240" x2="546" y2="240" stroke="#334e68" stroke-width="3" marker-end="url(#arrow)"/>
+  <line x1="936" y1="240" x2="1040" y2="240" stroke="#334e68" stroke-width="3" marker-end="url(#arrow)"/>
+</svg>

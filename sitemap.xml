@@ -2,50 +2,94 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/abstractions/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_auto_feature_engineering/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_checkpointing/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_cli/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_custom_graph/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_index/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_method_deps/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_pandas_dask/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/tutorial_sql_backends_dynamic_queries/</loc>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_sql_dialects/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_swapping_compute/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/tutorial_time/</loc>
-         <lastmod>2026-03-05</lastmod>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/all_tables_reduce_with_labels/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/hello_world/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/hello_world_modal_interactive/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/predictive_ai_tabpfn/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/predictive_ai_xgboost/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/preserve_child_grain/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_stack_badges_duckdb/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_stack_post_votes_duckdb/</loc>
+         <lastmod>2026-03-07</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_stack_user_engagement_duckdb/</loc>
+         <lastmod>2026-03-07</lastmod>
     </url>
 </urlset>

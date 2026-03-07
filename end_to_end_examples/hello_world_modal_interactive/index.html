@@ -8,21 +8,25 @@
       
       
       
-        <link rel="canonical" href="https://github.com/wesmadrigal/graphreduce/tutorial_pandas_dask/">
+        <link rel="canonical" href="https://github.com/wesmadrigal/graphreduce/end_to_end_examples/hello_world_modal_interactive/">
       
       
+        <link rel="prev" href="../hello_world/">
       
       
-      <link rel="icon" href="../assets/images/favicon.png">
+        <link rel="next" href="../preserve_child_grain/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.20">
     
     
       
-        <title>Pandas and Dask - graphreduce</title>
+        <title>Hello World (Interactive) - graphreduce</title>
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.e53b48f4.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.e53b48f4.min.css">
       
       
 
@@ -41,9 +45,9 @@
       
     
     
-      <link rel="stylesheet" href="../assets/css/modal_runner.css">
+      <link rel="stylesheet" href="../../assets/css/modal_runner.css">
     
-    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -62,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#pandas-and-dask" class="md-skip">
+        <a href="#hello-world-interactive-runner" class="md-skip">
           Skip to content
         </a>
       
@@ -78,7 +82,7 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href=".." title="graphreduce" class="md-header__button md-logo" aria-label="graphreduce" data-md-component="logo">
+    <a href="../.." title="graphreduce" class="md-header__button md-logo" aria-label="graphreduce" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -98,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Pandas and Dask
+              Hello World (Interactive)
             
           </span>
         </div>
@@ -177,7 +181,7 @@
   
   
     <li class="md-tabs__item">
-      <a href=".." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -196,7 +200,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../abstractions/" class="md-tabs__link">
+      <a href="../../abstractions/" class="md-tabs__link">
         
   
   
@@ -213,11 +217,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../end_to_end_examples/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -237,7 +243,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../tutorial_index/" class="md-tabs__link">
+        <a href="../../tutorial_index/" class="md-tabs__link">
           
   
   
@@ -257,7 +263,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../tutorial_cli/" class="md-tabs__link">
+        <a href="../../tutorial_cli/" class="md-tabs__link">
           
   
   
@@ -297,7 +303,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href=".." title="graphreduce" class="md-nav__button md-logo" aria-label="graphreduce" data-md-component="logo">
+    <a href="../.." title="graphreduce" class="md-nav__button md-logo" aria-label="graphreduce" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -327,7 +333,7 @@
   
   
     <li class="md-nav__item">
-      <a href=".." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -349,7 +355,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../abstractions/" class="md-nav__link">
+      <a href="../../abstractions/" class="md-nav__link">
         
   
   
@@ -368,24 +374,29 @@
       
   
   
+    
   
   
+  
     
     
     
     
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
-          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
             
   
   
@@ -398,7 +409,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             End-to-End Examples
@@ -412,7 +423,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -435,7 +446,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/hello_world/" class="md-nav__link">
+      <a href="../hello_world/" class="md-nav__link">
         
   
   
@@ -455,10 +466,32 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../end_to_end_examples/hello_world_modal_interactive/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Hello World (Interactive)
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -469,6 +502,71 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#one-time-local-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      One-Time Local Setup
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-the-stream-api-terminal-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Start The Stream API (Terminal 1)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-docs-terminal-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      Start Docs (Terminal 2)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#production-deployment-github-pages-external-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      Production Deployment (GitHub Pages + External Backend)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Notes
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -481,7 +579,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/preserve_child_grain/" class="md-nav__link">
+      <a href="../preserve_child_grain/" class="md-nav__link">
         
   
   
@@ -504,7 +602,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/all_tables_reduce_with_labels/" class="md-nav__link">
+      <a href="../all_tables_reduce_with_labels/" class="md-nav__link">
         
   
   
@@ -527,7 +625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/predictive_ai_xgboost/" class="md-nav__link">
+      <a href="../predictive_ai_xgboost/" class="md-nav__link">
         
   
   
@@ -550,7 +648,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/predictive_ai_tabpfn/" class="md-nav__link">
+      <a href="../predictive_ai_tabpfn/" class="md-nav__link">
         
   
   
@@ -614,7 +712,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/relbench_rel_stack_badges_duckdb/" class="md-nav__link">
+      <a href="../relbench_rel_stack_badges_duckdb/" class="md-nav__link">
         
   
   
@@ -637,7 +735,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/relbench_rel_stack_post_votes_duckdb/" class="md-nav__link">
+      <a href="../relbench_rel_stack_post_votes_duckdb/" class="md-nav__link">
         
   
   
@@ -660,7 +758,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../end_to_end_examples/relbench_rel_stack_user_engagement_duckdb/" class="md-nav__link">
+      <a href="../relbench_rel_stack_user_engagement_duckdb/" class="md-nav__link">
         
   
   
@@ -739,7 +837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_index/" class="md-nav__link">
+      <a href="../../tutorial_index/" class="md-nav__link">
         
   
   
@@ -762,7 +860,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_time/" class="md-nav__link">
+      <a href="../../tutorial_time/" class="md-nav__link">
         
   
   
@@ -785,7 +883,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_custom_graph/" class="md-nav__link">
+      <a href="../../tutorial_custom_graph/" class="md-nav__link">
         
   
   
@@ -808,7 +906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_swapping_compute/" class="md-nav__link">
+      <a href="../../tutorial_swapping_compute/" class="md-nav__link">
         
   
   
@@ -831,7 +929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_sql_dialects/" class="md-nav__link">
+      <a href="../../tutorial_sql_dialects/" class="md-nav__link">
         
   
   
@@ -854,7 +952,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_sql_backends_dynamic_queries/" class="md-nav__link">
+      <a href="../../tutorial_sql_backends_dynamic_queries/" class="md-nav__link">
         
   
   
@@ -877,7 +975,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_method_deps/" class="md-nav__link">
+      <a href="../../tutorial_method_deps/" class="md-nav__link">
         
   
   
@@ -900,7 +998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_auto_feature_engineering/" class="md-nav__link">
+      <a href="../../tutorial_auto_feature_engineering/" class="md-nav__link">
         
   
   
@@ -971,7 +1069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../tutorial_cli/" class="md-nav__link">
+      <a href="../../tutorial_cli/" class="md-nav__link">
         
   
   
@@ -1014,6 +1112,59 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#one-time-local-setup" class="md-nav__link">
+    <span class="md-ellipsis">
+      One-Time Local Setup
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-the-stream-api-terminal-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      Start The Stream API (Terminal 1)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#start-docs-terminal-2" class="md-nav__link">
+    <span class="md-ellipsis">
+      Start Docs (Terminal 2)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#production-deployment-github-pages-external-backend" class="md-nav__link">
+    <span class="md-ellipsis">
+      Production Deployment (GitHub Pages + External Backend)
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Notes
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1031,7 +1182,52 @@
   
 
 
-<h1 id="pandas-and-dask">Pandas and Dask</h1>
+<h1 id="hello-world-interactive-runner">Hello World: Interactive Runner</h1>
+<p>This page runs the Hello World GraphReduce example on the same machine as the
+docs API server and streams stdout live into the docs UI.</p>
+<div class="modal-runner" data-modal-runner data-api-base="http://127.0.0.1:8001">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="http://127.0.0.1:8001" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run Hello World</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
+
+<h2 id="one-time-local-setup">One-Time Local Setup</h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>graphreduce
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>docs/api/requirements.txt
+</span></code></pre></div>
+<p>This Hello World runner uses the pandas backend, so optional extras like
+<code>[spark]</code>, <code>[daft]</code>, or <code>[duckdb]</code> are not required.</p>
+<h2 id="start-the-stream-api-terminal-1">Start The Stream API (Terminal 1)</h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>python<span class="w"> </span>docs/api/modal_stream_server.py
+</span></code></pre></div>
+<h2 id="start-docs-terminal-2">Start Docs (Terminal 2)</h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>mkdocs<span class="w"> </span>serve
+</span></code></pre></div>
+<p>Then open this page and click <strong>Run Hello World</strong>.</p>
+<h2 id="production-deployment-github-pages-external-backend">Production Deployment (GitHub Pages + External Backend)</h2>
+<ol>
+<li>Deploy docs to GitHub Pages as usual.</li>
+<li>Deploy the API server (<code>docs/api/modal_stream_server.py</code>) on your own host
+   (DigitalOcean, Render, Fly, etc.) behind HTTPS.</li>
+<li>Set backend CORS env var to your docs origin:</li>
+</ol>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">GRAPHREDUCE_ALLOWED_ORIGINS</span><span class="o">=</span><span class="s2">&quot;https://&lt;your-gh-pages-or-custom-domain&gt;&quot;</span>
+</span></code></pre></div>
+<ol>
+<li>In this page, set the backend URL in the input (for example
+   <code>https://runner.yourdomain.com</code>) and click <strong>Save API URL</strong>.</li>
+</ol>
+<h2 id="notes">Notes</h2>
+<ul>
+<li>Everything for this implementation lives under <code>docs/*</code>.</li>
+<li>The browser UI is static; command execution happens through <code>docs/api/modal_stream_server.py</code>.</li>
+<li>The API runs <code>python examples/hello_world_local_runner.py</code> locally on the server host.</li>
+<li>API base URL defaults to <code>http://127.0.0.1:8001</code> and can be overridden in the input.</li>
+</ul>
 
 
 
@@ -1080,12 +1276,12 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
       
-        <script src="../assets/js/modal_runner.js"></script>
+        <script src="../../assets/js/modal_runner.js"></script>
       
     
   </body>
