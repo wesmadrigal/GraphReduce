@@ -469,29 +469,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../hello_world_modal_interactive/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Hello World (Interactive)
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../preserve_child_grain/" class="md-nav__link">
         
   
@@ -520,7 +497,7 @@
   
   
   <span class="md-ellipsis">
-    All Tables Reduced With Labels
+    All Tables Reduced with ML Targets
     
   </span>
   
@@ -597,10 +574,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_8" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" checked>
         
           
-          <label class="md-nav__link" for="__nav_3_8" id="__nav_3_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -613,8 +590,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_8_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_3_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3_7">
             <span class="md-nav__icon md-icon"></span>
             RelBench Tasks
           </label>
@@ -736,6 +713,15 @@
   <a href="#notes" class="md-nav__link">
     <span class="md-ellipsis">
       Notes
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-interactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run Interactive
     </span>
   </a>
   
@@ -1159,6 +1145,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#run-interactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run Interactive
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1256,7 +1251,7 @@ vote activity using <code>Votes.csv</code> as the label node.</p>
 </span><span id="__span-0-53"><a id="__codelineno-0-53" name="__codelineno-0-53" href="#__codelineno-0-53"></a>    <span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;vote&quot;</span><span class="p">,</span>
 </span><span id="__span-0-54"><a id="__codelineno-0-54" name="__codelineno-0-54" href="#__codelineno-0-54"></a>    <span class="n">pk</span><span class="o">=</span><span class="s2">&quot;Id&quot;</span><span class="p">,</span>
 </span><span id="__span-0-55"><a id="__codelineno-0-55" name="__codelineno-0-55" href="#__codelineno-0-55"></a>    <span class="n">date_key</span><span class="o">=</span><span class="s2">&quot;CreationDate&quot;</span><span class="p">,</span>
-</span><span id="__span-0-56"><a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a>    <span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Id&quot;</span><span class="p">,</span> <span class="s2">&quot;PostId&quot;</span><span class="p">,</span> <span class="s2">&quot;VoteTypeId&quot;</span><span class="p">,</span> <span class="s2">&quot;UserId&quot;</span><span class="p">,</span> <span class="s2">&quot;CreationDate&quot;</span><span class="p">,</span> <span class="s2">&quot;BountyAmount&quot;</span><span class="p">],</span>
+</span><span id="__span-0-56"><a id="__codelineno-0-56" name="__codelineno-0-56" href="#__codelineno-0-56"></a>    <span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Id&quot;</span><span class="p">,</span> <span class="s2">&quot;PostId&quot;</span><span class="p">,</span> <span class="s2">&quot;VoteTypeId&quot;</span><span class="p">,</span> <span class="s2">&quot;UserId&quot;</span><span class="p">,</span> <span class="s2">&quot;CreationDate&quot;</span><span class="p">],</span>
 </span><span id="__span-0-57"><a id="__codelineno-0-57" name="__codelineno-0-57" href="#__codelineno-0-57"></a>    <span class="n">table_name</span><span class="o">=</span><span class="s2">&quot;votes&quot;</span><span class="p">,</span>
 </span><span id="__span-0-58"><a id="__codelineno-0-58" name="__codelineno-0-58" href="#__codelineno-0-58"></a><span class="p">)</span>
 </span><span id="__span-0-59"><a id="__codelineno-0-59" name="__codelineno-0-59" href="#__codelineno-0-59"></a>
@@ -1265,7 +1260,7 @@ vote activity using <code>Votes.csv</code> as the label node.</p>
 </span><span id="__span-0-62"><a id="__codelineno-0-62" name="__codelineno-0-62" href="#__codelineno-0-62"></a>    <span class="n">prefix</span><span class="o">=</span><span class="s2">&quot;comm&quot;</span><span class="p">,</span>
 </span><span id="__span-0-63"><a id="__codelineno-0-63" name="__codelineno-0-63" href="#__codelineno-0-63"></a>    <span class="n">pk</span><span class="o">=</span><span class="s2">&quot;Id&quot;</span><span class="p">,</span>
 </span><span id="__span-0-64"><a id="__codelineno-0-64" name="__codelineno-0-64" href="#__codelineno-0-64"></a>    <span class="n">date_key</span><span class="o">=</span><span class="s2">&quot;CreationDate&quot;</span><span class="p">,</span>
-</span><span id="__span-0-65"><a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a>    <span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Id&quot;</span><span class="p">,</span> <span class="s2">&quot;PostId&quot;</span><span class="p">,</span> <span class="s2">&quot;Score&quot;</span><span class="p">,</span> <span class="s2">&quot;Text&quot;</span><span class="p">,</span> <span class="s2">&quot;CreationDate&quot;</span><span class="p">,</span> <span class="s2">&quot;UserId&quot;</span><span class="p">,</span> <span class="s2">&quot;ContentLicense&quot;</span><span class="p">],</span>
+</span><span id="__span-0-65"><a id="__codelineno-0-65" name="__codelineno-0-65" href="#__codelineno-0-65"></a>    <span class="n">columns</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;Id&quot;</span><span class="p">,</span> <span class="s2">&quot;PostId&quot;</span><span class="p">,</span> <span class="s2">&quot;Text&quot;</span><span class="p">,</span> <span class="s2">&quot;CreationDate&quot;</span><span class="p">,</span> <span class="s2">&quot;UserId&quot;</span><span class="p">,</span> <span class="s2">&quot;ContentLicense&quot;</span><span class="p">],</span>
 </span><span id="__span-0-66"><a id="__codelineno-0-66" name="__codelineno-0-66" href="#__codelineno-0-66"></a>    <span class="n">table_name</span><span class="o">=</span><span class="s2">&quot;comments&quot;</span><span class="p">,</span>
 </span><span id="__span-0-67"><a id="__codelineno-0-67" name="__codelineno-0-67" href="#__codelineno-0-67"></a><span class="p">)</span>
 </span><span id="__span-0-68"><a id="__codelineno-0-68" name="__codelineno-0-68" href="#__codelineno-0-68"></a>
@@ -1499,6 +1494,16 @@ vote activity using <code>Votes.csv</code> as the label node.</p>
 <li>the label source (future <strong>count(Id)</strong> in the 90-day label window)</li>
 <li>This benchmark is treated as a <strong>regression</strong> problem and reports <strong>MAE</strong>.</li>
 </ul>
+<h2 id="run-interactive">Run Interactive</h2>
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_post_votes">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run rel-stack Post Votes</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
 
 
 

@@ -22,7 +22,7 @@
     
     
       
-        <title>All Tables Reduced With Labels - graphreduce</title>
+        <title>All Tables Reduced with ML Targets - graphreduce</title>
       
     
     
@@ -66,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#all-tables-full-reduction-with-labels" class="md-skip">
+        <a href="#all-tables-reduced-with-ml-targets" class="md-skip">
           Skip to content
         </a>
       
@@ -102,7 +102,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              All Tables Reduced With Labels
+              All Tables Reduced with ML Targets
             
           </span>
         </div>
@@ -469,29 +469,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../hello_world_modal_interactive/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Hello World (Interactive)
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../preserve_child_grain/" class="md-nav__link">
         
   
@@ -529,7 +506,7 @@
   
   
   <span class="md-ellipsis">
-    All Tables Reduced With Labels
+    All Tables Reduced with ML Targets
     
   </span>
   
@@ -542,7 +519,7 @@
   
   
   <span class="md-ellipsis">
-    All Tables Reduced With Labels
+    All Tables Reduced with ML Targets
     
   </span>
   
@@ -595,6 +572,15 @@
   <a href="#what-to-expect" class="md-nav__link">
     <span class="md-ellipsis">
       What To Expect
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-interactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run Interactive
     </span>
   </a>
   
@@ -673,10 +659,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_8" id="__nav_3_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -689,8 +675,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_7">
             <span class="md-nav__icon md-icon"></span>
             RelBench Tasks
           </label>
@@ -1145,6 +1131,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#run-interactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run Interactive
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1164,7 +1159,7 @@
   
 
 
-<h1 id="all-tables-full-reduction-with-labels">All Tables, Full Reduction, With Labels</h1>
+<h1 id="all-tables-reduced-with-ml-targets">All Tables Reduced with ML Targets</h1>
 <p><a href="../all_tables_reduce_with_labels_overview.png"><img alt="All tables reduced with label target" src="../all_tables_reduce_with_labels_overview.png" /></a></p>
 <p>Open full-size: <a href="../all_tables_reduce_with_labels_overview.png">PNG</a> | <a href="../all_tables_reduce_with_labels_overview.svg">SVG</a></p>
 <p>This example highlights GraphReduce backend pluggability with the <strong>same graph
@@ -1300,7 +1295,7 @@ semantics</strong> implemented in both a <code>pandas backend</code> and a <code
 </span><span id="__span-0-112"><a id="__codelineno-0-112" name="__codelineno-0-112" href="#__codelineno-0-112"></a>
 </span><span id="__span-0-113"><a id="__codelineno-0-113" name="__codelineno-0-113" href="#__codelineno-0-113"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;rows:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="p">))</span>
 </span><span id="__span-0-114"><a id="__codelineno-0-114" name="__codelineno-0-114" href="#__codelineno-0-114"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;columns:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">))</span>
-</span><span id="__span-0-115"><a id="__codelineno-0-115" name="__codelineno-0-115" href="#__codelineno-0-115"></a><span class="nb">print</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</span><span id="__span-0-115"><a id="__codelineno-0-115" name="__codelineno-0-115" href="#__codelineno-0-115"></a><span class="nb">print</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="duckdb-backend">duckdb backend</h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">datetime</span>
@@ -1420,7 +1415,7 @@ semantics</strong> implemented in both a <code>pandas backend</code> and a <code
 </span><span id="__span-1-115"><a id="__codelineno-1-115" name="__codelineno-1-115" href="#__codelineno-1-115"></a>
 </span><span id="__span-1-116"><a id="__codelineno-1-116" name="__codelineno-1-116" href="#__codelineno-1-116"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;rows:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">out_df</span><span class="p">))</span>
 </span><span id="__span-1-117"><a id="__codelineno-1-117" name="__codelineno-1-117" href="#__codelineno-1-117"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;columns:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">out_df</span><span class="o">.</span><span class="n">columns</span><span class="p">))</span>
-</span><span id="__span-1-118"><a id="__codelineno-1-118" name="__codelineno-1-118" href="#__codelineno-1-118"></a><span class="nb">print</span><span class="p">(</span><span class="n">out_df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</span><span id="__span-1-118"><a id="__codelineno-1-118" name="__codelineno-1-118" href="#__codelineno-1-118"></a><span class="nb">print</span><span class="p">(</span><span class="n">out_df</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
 </span><span id="__span-1-119"><a id="__codelineno-1-119" name="__codelineno-1-119" href="#__codelineno-1-119"></a>
 </span><span id="__span-1-120"><a id="__codelineno-1-120" name="__codelineno-1-120" href="#__codelineno-1-120"></a><span class="n">con</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
 </span></code></pre></div>
@@ -1433,6 +1428,16 @@ semantics</strong> implemented in both a <code>pandas backend</code> and a <code
 <li>X uses <code>cut_date - 365 days</code> through <code>cut_date</code></li>
 <li>y uses <code>cut_date + 1 day</code> through <code>cut_date + 30 days</code></li>
 </ul>
+<h2 id="run-interactive">Run Interactive</h2>
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="all_tables_ml_targets">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run All Tables ML Targets</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
 
 
 

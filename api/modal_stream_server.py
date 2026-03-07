@@ -18,6 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Queue
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,7 +40,15 @@ class JobState:
 
 
 class StartJobRequest(BaseModel):
-    pass
+    example: Literal[
+        "hello_world",
+        "preserve_child_grain",
+        "all_tables_ml_targets",
+        "predictive_ai_xgboost",
+        "relbench_user_badges",
+        "relbench_post_votes",
+        "relbench_user_engagement",
+    ] = "hello_world"
 
 
 def _allowed_origins() -> list[str]:
@@ -102,7 +111,17 @@ def health() -> dict[str, str]:
 @app.post("/jobs")
 def start_job(payload: StartJobRequest) -> dict[str, str]:
     repo_root = Path(__file__).resolve().parents[2]
-    cmd = [sys.executable, "examples/hello_world_local_runner.py"]
+    script_map = {
+        "hello_world": "examples/hello_world_local_runner.py",
+        "preserve_child_grain": "examples/preserve_child_grain_local_runner.py",
+        "all_tables_ml_targets": "examples/all_tables_ml_targets_local_runner.py",
+        "predictive_ai_xgboost": "examples/predictive_ai_xgboost_local_runner.py",
+        "relbench_user_badges": "examples/relbench_user_badges_local_runner.py",
+        "relbench_post_votes": "examples/relbench_post_votes_local_runner.py",
+        "relbench_user_engagement": "examples/relbench_user_engagement_local_runner.py",
+    }
+    script = script_map.get(payload.example, "examples/hello_world_local_runner.py")
+    cmd = [sys.executable, script]
 
     job_id = str(uuid.uuid4())
     job = JobState(id=job_id, cmd=cmd, cwd=str(repo_root))

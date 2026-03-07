@@ -14,7 +14,7 @@
         <link rel="prev" href="../">
       
       
-        <link rel="next" href="../hello_world_modal_interactive/">
+        <link rel="next" href="../preserve_child_grain/">
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
@@ -556,29 +556,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../hello_world_modal_interactive/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Hello World (Interactive)
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../preserve_child_grain/" class="md-nav__link">
         
   
@@ -607,7 +584,7 @@
   
   
   <span class="md-ellipsis">
-    All Tables Reduced With Labels
+    All Tables Reduced with ML Targets
     
   </span>
   
@@ -682,10 +659,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_8" id="__nav_3_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -698,8 +675,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_7">
             <span class="md-nav__icon md-icon"></span>
             RelBench Tasks
           </label>
@@ -1282,7 +1259,7 @@ files used in <code>tests/test_graph_reduce.py</code>, specifically from
 </span><span id="__span-1-76"><a id="__codelineno-1-76" name="__codelineno-1-76" href="#__codelineno-1-76"></a>
 </span><span id="__span-1-77"><a id="__codelineno-1-77" name="__codelineno-1-77" href="#__codelineno-1-77"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;rows:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="p">))</span>
 </span><span id="__span-1-78"><a id="__codelineno-1-78" name="__codelineno-1-78" href="#__codelineno-1-78"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;columns:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">))</span>
-</span><span id="__span-1-79"><a id="__codelineno-1-79" name="__codelineno-1-79" href="#__codelineno-1-79"></a><span class="nb">print</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">())</span>
+</span><span id="__span-1-79"><a id="__codelineno-1-79" name="__codelineno-1-79" href="#__codelineno-1-79"></a><span class="nb">print</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="what-to-expect">What To Expect</h2>
 <ul>
@@ -1294,6 +1271,16 @@ files used in <code>tests/test_graph_reduce.py</code>, specifically from
 <p>This example can also run through the local interactive runner and stream logs
 in the docs UI. It uses the pandas backend, so no optional backend extras are
 required.</p>
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="hello_world">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run Hello World</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
+
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span>graphreduce
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>pip<span class="w"> </span>install<span class="w"> </span>-r<span class="w"> </span>docs/api/requirements.txt
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>python<span class="w"> </span>docs/api/modal_stream_server.py
@@ -1301,9 +1288,6 @@ required.</p>
 </span></code></pre></div>
 <p>The interactive API runs <code>python examples/hello_world_local_runner.py</code> on the
 server host and streams stdout to the browser terminal.</p>
-<p>For a browser-based live log view, use
-<a href="../hello_world_modal_interactive/">Interactive Runner</a>.</p>
-<p><a class="md-button md-button--primary" href="hello_world_modal_interactive.md">Open Interactive Runner</a></p>
 <h2 id="sample-data-files-used">Sample Data Files Used</h2>
 <ul>
 <li><code>tests/data/cust_data/cust.csv</code></li>

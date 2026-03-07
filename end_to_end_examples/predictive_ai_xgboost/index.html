@@ -469,29 +469,6 @@
   
   
     <li class="md-nav__item">
-      <a href="../hello_world_modal_interactive/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Hello World (Interactive)
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
       <a href="../preserve_child_grain/" class="md-nav__link">
         
   
@@ -520,7 +497,7 @@
   
   
   <span class="md-ellipsis">
-    All Tables Reduced With Labels
+    All Tables Reduced with ML Targets
     
   </span>
   
@@ -614,6 +591,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#run-interactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run Interactive
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -664,10 +650,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_8" id="__nav_3_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -680,8 +666,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_7">
             <span class="md-nav__icon md-icon"></span>
             RelBench Tasks
           </label>
@@ -1127,6 +1113,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#run-interactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run Interactive
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -1162,9 +1157,9 @@ vector is sent directly into a classical machine learning model (<code>XGBClassi
 for <code>.fit()</code> and <code>.predict()</code>.</p>
 <h2 id="time-semantics">Time Semantics</h2>
 <ul>
-<li><code>cut_date = 2023-06-30</code></li>
-<li>X features: 365-day lookback window (<code>2022-06-30</code> to <code>2023-06-30</code>)</li>
-<li>y target: 30-day look-forward window (<code>2023-07-01</code> to <code>2023-07-30</code>)</li>
+<li><code>cut_date = 2023-05-01</code></li>
+<li>X features: 365-day lookback window (<code>2022-05-01</code> to <code>2023-05-01</code>)</li>
+<li>y target: 30-day look-forward window (<code>2023-05-02</code> to <code>2023-05-31</code>)</li>
 </ul>
 <h2 id="complete-example-pandas-backend-xgbclassifier">Complete Example (pandas backend + XGBClassifier)</h2>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">datetime</span>
@@ -1213,7 +1208,7 @@ for <code>.fit()</code> and <code>.predict()</code>.</p>
 </span><span id="__span-0-44"><a id="__codelineno-0-44" name="__codelineno-0-44" href="#__codelineno-0-44"></a>    <span class="n">compute_layer</span><span class="o">=</span><span class="n">ComputeLayerEnum</span><span class="o">.</span><span class="n">pandas</span><span class="p">,</span>
 </span><span id="__span-0-45"><a id="__codelineno-0-45" name="__codelineno-0-45" href="#__codelineno-0-45"></a>    <span class="n">auto_features</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
 </span><span id="__span-0-46"><a id="__codelineno-0-46" name="__codelineno-0-46" href="#__codelineno-0-46"></a>    <span class="n">auto_labels</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
-</span><span id="__span-0-47"><a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>    <span class="n">cut_date</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2023</span><span class="p">,</span> <span class="mi">6</span><span class="p">,</span> <span class="mi">30</span><span class="p">),</span>
+</span><span id="__span-0-47"><a id="__codelineno-0-47" name="__codelineno-0-47" href="#__codelineno-0-47"></a>    <span class="n">cut_date</span><span class="o">=</span><span class="n">datetime</span><span class="o">.</span><span class="n">datetime</span><span class="p">(</span><span class="mi">2023</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">1</span><span class="p">),</span>
 </span><span id="__span-0-48"><a id="__codelineno-0-48" name="__codelineno-0-48" href="#__codelineno-0-48"></a>    <span class="n">compute_period_unit</span><span class="o">=</span><span class="n">PeriodUnit</span><span class="o">.</span><span class="n">day</span><span class="p">,</span>
 </span><span id="__span-0-49"><a id="__codelineno-0-49" name="__codelineno-0-49" href="#__codelineno-0-49"></a>    <span class="n">compute_period_val</span><span class="o">=</span><span class="mi">365</span><span class="p">,</span>
 </span><span id="__span-0-50"><a id="__codelineno-0-50" name="__codelineno-0-50" href="#__codelineno-0-50"></a>    <span class="n">label_node</span><span class="o">=</span><span class="n">orders_node</span><span class="p">,</span>
@@ -1290,6 +1285,16 @@ for <code>.fit()</code> and <code>.predict()</code>.</p>
 <li>The resulting feature vector can be fed directly into <code>.fit()</code> / <code>.predict()</code> for a
   classical machine learning workflow.</li>
 </ul>
+<h2 id="run-interactive">Run Interactive</h2>
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="predictive_ai_xgboost">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run XGBoost Example</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
 
 
 

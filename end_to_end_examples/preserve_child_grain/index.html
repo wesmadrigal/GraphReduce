@@ -11,7 +11,7 @@
         <link rel="canonical" href="https://github.com/wesmadrigal/graphreduce/end_to_end_examples/preserve_child_grain/">
       
       
-        <link rel="prev" href="../hello_world_modal_interactive/">
+        <link rel="prev" href="../hello_world/">
       
       
         <link rel="next" href="../all_tables_reduce_with_labels/">
@@ -66,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#preserve-child-grain-reducefalse" class="md-skip">
+        <a href="#preserve-child-grain-reducefalse-pandas-duckdb" class="md-skip">
           Skip to content
         </a>
       
@@ -466,29 +466,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../hello_world_modal_interactive/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Hello World (Interactive)
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -578,6 +555,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#run-interactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run Interactive
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sample-data-files-used" class="md-nav__link">
     <span class="md-ellipsis">
       Sample Data Files Used
@@ -607,7 +593,7 @@
   
   
   <span class="md-ellipsis">
-    All Tables Reduced With Labels
+    All Tables Reduced with ML Targets
     
   </span>
   
@@ -682,10 +668,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_7" >
         
           
-          <label class="md-nav__link" for="__nav_3_8" id="__nav_3_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_3_7" id="__nav_3_7_label" tabindex="0">
             
   
   
@@ -698,8 +684,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_3_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_7">
             <span class="md-nav__icon md-icon"></span>
             RelBench Tasks
           </label>
@@ -1155,6 +1141,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#run-interactive" class="md-nav__link">
+    <span class="md-ellipsis">
+      Run Interactive
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sample-data-files-used" class="md-nav__link">
     <span class="md-ellipsis">
       Sample Data Files Used
@@ -1182,7 +1177,7 @@
   
 
 
-<h1 id="preserve-child-grain-reducefalse">Preserve Child Grain (<code>reduce=False</code>)</h1>
+<h1 id="preserve-child-grain-reducefalse-pandas-duckdb">Preserve Child Grain (<code>reduce=False</code>) - pandas + duckdb</h1>
 <p><a href="../preserve_child_grain_overview.png"><img alt="Preserve Child Grain with custom aggregation" src="../preserve_child_grain_overview.png" /></a></p>
 <p>Open full-size: <a href="../preserve_child_grain_overview.png">PNG</a> | <a href="../preserve_child_grain_overview.svg">SVG</a></p>
 <p>This diagram is intentionally parallel to the Hello World visual, but this
@@ -1363,7 +1358,7 @@ aggregation logic (<code>OrderNode.do_reduce(...)</code>).</p>
 </span><span id="__span-1-156"><a id="__codelineno-1-156" name="__codelineno-1-156" href="#__codelineno-1-156"></a>
 </span><span id="__span-1-157"><a id="__codelineno-1-157" name="__codelineno-1-157" href="#__codelineno-1-157"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;rows:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="p">))</span>
 </span><span id="__span-1-158"><a id="__codelineno-1-158" name="__codelineno-1-158" href="#__codelineno-1-158"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;columns:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="p">))</span>
-</span><span id="__span-1-159"><a id="__codelineno-1-159" name="__codelineno-1-159" href="#__codelineno-1-159"></a><span class="nb">print</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
+</span><span id="__span-1-159"><a id="__codelineno-1-159" name="__codelineno-1-159" href="#__codelineno-1-159"></a><span class="nb">print</span><span class="p">(</span><span class="n">gr</span><span class="o">.</span><span class="n">parent_node</span><span class="o">.</span><span class="n">df</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
 </span></code></pre></div>
 <h2 id="duckdb-backend">duckdb backend</h2>
 <p>This variant uses SQL nodes on DuckDB with the same graph semantics:
@@ -1452,7 +1447,7 @@ aggregation logic (<code>OrderNode.do_reduce(...)</code>).</p>
 </span><span id="__span-2-81"><a id="__codelineno-2-81" name="__codelineno-2-81" href="#__codelineno-2-81"></a>
 </span><span id="__span-2-82"><a id="__codelineno-2-82" name="__codelineno-2-82" href="#__codelineno-2-82"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;rows:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">out_df</span><span class="p">))</span>
 </span><span id="__span-2-83"><a id="__codelineno-2-83" name="__codelineno-2-83" href="#__codelineno-2-83"></a><span class="nb">print</span><span class="p">(</span><span class="s2">&quot;columns:&quot;</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">out_df</span><span class="o">.</span><span class="n">columns</span><span class="p">))</span>
-</span><span id="__span-2-84"><a id="__codelineno-2-84" name="__codelineno-2-84" href="#__codelineno-2-84"></a><span class="nb">print</span><span class="p">(</span><span class="n">out_df</span><span class="o">.</span><span class="n">head</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
+</span><span id="__span-2-84"><a id="__codelineno-2-84" name="__codelineno-2-84" href="#__codelineno-2-84"></a><span class="nb">print</span><span class="p">(</span><span class="n">out_df</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
 </span><span id="__span-2-85"><a id="__codelineno-2-85" name="__codelineno-2-85" href="#__codelineno-2-85"></a>
 </span><span id="__span-2-86"><a id="__codelineno-2-86" name="__codelineno-2-86" href="#__codelineno-2-86"></a><span class="n">con</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
 </span></code></pre></div>
@@ -1464,9 +1459,23 @@ aggregation logic (<code>OrderNode.do_reduce(...)</code>).</p>
 <li><code>duckdb backend</code> uses <code>DuckdbNode</code> (a <code>SQLNode</code> implementation for DuckDB).</li>
 <li>Rows are typically greater than the number of parent rows (<code>cust.csv</code> has 4)
   because the non-reduced <code>notifications</code> edge preserves 1:n detail.</li>
+<li>With the bundled sample data and this configuration, expect <code>9</code> rows.</li>
 <li>You still get aggregated signal from reduced edges (here: <code>orders</code> via
   custom reduction logic) while preserving notification-level rows.</li>
 </ul>
+<h2 id="run-interactive">Run Interactive</h2>
+<p>Use the interactive runner below to execute the pandas variant and stream logs
+directly in the docs UI.</p>
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="preserve_child_grain">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run Preserve Child Grain</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
+
 <h2 id="sample-data-files-used">Sample Data Files Used</h2>
 <ul>
 <li><code>tests/data/cust_data/cust.csv</code></li>
