@@ -21,6 +21,8 @@ Then: [End-to-End Predictive AI with XGBoost](predictive_ai_xgboost.md).
 
 Then: [End-to-End Predictive AI with TabPFN](predictive_ai_tabpfn.md).
 
+Then: [Multi-Backend Same Graph (pandas, sqlite, duckdb, pyspark)](multi_backend_cust_notifications.md).
+
 Then: [RelBench Rel-Stack DuckDB (Badges Label)](relbench_rel_stack_badges_duckdb.md).
 
 Then: [RelBench Rel-Stack DuckDB (Post Votes Label)](relbench_rel_stack_post_votes_duckdb.md).

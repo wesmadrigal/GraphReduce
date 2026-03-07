@@ -23,6 +23,8 @@ nav:
       - "rel-stack: User Badges": end_to_end_examples/relbench_rel_stack_badges_duckdb.md
       - "rel-stack: Post Votes": end_to_end_examples/relbench_rel_stack_post_votes_duckdb.md
       - "rel-stack: User Engagement": end_to_end_examples/relbench_rel_stack_user_engagement_duckdb.md
+    - Multi-Backend Examples:
+      - "cust+notifications: pandas, sqlite, duckdb, pyspark": end_to_end_examples/multi_backend_cust_notifications.md
   - Tutorial:
     - tutorial_index.md
     - tutorial_time.md
