@@ -3,9 +3,9 @@
 This page runs the Hello World GraphReduce example on the same machine as the
 docs API server and streams stdout live into the docs UI.
 
-<div class="modal-runner" data-modal-runner data-api-base="http://127.0.0.1:8001">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io">
   <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="http://127.0.0.1:8001" />
+    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
     <button data-run-btn>Run Hello World</button>
   </div>
