@@ -20,9 +20,9 @@ for `.fit()` and `.predict()`.
 
 ## Time Semantics
 
-* `cut_date = 2023-06-30`
-* X features: 365-day lookback window (`2022-06-30` to `2023-06-30`)
-* y target: 30-day look-forward window (`2023-07-01` to `2023-07-30`)
+* `cut_date = 2023-05-01`
+* X features: 365-day lookback window (`2022-05-01` to `2023-05-01`)
+* y target: 30-day look-forward window (`2023-05-02` to `2023-05-31`)
 
 ## Complete Example (pandas backend + XGBClassifier)
 
@@ -73,7 +73,7 @@ gr = GraphReduce(
     compute_layer=ComputeLayerEnum.pandas,
     auto_features=True,
     auto_labels=True,
-    cut_date=datetime.datetime(2023, 6, 30),
+    cut_date=datetime.datetime(2023, 5, 1),
     compute_period_unit=PeriodUnit.day,
     compute_period_val=365,
     label_node=orders_node,

@@ -25,47 +25,75 @@ def main() -> None:
         fpath=str(data_path / "notifications.csv"), fmt="csv", prefix="not", date_key="ts", pk="id"
     )
 
-    gr = GraphReduce(
-        name="predictive_ai_xgboost_local",
-        parent_node=cust_node,
-        fmt="csv",
-        compute_layer=ComputeLayerEnum.pandas,
-        auto_features=True,
-        auto_labels=True,
-        cut_date=datetime.datetime(2023, 6, 30),
-        compute_period_unit=PeriodUnit.day,
-        compute_period_val=365,
-        label_node=orders_node,
-        label_field="id",
-        label_operation="count",
-        label_period_unit=PeriodUnit.day,
-        label_period_val=30,
-        auto_feature_hops_back=3,
-        auto_feature_hops_front=0,
-    )
+    def build_df(cut_date: datetime.datetime):
+        gr = GraphReduce(
+            name="predictive_ai_xgboost_local",
+            parent_node=cust_node,
+            fmt="csv",
+            compute_layer=ComputeLayerEnum.pandas,
+            auto_features=True,
+            auto_labels=True,
+            cut_date=cut_date,
+            compute_period_unit=PeriodUnit.day,
+            compute_period_val=365,
+            label_node=orders_node,
+            label_field="id",
+            label_operation="count",
+            label_period_unit=PeriodUnit.day,
+            label_period_val=30,
+            auto_feature_hops_back=3,
+            auto_feature_hops_front=0,
+        )
 
-    gr.add_node(cust_node)
-    gr.add_node(orders_node)
-    gr.add_node(notifications_node)
-
-    gr.add_entity_edge(cust_node, orders_node, parent_key="id", relation_key="customer_id", relation_type="parent_child", reduce=True)
-    gr.add_entity_edge(
-        cust_node,
-        notifications_node,
-        parent_key="id",
-        relation_key="customer_id",
-        relation_type="parent_child",
-        reduce=True,
-    )
+        gr.add_node(cust_node)
+        gr.add_node(orders_node)
+        gr.add_node(notifications_node)
+        gr.add_entity_edge(
+            cust_node, orders_node, parent_key="id", relation_key="customer_id", relation_type="parent_child", reduce=True
+        )
+        gr.add_entity_edge(
+            cust_node,
+            notifications_node,
+            parent_key="id",
+            relation_key="customer_id",
+            relation_type="parent_child",
+            reduce=True,
+        )
+        gr.do_transformations()
+        return gr.parent_node.df.copy()
 
     print("Starting GraphReduce + XGBoost pipeline...", flush=True)
-    gr.do_transformations()
-    df = gr.parent_node.df.copy()
+    candidate_cut_dates = [
+        datetime.datetime(2023, 5, 1),
+        datetime.datetime(2023, 6, 30),
+        datetime.datetime(2023, 5, 31),
+        datetime.datetime(2023, 4, 30),
+        datetime.datetime(2023, 3, 31),
+    ]
+    df = None
+    selected_cut_date = None
+    target_col = None
+    for candidate in candidate_cut_dates:
+        df_try = build_df(candidate)
+        label_candidates = [c for c in df_try.columns if c.startswith("ord_") and "label" in c]
+        if not label_candidates:
+            continue
+        target_try = label_candidates[0]
+        y_try = (df_try[target_try].fillna(0) > 0).astype(int)
+        if y_try.nunique() >= 2:
+            df = df_try
+            target_col = target_try
+            selected_cut_date = candidate
+            break
 
-    label_candidates = [c for c in df.columns if c.startswith("ord_") and "label" in c]
-    if not label_candidates:
-        raise ValueError("Could not find label column automatically.")
-    target_col = label_candidates[0]
+    if df is None:
+        # Fallback to latest candidate output for diagnostics.
+        selected_cut_date = candidate_cut_dates[0]
+        df = build_df(selected_cut_date)
+        label_candidates = [c for c in df.columns if c.startswith("ord_") and "label" in c]
+        if not label_candidates:
+            raise ValueError("Could not find label column automatically.")
+        target_col = label_candidates[0]
 
     feature_cols = [c for c in df.columns if c != target_col and pd.api.types.is_numeric_dtype(df[c])]
     X = df[feature_cols].fillna(0.0)
@@ -74,6 +102,7 @@ def main() -> None:
     print(f"rows: {len(df)}", flush=True)
     print(f"columns: {len(df.columns)}", flush=True)
     print("shape:", df.shape, flush=True)
+    print("cut_date_used:", selected_cut_date.strftime("%Y-%m-%d"), flush=True)
     print(f"target: {target_col}", flush=True)
     print(f"num_features: {len(feature_cols)}", flush=True)
 

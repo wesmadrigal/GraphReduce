@@ -170,7 +170,7 @@ def main() -> None:
     print(f"columns: {len(df.columns)}", flush=True)
     print("sample columns:", list(df.columns[:10]), flush=True)
     print("shape:", df.shape, flush=True)
-    print("expected rows: 9", flush=True)
+    print("expected rows: 17", flush=True)
 
 
 if __name__ == "__main__":
