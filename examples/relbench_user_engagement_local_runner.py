@@ -98,7 +98,7 @@ def main() -> None:
         prefix="vote",
         pk="Id",
         date_key="CreationDate",
-        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate", "BountyAmount"],
+        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
         do_labels_ops=[
             sqlop(optype=SQLOpType.aggfunc, opval="count(*) as vote_Id_label"),
             sqlop(optype=SQLOpType.agg, opval="vote_UserId"),
@@ -109,7 +109,7 @@ def main() -> None:
         prefix="comm",
         pk="Id",
         date_key="CreationDate",
-        columns=["Id", "PostId", "Score", "Text", "CreationDate", "UserId", "ContentLicense"],
+        columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
         do_labels_ops=[
             sqlop(optype=SQLOpType.aggfunc, opval="count(*) as comm_Id_label"),
             sqlop(optype=SQLOpType.agg, opval="comm_UserId"),
@@ -126,6 +126,7 @@ def main() -> None:
         compute_period_unit=PeriodUnit.day,
         auto_features=True,
         auto_labels=True,
+        date_filters_on_agg=True,
         label_node=post,
         label_field="Id",
         label_operation="count",

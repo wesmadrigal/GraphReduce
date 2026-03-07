@@ -104,7 +104,7 @@ vote = DuckdbNode(
     prefix="vote",
     pk="Id",
     date_key="CreationDate",
-    columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate", "BountyAmount"],
+    columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
     table_name="votes",
     # Explicit label ops so votes also contribute future engagement labels.
     do_labels_ops=[
@@ -118,7 +118,7 @@ comment = DuckdbNode(
     prefix="comm",
     pk="Id",
     date_key="CreationDate",
-    columns=["Id", "PostId", "Score", "Text", "CreationDate", "UserId", "ContentLicense"],
+    columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
     table_name="comments",
     # Explicit label ops so comments also contribute future engagement labels.
     do_labels_ops=[
@@ -173,6 +173,7 @@ gr = GraphReduce(
     compute_period_unit=PeriodUnit.day,
     auto_features=True,
     auto_labels=True,
+    date_filters_on_agg=True,
     label_node=post,
     label_field="Id",
     label_operation="count",
@@ -346,9 +347,9 @@ con.close()
 
 ## Run Interactive
 
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="relbench_user_engagement">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_user_engagement">
   <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
     <button data-run-btn>Run rel-stack User Engagement</button>
   </div>

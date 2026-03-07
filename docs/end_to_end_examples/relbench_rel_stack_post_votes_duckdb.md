@@ -83,7 +83,7 @@ vote = DuckdbNode(
     prefix="vote",
     pk="Id",
     date_key="CreationDate",
-    columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate", "BountyAmount"],
+    columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
     table_name="votes",
 )
 
@@ -92,7 +92,7 @@ comment = DuckdbNode(
     prefix="comm",
     pk="Id",
     date_key="CreationDate",
-    columns=["Id", "PostId", "Score", "Text", "CreationDate", "UserId", "ContentLicense"],
+    columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
     table_name="comments",
 )
 
@@ -332,9 +332,9 @@ con.close()
 
 ## Run Interactive
 
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="relbench_post_votes">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_post_votes">
   <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
     <button data-run-btn>Run rel-stack Post Votes</button>
   </div>

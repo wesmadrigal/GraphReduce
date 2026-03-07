@@ -90,14 +90,14 @@ def main() -> None:
         prefix="vote",
         pk="Id",
         date_key="CreationDate",
-        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate", "BountyAmount"],
+        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
     )
     comment = DuckdbNode(
         fpath="comments_src",
         prefix="comm",
         pk="Id",
         date_key="CreationDate",
-        columns=["Id", "PostId", "Score", "Text", "CreationDate", "UserId", "ContentLicense"],
+        columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
     )
     post_history = DuckdbNode(
         fpath="post_history_src",
