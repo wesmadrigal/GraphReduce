@@ -150,3 +150,15 @@ X_train, X_test, y_train, y_test = train_test_split(
 * Label column (`y`) is derived from `orders.csv` in the 30-day forward window.
 * The resulting feature vector can be fed directly into `.fit()` / `.predict()` for a
   classical machine learning workflow.
+
+## Run Interactive
+
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="predictive_ai_xgboost">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run XGBoost Example</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>

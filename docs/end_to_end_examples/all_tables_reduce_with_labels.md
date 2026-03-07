@@ -1,4 +1,4 @@
-# All Tables, Full Reduction, With Labels
+# All Tables Reduced with ML Targets
 
 [![All tables reduced with label target](all_tables_reduce_with_labels_overview.png)](all_tables_reduce_with_labels_overview.png)
 
@@ -140,7 +140,7 @@ gr.do_transformations()
 
 print("rows:", len(gr.parent_node.df))
 print("columns:", len(gr.parent_node.df.columns))
-print(gr.parent_node.df.head())
+print(gr.parent_node.df.shape)
 ```
 
 ## duckdb backend
@@ -263,7 +263,7 @@ out_df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
 
 print("rows:", len(out_df))
 print("columns:", len(out_df.columns))
-print(out_df.head())
+print(out_df.shape)
 
 con.close()
 ```
@@ -276,3 +276,15 @@ con.close()
 * Time handling is point-in-time safe:
   * X uses `cut_date - 365 days` through `cut_date`
   * y uses `cut_date + 1 day` through `cut_date + 30 days`
+
+## Run Interactive
+
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="all_tables_ml_targets">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run All Tables ML Targets</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>

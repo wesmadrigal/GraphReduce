@@ -343,3 +343,15 @@ con.close()
 * `Votes.csv` and `Comments.csv` also define `do_labels_ops` so their future
   activity contributes to `user_had_engagement`.
 * The final target is a binary union of future post/vote/comment activity.
+
+## Run Interactive
+
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="relbench_user_engagement">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run rel-stack User Engagement</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>

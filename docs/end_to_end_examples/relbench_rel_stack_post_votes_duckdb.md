@@ -329,3 +329,15 @@ con.close()
   * a feature source (historical vote behavior in the feature window)
   * the label source (future **count(Id)** in the 90-day label window)
 * This benchmark is treated as a **regression** problem and reports **MAE**.
+
+## Run Interactive
+
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="relbench_post_votes">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run rel-stack Post Votes</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>

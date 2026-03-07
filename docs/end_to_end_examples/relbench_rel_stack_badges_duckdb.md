@@ -332,3 +332,15 @@ con.close()
 * `Badges.csv` is both:
   * a feature source (historical behavior in the feature window)
   * the label source (future behavior in the 90-day label window)
+
+## Run Interactive
+
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="relbench_user_badges">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run rel-stack User Badges</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
