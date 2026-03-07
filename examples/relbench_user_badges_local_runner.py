@@ -227,25 +227,23 @@ def main() -> None:
         mdl = CatBoostClassifier(
             loss_function="Logloss",
             eval_metric="AUC",
-            custom_metric=["AUC", "PRAUC", "F1", "Recall", "Precision", "Logloss"],
             use_best_model=True,
-            iterations=1000,
-            learning_rate=0.02,
-            depth=6,
-            l2_leaf_reg=5.0,
-            min_data_in_leaf=20,
+            iterations=300,
+            learning_rate=0.05,
+            depth=4,
+            l2_leaf_reg=8.0,
+            min_data_in_leaf=50,
             boosting_type="Ordered",
             auto_class_weights="Balanced",
             bootstrap_type="Bayesian",
-            bagging_temperature=0.5,
-            random_strength=0.8,
-            rsm=0.8,
-            feature_border_type="GreedyLogSum",
+            bagging_temperature=1.0,
+            random_strength=1.5,
+            rsm=0.7,
             od_type="Iter",
-            od_wait=250,
-            verbose=200,
+            od_wait=50,
+            verbose=100,
         )
-        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=200)
+        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=100)
         val_pred = mdl.predict_proba(X_va)[:, 1]
         val_auc = roc_auc_score(y_va, val_pred)
         fold_aucs.append(val_auc)
@@ -261,24 +259,22 @@ def main() -> None:
     final_mdl = CatBoostClassifier(
         loss_function="Logloss",
         eval_metric="AUC",
-        custom_metric=["AUC", "PRAUC", "F1", "Recall", "Precision", "Logloss"],
-        iterations=int(mdl.best_iteration_ * 1.1),
-        learning_rate=0.02,
-        depth=6,
-        l2_leaf_reg=5.0,
-        min_data_in_leaf=20,
+        iterations=max(100, int(mdl.best_iteration_ * 1.05)),
+        learning_rate=0.05,
+        depth=4,
+        l2_leaf_reg=8.0,
+        min_data_in_leaf=50,
         boosting_type="Ordered",
         auto_class_weights="Balanced",
         bootstrap_type="Bayesian",
-        bagging_temperature=0.5,
-        random_strength=0.8,
-        rsm=0.8,
-        feature_border_type="GreedyLogSum",
+        bagging_temperature=1.0,
+        random_strength=1.5,
+        rsm=0.7,
         od_type="Iter",
-        od_wait=250,
-        verbose=200,
+        od_wait=50,
+        verbose=100,
     )
-    final_mdl.fit(df_train[features], df_train[target], verbose=200)
+    final_mdl.fit(df_train[features], df_train[target], verbose=100)
     future_preds = final_mdl.predict_proba(df_future[features])[:, 1]
 
     if df_future[target].nunique() < 2:
