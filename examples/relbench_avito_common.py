@@ -36,13 +36,33 @@ LOOKBACK_DAYS = (CUT_DATE - LOOKBACK_START).days + 1
 LABEL_PERIOD_DAYS = 5  # 4-day task window with GraphReduce's strict-less-than boundary.
 
 
+def _is_valid_parquet(path: Path) -> bool:
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    con = duckdb.connect()
+    try:
+        con.sql(f"select 1 from read_parquet('{path}') limit 1").fetchall()
+        return True
+    except Exception:
+        return False
+    finally:
+        con.close()
+
+
 def download_rel_avito_data(data_dir: Path) -> list[str]:
     data_dir.mkdir(parents=True, exist_ok=True)
     downloaded: list[str] = []
     for table in TABLES:
         out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
+        needs_download = not _is_valid_parquet(out_path)
+        if needs_download:
+            tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+            if tmp_path.exists():
+                tmp_path.unlink()
+            urlretrieve(f"{BASE_URL}/{table}", tmp_path)
+            tmp_path.replace(out_path)
+            if not _is_valid_parquet(out_path):
+                raise RuntimeError(f"Downloaded parquet is still invalid: {out_path}")
             downloaded.append(table)
     return downloaded
 
