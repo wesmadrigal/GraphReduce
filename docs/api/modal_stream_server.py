@@ -52,6 +52,7 @@ class StartJobRequest(BaseModel):
         "multi_backend_sqlite",
         "multi_backend_duckdb",
         "multi_backend_pyspark",
+        "custom_pyspark_all_nodes",
     ] = "hello_world"
 
 
@@ -127,6 +128,7 @@ def start_job(payload: StartJobRequest) -> dict[str, str]:
         "multi_backend_sqlite": "examples/multi_backend_sqlite_local_runner.py",
         "multi_backend_duckdb": "examples/multi_backend_duckdb_local_runner.py",
         "multi_backend_pyspark": "examples/multi_backend_pyspark_local_runner.py",
+        "custom_pyspark_all_nodes": "examples/custom_pyspark_all_nodes_local_runner.py",
     }
     script = script_map.get(payload.example, "examples/hello_world_local_runner.py")
     cmd = [sys.executable, script]

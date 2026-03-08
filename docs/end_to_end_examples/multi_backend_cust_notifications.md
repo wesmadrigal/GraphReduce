@@ -445,3 +445,94 @@ gr.do_transformations()
 </div>
 
 </details>
+
+## Custom PySpark Graph (All `cust_data` Nodes)
+
+The example below extends the same idea with a deeper PySpark graph that uses
+all available tables in `tests/data/cust_data`:
+
+* `cust`
+* `orders`
+* `order_products`
+* `notifications`
+* `notification_interactions`
+* `notification_interaction_types`
+
+It demonstrates custom definitions across `do_annotate`, `do_filters`,
+`do_normalize`, `do_reduce`, and parent post-join logic. It also includes a
+customer name-length annotation via `length(coalesce(name, ''))`.
+
+```python
+from pyspark.sql import SparkSession, functions as F
+
+from graphreduce.enum import ComputeLayerEnum
+from graphreduce.graph_reduce import GraphReduce
+from graphreduce.node import GraphReduceNode
+
+
+class CustNode(GraphReduceNode):
+    def do_annotate(self):
+        self.df = self.df.withColumn(
+            self.colabbr("name_length"),
+            F.length(F.coalesce(F.col(self.colabbr("name")), F.lit(""))),
+        )
+        return self.df
+
+    def do_filters(self):
+        self.df = self.df.filter(F.col(self.colabbr("id")).isNotNull())
+        return self.df
+
+    def do_normalize(self):
+        self.df = self.df.withColumn(
+            self.colabbr("name"),
+            F.lower(F.trim(F.coalesce(F.col(self.colabbr("name")), F.lit("")))),
+        )
+        return self.df
+
+    def do_reduce(self, reduce_key):
+        return self.df
+
+    def do_labels(self, reduce_key):
+        return self.df
+
+    def do_post_join_annotate(self):
+        ord_ct = F.coalesce(F.col("ord_num_orders"), F.lit(0))
+        not_ct = F.coalesce(F.col("not_num_notifications"), F.lit(0))
+        engaged = F.coalesce(F.col("not_num_engaged_interactions"), F.lit(0))
+        self.df = self.df.withColumn("cust_total_events", ord_ct + not_ct + engaged)
+        return self.df
+
+    def do_post_join_filters(self):
+        self.df = self.df.filter(F.col("cust_total_events") >= 0)
+        return self.df
+
+
+# Additional nodes implement custom annotation/filter/reduction logic:
+# - OrderNode: order amount casts + order aggregates
+# - OrderProductsNode: per-order product counts
+# - NotificationNode: per-customer notification/interactions rollups
+# - NotificationInteractionsNode: engagement signal from interaction type
+# - NotificationInteractionTypeNode: type normalization and view-event marker
+#
+# Full runnable code:
+# examples/custom_pyspark_all_nodes.py
+```
+
+```python
+from examples.custom_pyspark_all_nodes import build_custom_pyspark_graph
+
+spark = SparkSession.builder.appName("graphreduce-custom-all-nodes").getOrCreate()
+gr = build_custom_pyspark_graph(spark)
+gr.do_transformations()
+print(gr.parent_node.df.columns)
+```
+
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="custom_pyspark_all_nodes">
+  <div class="modal-runner-controls">
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
+    <button data-save-api-btn>Save API URL</button>
+    <button data-run-btn>Run custom pyspark all-nodes</button>
+  </div>
+  <div class="modal-runner-status" data-status>Idle</div>
+  <pre class="modal-runner-log" data-log></pre>
+</div>
