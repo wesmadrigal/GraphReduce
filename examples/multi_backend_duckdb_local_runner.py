@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import duckdb
+import os
 
 from graphreduce.enum import ComputeLayerEnum, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
@@ -48,6 +49,10 @@ class NotificationNode(SQLNode):
         ]
 
 
+def _is_interactive_mode() -> bool:
+    return os.getenv("GRAPHREDUCE_INTERACTIVE", "0").strip().lower() in {"1", "true", "yes"}
+
+
 def main() -> None:
     print("Running duckdb backend...", flush=True)
     con = duckdb.connect()
@@ -87,7 +92,10 @@ def main() -> None:
     out_df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
     print("rows:", len(out_df), flush=True)
     print("columns:", len(out_df.columns), flush=True)
+    print("column_names:", out_df.columns.tolist(), flush=True)
     print("shape:", out_df.shape, flush=True)
+    if _is_interactive_mode():
+        print("df.columns:", out_df.columns, flush=True)
 
 
 if __name__ == "__main__":

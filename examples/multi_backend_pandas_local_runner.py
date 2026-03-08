@@ -15,6 +15,10 @@ from graphreduce.node import GraphReduceNode
 DATA_PATH = "tests/data/cust_data"
 
 
+def _is_interactive_mode() -> bool:
+    return os.getenv("GRAPHREDUCE_INTERACTIVE", "0").strip().lower() in {"1", "true", "yes"}
+
+
 class CustNode(GraphReduceNode):
     def do_annotate(self):
         self.df[self.colabbr("name_length")] = self.df[self.colabbr("name")].fillna("").str.len()
@@ -103,7 +107,10 @@ def main() -> None:
 
     print("rows:", len(gr.parent_node.df), flush=True)
     print("columns:", len(gr.parent_node.df.columns), flush=True)
+    print("column_names:", gr.parent_node.df.columns.tolist(), flush=True)
     print("shape:", gr.parent_node.df.shape, flush=True)
+    if _is_interactive_mode():
+        print("df.columns:", gr.parent_node.df.columns, flush=True)
 
 
 if __name__ == "__main__":

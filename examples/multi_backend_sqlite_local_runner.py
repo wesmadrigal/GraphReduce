@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 import sqlite3
 
 import pandas as pd
@@ -13,6 +14,10 @@ from graphreduce.models import sqlop
 from graphreduce.node import SQLNode
 
 DATA_PATH = "tests/data/cust_data"
+
+
+def _is_interactive_mode() -> bool:
+    return os.getenv("GRAPHREDUCE_INTERACTIVE", "0").strip().lower() in {"1", "true", "yes"}
 
 
 class CustNode(SQLNode):
@@ -92,7 +97,11 @@ def main() -> None:
     cols = [x[0] for x in conn.execute(f"select * from {gr.parent_node._cur_data_ref} limit 1").description]
     print("rows:", len(out_df), flush=True)
     print("columns:", len(cols), flush=True)
+    print("column_names:", cols, flush=True)
     print("shape:", (len(out_df), len(cols)), flush=True)
+    if _is_interactive_mode():
+        df = pd.DataFrame(out_df, columns=cols)
+        print("df.columns:", df.columns, flush=True)
 
 
 if __name__ == "__main__":

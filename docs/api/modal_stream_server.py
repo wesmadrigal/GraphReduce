@@ -137,6 +137,7 @@ def start_job(payload: StartJobRequest) -> dict[str, str]:
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("GRAPHREDUCE_INTERACTIVE", "1")
     try:
         job.process = subprocess.Popen(
             cmd,
