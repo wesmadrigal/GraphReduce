@@ -175,10 +175,7 @@ class NotificationNode(GraphReduceNode):
 
 class NotificationInteractionsNode(GraphReduceNode):
     def do_annotate(self):
-        self.df = self.df.withColumn(
-            self.colabbr("is_engaged"),
-            F.when(F.lower(F.col(self.colabbr("nit_name"))).isin("clicked", "dismissed"), F.lit(1)).otherwise(F.lit(0)),
-        )
+        self.df = self.df.withColumn(self.colabbr("ts_day"), F.date_format(F.col(self.colabbr("ts")), "yyyy-MM-dd"))
         return self.df
 
     def do_filters(self):
@@ -195,7 +192,9 @@ class NotificationInteractionsNode(GraphReduceNode):
             .agg(
                 F.count(F.col(self.colabbr(self.pk))).alias(self.colabbr("num_interactions")),
                 F.countDistinct(F.col(self.colabbr("interaction_type_id"))).alias(self.colabbr("num_interaction_types")),
-                F.sum(F.col(self.colabbr("is_engaged"))).alias(self.colabbr("num_engaged_interactions")),
+                F.sum(F.coalesce(F.col(self.colabbr("nit_is_engagement_type")), F.lit(0))).alias(
+                    self.colabbr("num_engaged_interactions")
+                ),
             )
         )
 
@@ -227,6 +226,9 @@ class NotificationInteractionTypeNode(GraphReduceNode):
             .groupBy(self.colabbr(reduce_key))
             .agg(
                 F.first(F.col(self.colabbr("name")), ignorenulls=True).alias(self.colabbr("name")),
+                F.max(
+                    F.when(F.col(self.colabbr("name")).isin("clicked", "dismissed"), F.lit(1)).otherwise(F.lit(0))
+                ).alias(self.colabbr("is_engagement_type")),
                 F.max(
                     F.when(F.col(self.colabbr("name")).contains("view"), F.lit(1)).otherwise(F.lit(0))
                 ).alias(self.colabbr("is_view_event")),
