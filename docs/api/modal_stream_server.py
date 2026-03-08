@@ -18,7 +18,7 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Queue
-from typing import Literal
+from typing import Any
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -40,20 +40,7 @@ class JobState:
 
 
 class StartJobRequest(BaseModel):
-    example: Literal[
-        "hello_world",
-        "preserve_child_grain",
-        "all_tables_ml_targets",
-        "predictive_ai_xgboost",
-        "relbench_user_badges",
-        "relbench_post_votes",
-        "relbench_user_engagement",
-        "multi_backend_pandas",
-        "multi_backend_sqlite",
-        "multi_backend_duckdb",
-        "multi_backend_pyspark",
-        "custom_pyspark_all_nodes",
-    ] = "hello_world"
+    example: str = "hello_world"
 
 
 def _allowed_origins() -> list[str]:
@@ -80,6 +67,28 @@ app.add_middleware(
 )
 
 jobs: dict[str, JobState] = {}
+
+SCRIPT_MAP: dict[str, str] = {
+    "hello_world": "examples/hello_world_local_runner.py",
+    "preserve_child_grain": "examples/preserve_child_grain_local_runner.py",
+    "all_tables_ml_targets": "examples/all_tables_ml_targets_local_runner.py",
+    "predictive_ai_xgboost": "examples/predictive_ai_xgboost_local_runner.py",
+    "relbench_user_badges": "examples/relbench_user_badges_local_runner.py",
+    "relbench_post_votes": "examples/relbench_post_votes_local_runner.py",
+    "relbench_user_engagement": "examples/relbench_user_engagement_local_runner.py",
+    "relbench_hm_user_churn": "examples/relbench_hm_user_churn_local_runner.py",
+    "relbench_avito_user_clicks": "examples/relbench_avito_user_clicks_local_runner.py",
+    "relbench_avito_user_visits": "examples/relbench_avito_user_visits_local_runner.py",
+    "relbench_amazon_user_churn": "examples/relbench_amazon_user_churn_local_runner.py",
+    "relbench_amazon_item_churn": "examples/relbench_amazon_item_churn_local_runner.py",
+    "multi_backend_pandas": "examples/multi_backend_pandas_local_runner.py",
+    "multi_backend_sqlite": "examples/multi_backend_sqlite_local_runner.py",
+    "multi_backend_duckdb": "examples/multi_backend_duckdb_local_runner.py",
+    "multi_backend_pyspark": "examples/multi_backend_pyspark_local_runner.py",
+    "custom_pyspark_all_nodes": "examples/custom_pyspark_all_nodes_local_runner.py",
+    "custom_pandas_all_nodes": "examples/custom_pandas_all_nodes_local_runner.py",
+    "custom_duckdb_all_nodes": "examples/custom_duckdb_all_nodes_local_runner.py",
+}
 
 
 def _stream_reader(job: JobState) -> None:
@@ -113,24 +122,23 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/examples")
+def list_examples() -> dict[str, Any]:
+    return {"examples": sorted(SCRIPT_MAP.keys())}
+
+
 @app.post("/jobs")
 def start_job(payload: StartJobRequest) -> dict[str, str]:
     repo_root = Path(__file__).resolve().parents[2]
-    script_map = {
-        "hello_world": "examples/hello_world_local_runner.py",
-        "preserve_child_grain": "examples/preserve_child_grain_local_runner.py",
-        "all_tables_ml_targets": "examples/all_tables_ml_targets_local_runner.py",
-        "predictive_ai_xgboost": "examples/predictive_ai_xgboost_local_runner.py",
-        "relbench_user_badges": "examples/relbench_user_badges_local_runner.py",
-        "relbench_post_votes": "examples/relbench_post_votes_local_runner.py",
-        "relbench_user_engagement": "examples/relbench_user_engagement_local_runner.py",
-        "multi_backend_pandas": "examples/multi_backend_pandas_local_runner.py",
-        "multi_backend_sqlite": "examples/multi_backend_sqlite_local_runner.py",
-        "multi_backend_duckdb": "examples/multi_backend_duckdb_local_runner.py",
-        "multi_backend_pyspark": "examples/multi_backend_pyspark_local_runner.py",
-        "custom_pyspark_all_nodes": "examples/custom_pyspark_all_nodes_local_runner.py",
-    }
-    script = script_map.get(payload.example, "examples/hello_world_local_runner.py")
+    script = SCRIPT_MAP.get(payload.example)
+    if not script:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": f"Unsupported example '{payload.example}'",
+                "supported_examples": sorted(SCRIPT_MAP.keys()),
+            },
+        )
     cmd = [sys.executable, script]
 
     job_id = str(uuid.uuid4())
