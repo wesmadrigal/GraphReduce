@@ -48,6 +48,18 @@ class StartJobRequest(BaseModel):
         "relbench_user_badges",
         "relbench_post_votes",
         "relbench_user_engagement",
+        "relbench_hm_user_churn",
+        "relbench_avito_user_clicks",
+        "relbench_avito_user_visits",
+        "relbench_amazon_user_churn",
+        "relbench_amazon_item_churn",
+        "multi_backend_pandas",
+        "multi_backend_sqlite",
+        "multi_backend_duckdb",
+        "multi_backend_pyspark",
+        "custom_pyspark_all_nodes",
+        "custom_pandas_all_nodes",
+        "custom_duckdb_all_nodes",
     ] = "hello_world"
 
 
@@ -119,6 +131,18 @@ def start_job(payload: StartJobRequest) -> dict[str, str]:
         "relbench_user_badges": "examples/relbench_user_badges_local_runner.py",
         "relbench_post_votes": "examples/relbench_post_votes_local_runner.py",
         "relbench_user_engagement": "examples/relbench_user_engagement_local_runner.py",
+        "relbench_hm_user_churn": "examples/relbench_hm_user_churn_local_runner.py",
+        "relbench_avito_user_clicks": "examples/relbench_avito_user_clicks_local_runner.py",
+        "relbench_avito_user_visits": "examples/relbench_avito_user_visits_local_runner.py",
+        "relbench_amazon_user_churn": "examples/relbench_amazon_user_churn_local_runner.py",
+        "relbench_amazon_item_churn": "examples/relbench_amazon_item_churn_local_runner.py",
+        "multi_backend_pandas": "examples/multi_backend_pandas_local_runner.py",
+        "multi_backend_sqlite": "examples/multi_backend_sqlite_local_runner.py",
+        "multi_backend_duckdb": "examples/multi_backend_duckdb_local_runner.py",
+        "multi_backend_pyspark": "examples/multi_backend_pyspark_local_runner.py",
+        "custom_pyspark_all_nodes": "examples/custom_pyspark_all_nodes_local_runner.py",
+        "custom_pandas_all_nodes": "examples/custom_pandas_all_nodes_local_runner.py",
+        "custom_duckdb_all_nodes": "examples/custom_duckdb_all_nodes_local_runner.py",
     }
     script = script_map.get(payload.example, "examples/hello_world_local_runner.py")
     cmd = [sys.executable, script]
@@ -129,6 +153,7 @@ def start_job(payload: StartJobRequest) -> dict[str, str]:
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("GRAPHREDUCE_INTERACTIVE", "1")
     try:
         job.process = subprocess.Popen(
             cmd,
