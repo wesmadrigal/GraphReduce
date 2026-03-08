@@ -1,14 +1,22 @@
 #!/usr/bin/env python
 
-import datetime
 import os
+import pytest
+
+RUN_BENCHMARKS = os.getenv("RUN_RELBENCH_BENCHMARKS") == "1"
+if not RUN_BENCHMARKS:
+    pytest.skip(
+        "RelBench benchmarks are disabled. Set RUN_RELBENCH_BENCHMARKS=1 to run this module.",
+        allow_module_level=True,
+    )
+
+import datetime
 from pathlib import Path
 from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
 import pandas as pd
-import pytest
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import KFold, StratifiedKFold, train_test_split
@@ -31,8 +39,6 @@ RELBENCH_TABLES = [
     "Comments.csv",
     "Tags.csv",
 ]
-
-RUN_BENCHMARKS = os.getenv("RUN_RELBENCH_BENCHMARKS") == "1"
 
 
 def _duck_path(path: Path) -> str:
