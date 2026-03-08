@@ -14,6 +14,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -195,22 +196,41 @@ async def stream_logs(job_id: str) -> StreamingResponse:
         raise HTTPException(status_code=404, detail="Unknown job")
 
     async def event_gen():
+        # Instruct EventSource clients to retry quickly on transient disconnects.
+        yield "retry: 3000\n\n"
         # Replay existing logs first for reconnect support.
         for line in job.logs:
             yield f"data: {line}\n\n"
 
+        last_keepalive = time.monotonic()
+        keepalive_interval_sec = 10.0
         while True:
             try:
                 line = job.log_queue.get(timeout=0.2)
             except Empty:
+                # Emit SSE comment heartbeats so idle upstream timeouts don't
+                # kill long-running jobs that are temporarily quiet.
+                now = time.monotonic()
+                if now - last_keepalive >= keepalive_interval_sec:
+                    yield ": keepalive\n\n"
+                    last_keepalive = now
                 await asyncio.sleep(0.1)
                 continue
             if line == "__JOB_DONE__":
                 yield "event: done\ndata: complete\n\n"
                 break
             yield f"data: {line}\n\n"
+            last_keepalive = time.monotonic()
 
-    return StreamingResponse(event_gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 if __name__ == "__main__":
