@@ -62,7 +62,7 @@
   <text x="640" y="474" class="text">B) Build User/Visits/Ads DuckdbNodes.</text>
   <text x="640" y="498" class="text">C) Define distinct-AdID label agg on visits node.</text>
   <text x="640" y="522" class="text">D) Run `gr.do_transformations_sql()` with labels.</text>
-  <text x="640" y="546" class="text">E) Train RandomForest and score ROC AUC.</text>
+  <text x="640" y="546" class="text">E) Train CatBoost and score ROC AUC.</text>
   <rect x="642" y="566" width="346" height="124" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
   <text x="658" y="592" class="mono">target = sum(vis_distinct_ads_*_label) &gt; 1</text>
   <text x="658" y="614" class="mono">out_df at user grain</text>
@@ -85,7 +85,7 @@
   <text x="1080" y="528" class="text">Distinct-ad labels match task target semantics.</text>
   <text x="1080" y="552" class="text">Visit and ad context improve predictive power.</text>
   <text x="1080" y="576" class="text">5-day label window supports GraphReduce boundary.</text>
-  <text x="1080" y="610" class="mono">graphreduce + duckdb => train-ready output</text>
+  <text x="1080" y="610" class="mono">graphreduce + catboost => train-ready output</text>
 
   <line x1="594" y1="430" x2="620" y2="450" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
   <line x1="1010" y1="560" x2="1040" y2="560" stroke="#12734a" stroke-width="2.6" marker-end="url(#arrowGreen)"/>

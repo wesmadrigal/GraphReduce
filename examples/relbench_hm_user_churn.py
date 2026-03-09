@@ -10,7 +10,7 @@ from urllib.request import urlretrieve
 import duckdb
 import numpy as np
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
+from catboost import CatBoostClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 
@@ -153,7 +153,16 @@ def train_user_churn_model(df: pd.DataFrame) -> tuple[float | None, int]:
         return None, len(feature_cols)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
-    model = RandomForestClassifier(n_estimators=300, max_depth=10, random_state=42, n_jobs=-1)
+    model = CatBoostClassifier(
+        iterations=400,
+        depth=8,
+        learning_rate=0.05,
+        loss_function="Logloss",
+        eval_metric="AUC",
+        random_seed=42,
+        verbose=False,
+        allow_writing_files=False,
+    )
     model.fit(X_train, y_train)
     preds = model.predict_proba(X_test)[:, 1]
     auc = float(roc_auc_score(y_test, preds))
