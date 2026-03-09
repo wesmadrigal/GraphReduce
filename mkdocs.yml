@@ -16,6 +16,11 @@ nav:
     - end_to_end_examples/index.md
     - Hello World: end_to_end_examples/hello_world.md
     - Preserve Child Grain: end_to_end_examples/preserve_child_grain.md
+    - Multi-Backend Examples:
+      - "cust+notifications: pandas, sqlite, duckdb, pyspark": end_to_end_examples/multi_backend_cust_notifications.md
+      - "custom pyspark: all cust_data nodes": end_to_end_examples/custom_pyspark_all_nodes.md
+      - "custom pandas: all cust_data nodes": end_to_end_examples/custom_pandas_all_nodes.md
+      - "custom duckdb: all cust_data nodes": end_to_end_examples/custom_duckdb_all_nodes.md
     - All Tables Reduced with ML Targets: end_to_end_examples/all_tables_reduce_with_labels.md
     - Predictive AI with XGBoost: end_to_end_examples/predictive_ai_xgboost.md
     - Predictive AI with TabPFN: end_to_end_examples/predictive_ai_tabpfn.md
@@ -23,8 +28,14 @@ nav:
       - "rel-stack: User Badges": end_to_end_examples/relbench_rel_stack_badges_duckdb.md
       - "rel-stack: Post Votes": end_to_end_examples/relbench_rel_stack_post_votes_duckdb.md
       - "rel-stack: User Engagement": end_to_end_examples/relbench_rel_stack_user_engagement_duckdb.md
-    - Multi-Backend Examples:
-      - "cust+notifications: pandas, sqlite, duckdb, pyspark": end_to_end_examples/multi_backend_cust_notifications.md
+      - "rel-hm: User Churn": end_to_end_examples/relbench_rel_hm_user_churn_duckdb.md
+      - "rel-hm: Item Sales": end_to_end_examples/relbench_rel_hm_item_sales_duckdb.md
+      - "rel-avito: User Clicks": end_to_end_examples/relbench_rel_avito_user_clicks_duckdb.md
+      - "rel-avito: User Visits": end_to_end_examples/relbench_rel_avito_user_visits_duckdb.md
+      - "rel-amazon: User Churn": end_to_end_examples/relbench_rel_amazon_user_churn_duckdb.md
+      - "rel-amazon: Item Churn": end_to_end_examples/relbench_rel_amazon_item_churn_duckdb.md
+      - "rel-amazon: User LTV": end_to_end_examples/relbench_rel_amazon_user_ltv_duckdb.md
+      - "rel-amazon: Item LTV": end_to_end_examples/relbench_rel_amazon_item_ltv_duckdb.md
   - Tutorial:
     - tutorial_index.md
     - tutorial_time.md
