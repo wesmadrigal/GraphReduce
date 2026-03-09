@@ -1,13 +1,17 @@
 # Welcome to graphreduce
 
-GraphReduce is an abstraction layer for doing batch feature engineering spanning many tables.  The library
-abstracts away much of the tedious, repetitive work such as point in time correctness, dealing with cardinality,
-prefixing columns, joins, swapping between compute layers, and more.  We use graphs with [networkx](https://github.com/networkx/networkx) to represent tables as
-nodes and relationships as edges, allowing most data storage formats and compute layers to be modeled.
+GraphReduce is a relational AI data system for the problem that still dominates real-world ML work: converting many
+heterogeneous tables into leakage-safe, model-ready training frames at the correct parent grain. It encodes relational
+algebra as a graph over entities, keys, and temporal constraints, then executes deterministic rollups and joins so data
+prep is composable, inspectable, and production-ready.
 
-Despite many advancements in generative, preparing ML/AI-ready datasets remains a challenge at scale. There is very
-interesting work coming out of [Relbench](https://relbench.stanford.edu), but we are not there yet.  A few inspirations
-for this project:
+The point is blunt: a pure end-to-end relational foundation model may be more expressive in theory, but tabular data
+still lacks universal semantics across datasets, and enterprise workloads still demand interpretability, stability, and
+cost-efficient execution. The strongest strategy right now is hybrid:
+relational algebra + strong feature synthesis + classical ML and tabular foundation models. GraphReduce is the
+infrastructure layer for that strategy, with interoperability across dataframe and SQL compute backends.
+
+A few inspirations for this project:
 
 * [Deep Feature Synthesis](https://groups.csail.mit.edu/EVO-DesignOpt/groupWebSite/uploads/Site/DSAA_DSM_2015.pdf)
 * [One button machine](https://arxiv.org/abs/1706.00327)

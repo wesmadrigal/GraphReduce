@@ -2,30 +2,36 @@
 
 
 ## Description
-GraphReduce is an abstraction for building machine learning feature
-engineering pipelines that involve many tables in a composable way.
-The library is intended to help bridge the gap between research feature
-definitions and production deployment without the overhead of a full 
-feature store.  Underneath the hood, GraphReduce uses graph data
-structures to represent tables/files as nodes and foreign keys
-as edges.
+GraphReduce is a relational feature engineering system for serious tabular
+ML and AI workloads. It encodes relational algebra directly into a graph of
+tables, keys, and time boundaries so you can build model-ready datasets from
+many sources without hand-rolling fragile join logic for every project.
+
+The core thesis is direct: heterogeneous tabular data does not yet have a
+universal semantic representation like text or vision, so the strongest
+practical path today is a hybrid stack:
+relational algebra + robust feature synthesis + strong downstream models
+(GBDT/CatBoost/XGBoost and tabular foundation models). GraphReduce is built
+to make that stack production-real, not notebook-fragile.
 
 Compute backends supported: `pandas`, `dask`, `duckdb`, `spark`, `daft`, AWS Athena, Redshift, Snowflake, postgresql, MySQL
 Compute backends coming soon: `ray`
 
 ## Why GraphReduce
-GraphReduce is built to simplify multi-table data preparation on tabular
-data for predictive AI and analytics, with a strong focus on batch ML/AI
-workloads. It provides production-grade abstractions for the hardest
-parts of feature engineering across a data estate:
+GraphReduce is built for the hardest part of predictive AI in enterprises:
+turning many relational tables into leakage-safe, parent-grain training data
+that actually survives production constraints. It provides production-grade
+abstractions for multi-table feature engineering at scale:
 
 * point-in-time correctness to avoid leakage and keep training data temporally valid
 * cardinality-aware reductions and joins when traversing one-to-many table relationships
 * deterministic column prefixing, where each table/node defines a unique prefix so integrated columns retain clear table lineage
 
-This directly addresses a core bottleneck in predictive AI today:
-integrating data from many tables and reliably transforming it into
-model-ready features at scale.
+This directly addresses the core bottleneck in tabular AI today: relational
+integration, temporal correctness, and cardinality-safe rollups. Instead of
+betting everything on data-hungry end-to-end relational neural architectures,
+GraphReduce gives you the strongest practical base layer that interoperates
+with both classical ML and emerging tabular foundation models.
 
 ## Where most of the time is spent
 ![Where most of the time is spent in tabular data science](./docs/where_most_time_is_spent.svg)
