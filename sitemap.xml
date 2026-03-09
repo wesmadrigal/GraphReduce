@@ -101,7 +101,15 @@
          <lastmod>2026-03-09</lastmod>
     </url>
     <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_amazon_item_ltv_duckdb/</loc>
+         <lastmod>2026-03-09</lastmod>
+    </url>
+    <url>
          <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_amazon_user_churn_duckdb/</loc>
+         <lastmod>2026-03-09</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_amazon_user_ltv_duckdb/</loc>
          <lastmod>2026-03-09</lastmod>
     </url>
     <url>
@@ -110,6 +118,10 @@
     </url>
     <url>
          <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_avito_user_visits_duckdb/</loc>
+         <lastmod>2026-03-09</lastmod>
+    </url>
+    <url>
+         <loc>https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_hm_item_sales_duckdb/</loc>
          <lastmod>2026-03-09</lastmod>
     </url>
     <url>
