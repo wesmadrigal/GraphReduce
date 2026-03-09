@@ -23,6 +23,13 @@ from graphreduce.node import GraphReduceNode
 DATA_PATH = "tests/data/cust_data"
 
 
+def _safe_numeric(df, candidates: list[str]):
+    for c in candidates:
+        if c in df.columns:
+            return F.coalesce(F.col(c).cast("double"), F.lit(0.0))
+    return F.lit(0.0)
+
+
 class CustNode(GraphReduceNode):
     def do_annotate(self):
         self.df = self.df.withColumn(
@@ -148,18 +155,17 @@ class NotificationNode(GraphReduceNode):
         return self.df
 
     def do_reduce(self, reduce_key):
+        prepped = self.prep_for_features()
+        ni_num_interactions = _safe_numeric(prepped, ["ni_num_interactions"])
+        ni_num_engaged = _safe_numeric(prepped, ["ni_num_engaged_interactions"])
         return (
-            self.prep_for_features()
+            prepped
             .groupBy(self.colabbr(reduce_key))
             .agg(
                 F.countDistinct(F.col(self.colabbr(self.pk))).alias(self.colabbr("num_notifications")),
                 F.max(F.col(self.colabbr("ts"))).alias(self.colabbr("max_notification_ts")),
-                F.sum(F.coalesce(F.col(self.colabbr("ni_num_interactions")), F.lit(0))).alias(
-                    self.colabbr("num_interactions")
-                ),
-                F.sum(F.coalesce(F.col(self.colabbr("ni_num_engaged_interactions")), F.lit(0))).alias(
-                    self.colabbr("num_engaged_interactions")
-                ),
+                F.sum(ni_num_interactions).alias(self.colabbr("num_interactions")),
+                F.sum(ni_num_engaged).alias(self.colabbr("num_engaged_interactions")),
             )
         )
 
@@ -186,15 +192,22 @@ class NotificationInteractionsNode(GraphReduceNode):
         return self.df
 
     def do_reduce(self, reduce_key):
+        prepped = self.prep_for_features()
+        engaged_expr = _safe_numeric(
+            prepped,
+            [
+                "ni_nit_is_engagement_type",
+                "nit_is_engagement_type",
+                "ni_is_engagement_type",
+            ],
+        )
         return (
-            self.prep_for_features()
+            prepped
             .groupBy(self.colabbr(reduce_key))
             .agg(
                 F.count(F.col(self.colabbr(self.pk))).alias(self.colabbr("num_interactions")),
                 F.countDistinct(F.col(self.colabbr("interaction_type_id"))).alias(self.colabbr("num_interaction_types")),
-                F.sum(F.coalesce(F.col(self.colabbr("nit_is_engagement_type")), F.lit(0))).alias(
-                    self.colabbr("num_engaged_interactions")
-                ),
+                F.sum(engaged_expr).alias(self.colabbr("num_engaged_interactions")),
             )
         )
 
