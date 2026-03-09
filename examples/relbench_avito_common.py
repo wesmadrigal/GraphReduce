@@ -86,6 +86,7 @@ def _pick(columns: list[str], candidates: list[str], required: bool = True) -> s
 
 
 def _build_visits_click_annotate(
+    vis_click_col: str | None,
     vis_user_col: str,
     vis_ad_col: str,
     vis_date_col: str | None,
@@ -94,8 +95,17 @@ def _build_visits_click_annotate(
     sea_ad_col: str | None,
     sea_date_col: str | None,
     sea_search_col: str | None,
-    sea_click_col: str,
+    sea_click_col: str | None,
 ) -> str:
+    if vis_click_col:
+        return (
+            "*, "
+            "case when lower(cast(vis_"
+            + vis_click_col
+            + " as varchar)) in ('1','true','t','yes','y','clicked') "
+            "then 1 else 0 end as vis_is_clicked"
+        )
+
     join_terms: list[str] = []
     if vis_search_col and sea_search_col:
         join_terms.append(f"s.{sea_search_col} = vis_{vis_search_col}")
@@ -103,8 +113,9 @@ def _build_visits_click_annotate(
         join_terms.append(f"s.{sea_user_col} = vis_{vis_user_col}")
     if sea_ad_col:
         join_terms.append(f"s.{sea_ad_col} = vis_{vis_ad_col}")
-    if not join_terms:
-        raise ValueError("Unable to build click join between VisitsStream and SearchInfo")
+    if not join_terms or not sea_click_col:
+        # Fallback for schemas without explicit click signal.
+        return "*, 1 as vis_is_clicked"
 
     if sea_date_col and vis_date_col:
         join_terms.append(f"s.{sea_date_col} <= vis_{vis_date_col}")
@@ -143,7 +154,8 @@ def _build_frame(data_dir: Path, mode: str) -> pd.DataFrame:
         sea_ad_col = _pick(search_cols, ["AdID", "AdId", "ad_id", "adid"], required=False)
         sea_date_col = _pick(search_cols, ["SearchDate", "EventDate", "Date", "Timestamp"], required=False)
         sea_search_col = _pick(search_cols, ["SearchID", "SearchId", "search_id", "searchid"], required=False)
-        sea_click_col = _pick(search_cols, ["IsClick", "is_click", "isclick", "Clicked", "clicked"])
+        vis_click_col = _pick(visits_cols, ["IsClick", "is_click", "isclick", "Clicked", "clicked"], required=False)
+        sea_click_col = _pick(search_cols, ["IsClick", "is_click", "isclick", "Clicked", "clicked"], required=False)
 
         ad_id_col = _pick(ads_cols, ["AdID", "AdId", "ad_id", "adid"])
 
@@ -173,6 +185,7 @@ def _build_frame(data_dir: Path, mode: str) -> pd.DataFrame:
                 sqlop(
                     optype=SQLOpType.select,
                     opval=_build_visits_click_annotate(
+                        vis_click_col=vis_click_col,
                         vis_user_col=vis_user_col,
                         vis_ad_col=vis_ad_col,
                         vis_date_col=vis_date_col,
