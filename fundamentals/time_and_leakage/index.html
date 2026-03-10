@@ -8,22 +8,28 @@
       
       
       
+        <link rel="canonical" href="https://github.com/wesmadrigal/graphreduce/fundamentals/time_and_leakage/">
       
+      
+        <link rel="prev" href="../joins_and_cardinality/">
+      
+      
+        <link rel="next" href="../../abstractions/">
       
       
         
       
       
-      <link rel="icon" href="/wesmadrigal/graphreduce/assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.4">
     
     
       
-        <title>graphreduce</title>
+        <title>Time Windows and Leakage Safety - graphreduce</title>
       
     
     
-      <link rel="stylesheet" href="/wesmadrigal/graphreduce/assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
       
 
@@ -42,9 +48,9 @@
       
     
     
-      <link rel="stylesheet" href="/wesmadrigal/graphreduce/assets/css/modal_runner.css">
+      <link rel="stylesheet" href="../../assets/css/modal_runner.css">
     
-    <script>__md_scope=new URL("/wesmadrigal/graphreduce/",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -61,6 +67,11 @@
     <label class="md-overlay" for="__drawer"></label>
     <div data-md-component="skip">
       
+        
+        <a href="#time-windows-and-leakage-safety" class="md-skip">
+          Skip to content
+        </a>
+      
     </div>
     <div data-md-component="announce">
       
@@ -73,7 +84,7 @@
 
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="/wesmadrigal/graphreduce/." title="graphreduce" class="md-header__button md-logo" aria-label="graphreduce" data-md-component="logo">
+    <a href="../.." title="graphreduce" class="md-header__button md-logo" aria-label="graphreduce" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -93,7 +104,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              
+              Time Windows and Leakage Safety
             
           </span>
         </div>
@@ -172,7 +183,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/wesmadrigal/graphreduce/." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -189,11 +200,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="/wesmadrigal/graphreduce/fundamentals/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../" class="md-tabs__link">
           
   
   
@@ -211,7 +224,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="/wesmadrigal/graphreduce/abstractions/" class="md-tabs__link">
+      <a href="../../abstractions/" class="md-tabs__link">
         
   
   
@@ -232,7 +245,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/wesmadrigal/graphreduce/end_to_end_examples/" class="md-tabs__link">
+        <a href="../../end_to_end_examples/" class="md-tabs__link">
           
   
   
@@ -252,7 +265,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/wesmadrigal/graphreduce/tutorial_index/" class="md-tabs__link">
+        <a href="../../tutorial_index/" class="md-tabs__link">
           
   
   
@@ -272,7 +285,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="/wesmadrigal/graphreduce/tutorial_cli/" class="md-tabs__link">
+        <a href="../../tutorial_cli/" class="md-tabs__link">
           
   
   
@@ -312,7 +325,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="/wesmadrigal/graphreduce/." title="graphreduce" class="md-nav__button md-logo" aria-label="graphreduce" data-md-component="logo">
+    <a href="../.." title="graphreduce" class="md-nav__button md-logo" aria-label="graphreduce" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -342,7 +355,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -366,24 +379,29 @@
       
   
   
+    
   
   
+  
     
     
     
     
-      
-      
-    
-    
-    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -401,7 +419,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -419,7 +437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/fundamentals/" class="md-nav__link">
+      <a href="../" class="md-nav__link">
         
   
   
@@ -447,7 +465,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/fundamentals/operations/" class="md-nav__link">
+      <a href="../operations/" class="md-nav__link">
         
   
   
@@ -475,7 +493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/fundamentals/joins_and_cardinality/" class="md-nav__link">
+      <a href="../joins_and_cardinality/" class="md-nav__link">
         
   
   
@@ -500,10 +518,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/fundamentals/time_and_leakage/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Time Windows and Leakage Safety
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -519,6 +564,70 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-timing-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core timing controls
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#base-class-definitions-window-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Base-class definitions (window boundaries)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this matters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#practical-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Practical checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -538,7 +647,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/abstractions/" class="md-nav__link">
+      <a href="../../abstractions/" class="md-nav__link">
         
   
   
@@ -615,7 +724,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/" class="md-nav__link">
+      <a href="../../end_to_end_examples/" class="md-nav__link">
         
   
   
@@ -643,7 +752,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/hello_world/" class="md-nav__link">
+      <a href="../../end_to_end_examples/hello_world/" class="md-nav__link">
         
   
   
@@ -671,7 +780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/preserve_child_grain/" class="md-nav__link">
+      <a href="../../end_to_end_examples/preserve_child_grain/" class="md-nav__link">
         
   
   
@@ -749,7 +858,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/multi_backend_cust_notifications/" class="md-nav__link">
+      <a href="../../end_to_end_examples/multi_backend_cust_notifications/" class="md-nav__link">
         
   
   
@@ -777,7 +886,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/custom_pyspark_all_nodes/" class="md-nav__link">
+      <a href="../../end_to_end_examples/custom_pyspark_all_nodes/" class="md-nav__link">
         
   
   
@@ -805,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/custom_pandas_all_nodes/" class="md-nav__link">
+      <a href="../../end_to_end_examples/custom_pandas_all_nodes/" class="md-nav__link">
         
   
   
@@ -833,7 +942,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/custom_duckdb_all_nodes/" class="md-nav__link">
+      <a href="../../end_to_end_examples/custom_duckdb_all_nodes/" class="md-nav__link">
         
   
   
@@ -869,7 +978,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/all_tables_reduce_with_labels/" class="md-nav__link">
+      <a href="../../end_to_end_examples/all_tables_reduce_with_labels/" class="md-nav__link">
         
   
   
@@ -897,7 +1006,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/predictive_ai_xgboost/" class="md-nav__link">
+      <a href="../../end_to_end_examples/predictive_ai_xgboost/" class="md-nav__link">
         
   
   
@@ -925,7 +1034,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/predictive_ai_tabpfn/" class="md-nav__link">
+      <a href="../../end_to_end_examples/predictive_ai_tabpfn/" class="md-nav__link">
         
   
   
@@ -1003,7 +1112,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_stack_badges_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_stack_badges_duckdb/" class="md-nav__link">
         
   
   
@@ -1031,7 +1140,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_stack_post_votes_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_stack_post_votes_duckdb/" class="md-nav__link">
         
   
   
@@ -1059,7 +1168,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_stack_user_engagement_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_stack_user_engagement_duckdb/" class="md-nav__link">
         
   
   
@@ -1087,7 +1196,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_hm_user_churn_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_hm_user_churn_duckdb/" class="md-nav__link">
         
   
   
@@ -1115,7 +1224,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_hm_item_sales_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_hm_item_sales_duckdb/" class="md-nav__link">
         
   
   
@@ -1143,7 +1252,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_avito_user_clicks_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_avito_user_clicks_duckdb/" class="md-nav__link">
         
   
   
@@ -1171,7 +1280,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_avito_user_visits_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_avito_user_visits_duckdb/" class="md-nav__link">
         
   
   
@@ -1199,7 +1308,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_amazon_user_churn_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_amazon_user_churn_duckdb/" class="md-nav__link">
         
   
   
@@ -1227,7 +1336,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_amazon_item_churn_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_amazon_item_churn_duckdb/" class="md-nav__link">
         
   
   
@@ -1255,7 +1364,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_amazon_user_ltv_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_amazon_user_ltv_duckdb/" class="md-nav__link">
         
   
   
@@ -1283,7 +1392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_amazon_item_ltv_duckdb/" class="md-nav__link">
+      <a href="../../end_to_end_examples/relbench_rel_amazon_item_ltv_duckdb/" class="md-nav__link">
         
   
   
@@ -1376,7 +1485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_index/" class="md-nav__link">
+      <a href="../../tutorial_index/" class="md-nav__link">
         
   
   
@@ -1404,7 +1513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_time/" class="md-nav__link">
+      <a href="../../tutorial_time/" class="md-nav__link">
         
   
   
@@ -1432,7 +1541,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_custom_graph/" class="md-nav__link">
+      <a href="../../tutorial_custom_graph/" class="md-nav__link">
         
   
   
@@ -1460,7 +1569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_swapping_compute/" class="md-nav__link">
+      <a href="../../tutorial_swapping_compute/" class="md-nav__link">
         
   
   
@@ -1488,7 +1597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_sql_dialects/" class="md-nav__link">
+      <a href="../../tutorial_sql_dialects/" class="md-nav__link">
         
   
   
@@ -1516,7 +1625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_sql_backends_dynamic_queries/" class="md-nav__link">
+      <a href="../../tutorial_sql_backends_dynamic_queries/" class="md-nav__link">
         
   
   
@@ -1544,7 +1653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_method_deps/" class="md-nav__link">
+      <a href="../../tutorial_method_deps/" class="md-nav__link">
         
   
   
@@ -1572,7 +1681,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_auto_feature_engineering/" class="md-nav__link">
+      <a href="../../tutorial_auto_feature_engineering/" class="md-nav__link">
         
   
   
@@ -1657,7 +1766,7 @@
   
   
     <li class="md-nav__item">
-      <a href="/wesmadrigal/graphreduce/tutorial_cli/" class="md-nav__link">
+      <a href="../../tutorial_cli/" class="md-nav__link">
         
   
   
@@ -1702,6 +1811,60 @@
   
   
   
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-timing-controls" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Core timing controls
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#base-class-definitions-window-boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Base-class definitions (window boundaries)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-this-matters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why this matters
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#practical-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Practical checklist
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
   
 </nav>
                   </div>
@@ -1714,8 +1877,53 @@
               
               <article class="md-content__inner md-typeset">
                 
-  <h1>404 - Not found</h1>
+                  
 
+
+  
+  
+
+
+<h1 id="time-windows-and-leakage-safety">Time Windows and Leakage Safety</h1>
+<p>GraphReduce is designed for point-in-time-correct feature generation.</p>
+<p><img alt="GraphReduce leakage-safe time windows" src="../time_leakage_windows.svg" /></p>
+<h2 id="core-timing-controls">Core timing controls</h2>
+<p>Graph and node parameters define what historical data is visible at transform time:</p>
+<ul>
+<li><code>cut_date</code>: reference time for feature/label splitting.</li>
+<li><code>compute_period_val</code> + <code>compute_period_unit</code>: lookback window for feature computation.</li>
+<li><code>label_period_val</code> + <code>label_period_unit</code>: forward window for label generation.</li>
+<li><code>date_key</code> on nodes: required for time-based filtering on that node.</li>
+</ul>
+<h2 id="base-class-definitions-window-boundaries">Base-class definitions (window boundaries)</h2>
+<p>In <code>GraphReduceNode</code>, the base methods enforce these windows:</p>
+<ul>
+<li><code>prep_for_features</code>: <code>date_key &lt; cut_date</code> and <code>date_key &gt; cut_date - compute_period_minutes()</code></li>
+<li><code>prep_for_labels</code>: <code>date_key &gt; cut_date</code> and <code>date_key &lt; cut_date + label_period_minutes()</code></li>
+</ul>
+<h2 id="why-this-matters">Why this matters</h2>
+<p>Without strict time windows, training features can include future information and inflate offline metrics. GraphReduce pushes shared time configuration through the graph so reductions and joins remain leakage-safe.</p>
+<h2 id="practical-checklist">Practical checklist</h2>
+<ul>
+<li>Set a valid <code>date_key</code> on all time-varying nodes.</li>
+<li>Confirm feature windows end at or before <code>cut_date</code>.</li>
+<li>Compute labels only in the label horizon after <code>cut_date</code>.</li>
+<li>Validate output grain and time boundaries in a small sample before full runs.</li>
+</ul>
+<p>See <a href="../../tutorial_time/">Tutorial: temporal setup</a> for a step-by-step example.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
               </article>
             </div>
           
@@ -1752,12 +1960,12 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "/wesmadrigal/graphreduce/", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky"], "search": "/wesmadrigal/graphreduce/assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tabs", "navigation.tabs.sticky"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="/wesmadrigal/graphreduce/assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
-        <script src="/wesmadrigal/graphreduce/assets/js/modal_runner.js"></script>
+        <script src="../../assets/js/modal_runner.js"></script>
       
     
   </body>
