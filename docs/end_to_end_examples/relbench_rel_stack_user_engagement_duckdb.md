@@ -1,5 +1,9 @@
 # RelBench Rel-Stack with DuckDB (User Engagement)
 
+[![RelBench rel-stack user-engagement graphreduce flow](relbench_rel_stack_user_engagement_duckdb_overview.svg)](relbench_rel_stack_user_engagement_duckdb_overview.svg)
+
+Open full-size: [SVG](relbench_rel_stack_user_engagement_duckdb_overview.svg)
+
 This example implements the RelBench
 [user-engagement task](https://relbench.stanford.edu/datasets/rel-stack/#user-engagement):
 
@@ -7,7 +11,8 @@ This example implements the RelBench
 * label node: `Posts.csv`
 * target: whether user has **any engagement** in next 90 days
   * engagement = post OR vote OR comment
-* cut date: `2021-01-01`
+* train/eval cut date: `2020-10-01`
+* out-of-time holdout cut date: `2021-01-01`
 * lookback period: `10 years` (`3650` days)
 * active-user constraint: keep only users with any historical activity
   * active means at least one post, vote, or comment at any point in history
@@ -49,7 +54,9 @@ for table in TABLES:
         urlretrieve(f"{BASE_URL}/{table}", out_path)
 
 con = duckdb.connect()
-cut_date = datetime.datetime(2021, 1, 1)
+eval_cut_date = datetime.datetime(2020, 10, 1)
+holdout_cut_date = datetime.datetime(2021, 1, 1)
+cut_date = eval_cut_date
 
 users_fpath = data_dir / "Users.csv"
 posts_fpath = data_dir / "Posts.csv"
@@ -215,6 +222,10 @@ print("post labels:", post_label_cols)
 print("vote labels:", vote_label_cols)
 print("comment labels:", comm_label_cols)
 print(df.head())
+
+# Build a second compute graph for out-of-time holdout:
+# re-instantiate nodes with `cut_date = holdout_cut_date` and run
+# `gr.do_transformations_sql()` again to produce `df_future`.
 ```
 
 ### Model Training
@@ -237,7 +248,7 @@ for c in label_cols:
 df["user_had_engagement"] = (df[label_cols].sum(axis=1) > 0).astype("int8")
 target = "user_had_engagement"
 
-stypes = infer_df_stype(df)
+stypes = infer_df_stype(df_train)
 features = [
     k
     for k, v in stypes.items()
@@ -246,11 +257,11 @@ features = [
     and "label" not in k
     and "had_engagement" not in k
 ]
-features = [c for c in features if c in df.columns]
+features = [c for c in features if c in df_train.columns and c in df_future.columns]
 
 X_train_full, X_test, y_train_full, y_test = train_test_split(
-    df[features],
-    df[target],
+    df_train[features],
+    df_train[target],
     test_size=0.20,
     stratify=df[target],
     random_state=42,
@@ -335,9 +346,9 @@ final_mdl = CatBoostClassifier(
     verbose=200,
 )
 
-final_mdl.fit(X_train_full, y_train_full)
-final_test_pred = final_mdl.predict_proba(X_test)[:, 1]
-print("refit_test_auc:", round(roc_auc_score(y_test, final_test_pred), 4))
+final_mdl.fit(df_train[features], df_train[target])
+future_pred = final_mdl.predict_proba(df_future[features])[:, 1]
+print("out_of_time_auc_2021_01_01:", round(roc_auc_score(df_future[target], future_pred), 4))
 
 con.close()
 ```
@@ -348,6 +359,9 @@ con.close()
 * `Votes.csv` and `Comments.csv` also define `do_labels_ops` so their future
   activity contributes to `user_had_engagement`.
 * The final target is a binary union of future post/vote/comment activity.
+* Build two separate GraphReduce compute graphs:
+  * train/eval graph at `cut_date=2020-10-01`
+  * holdout graph at `cut_date=2021-01-01`
 
 ## Run Interactive
 

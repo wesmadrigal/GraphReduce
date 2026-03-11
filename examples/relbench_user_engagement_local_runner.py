@@ -35,9 +35,9 @@ TABLES = [
 def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
     print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
-    print("2. Prepared and aggregated two GraphReduce datasets (2020 train/eval, 2021 out-of-time).", flush=True)
-    print("3. Trained model on the 2020 dataset.", flush=True)
-    print("4. Predicted and scored on 2020 holdout and 2021 out-of-time datasets.", flush=True)
+    print("2. Prepared and aggregated two GraphReduce datasets (2020-10-01 train/eval, 2021-01-01 out-of-time).", flush=True)
+    print("3. Trained model on the 2020-10-01 dataset.", flush=True)
+    print("4. Predicted and scored on 2020-10-01 holdout and 2021-01-01 out-of-time datasets.", flush=True)
     print(f"5. Achieved the following result: {result_text}", flush=True)
 
 
@@ -179,7 +179,7 @@ def main() -> None:
             urlretrieve(f"{BASE_URL}/{table}", out_path)
             downloaded_files.append(table)
 
-    train_cut_date = datetime.datetime(2020, 1, 1)
+    train_cut_date = datetime.datetime(2020, 10, 1)
     future_cut_date = datetime.datetime(2021, 1, 1)
     con = duckdb.connect()
     _prepare_view(con, "users_src", data_dir / "Users.csv")
@@ -188,7 +188,7 @@ def main() -> None:
     _prepare_view(con, "comments_src", data_dir / "Comments.csv")
 
     print("Starting relbench user-engagement transformation...", flush=True)
-    print("Building 2020 training/eval graph...", flush=True)
+    print("Building 2020-10-01 training/eval graph...", flush=True)
     df_train, target = _build_user_engagement_frame(con, train_cut_date)
     print("Building 2021 out-of-time graph...", flush=True)
     df_future, target_future = _build_user_engagement_frame(con, future_cut_date)
@@ -256,7 +256,7 @@ def main() -> None:
     print(f"Mean CV AUC : {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f}", flush=True)
     print(f"Folds AUC   : {[f'{a:.4f}' for a in fold_aucs]}", flush=True)
     holdout_auc = roc_auc_score(y_test, test_preds)
-    print(f"in_time_holdout_auc_2020: {holdout_auc:.4f}", flush=True)
+    print(f"in_time_holdout_auc_{train_cut_date.date()}: {holdout_auc:.4f}", flush=True)
 
     final_mdl = CatBoostClassifier(
         loss_function="Logloss",
@@ -273,7 +273,7 @@ def main() -> None:
         print("future target is single-class; skipping out-of-time AUC", flush=True)
         _print_steps_summary(
             downloaded_files,
-            f"in-time holdout ROC AUC (2020 cut date) = {holdout_auc:.4f}; out-of-time AUC (2021 cut date) skipped",
+            f"in-time holdout ROC AUC ({train_cut_date.date()} cut date) = {holdout_auc:.4f}; out-of-time AUC ({future_cut_date.date()} cut date) skipped",
         )
         return
 
@@ -282,7 +282,7 @@ def main() -> None:
     print(f"out_of_time_auc_2021: {future_auc:.4f}", flush=True)
     _print_steps_summary(
         downloaded_files,
-        f"in-time holdout ROC AUC (2020 cut date) = {holdout_auc:.4f}; out-of-time ROC AUC (2021 cut date) = {future_auc:.4f}",
+        f"in-time holdout ROC AUC ({train_cut_date.date()} cut date) = {holdout_auc:.4f}; out-of-time ROC AUC ({future_cut_date.date()} cut date) = {future_auc:.4f}",
     )
 
 
