@@ -72,7 +72,10 @@ def build_badges_frame(cut_date: datetime.datetime):
         date_key="CreationDate",
         columns=["Id", "DisplayName", "Location", "ProfileImageUrl", "WebsiteUrl", "AboutMe", "CreationDate"],
         table_name="users",
-        do_filters_ops=[sqlop(optype=SQLOpType.where, opval=f"user_CreationDate <= '{cut_date.date()}'")],
+        do_filters_ops=[
+            sqlop(optype=SQLOpType.where, opval=f"user_CreationDate <= '{cut_date.date()}'"),
+            sqlop(optype=SQLOpType.where, opval="user_Id is not null"),
+        ],
     )
     post = DuckdbNode(
         fpath=f"'{data_dir / 'Posts.csv'}'",
@@ -89,6 +92,7 @@ def build_badges_frame(cut_date: datetime.datetime):
         date_key="Date",
         columns=["Id", "UserId", "Class", "Name", "Date"],
         table_name="badges",
+        do_filters_ops=[sqlop(optype=SQLOpType.where, opval="bad_UserId is not null")],
     )
     post_history = DuckdbNode(
         fpath=f"'{data_dir / 'PostHistory.csv'}'",
