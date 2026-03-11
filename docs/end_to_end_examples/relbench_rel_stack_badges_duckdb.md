@@ -192,8 +192,8 @@ def build_badges_frame(cut_date: datetime.datetime):
     df[target] = (df[target].fillna(0) > 0).astype("int8")
     return df, target
 
-# 1) Training graph at 2020-01-01.
-df_train, target = build_badges_frame(datetime.datetime(2020, 1, 1))
+# 1) Training/eval graph at 2020-10-01.
+df_train, target = build_badges_frame(datetime.datetime(2020, 10, 1))
 
 # 2) Fully separate out-of-time graph at 2021-01-01.
 df_future, target_future = build_badges_frame(datetime.datetime(2021, 1, 1))
@@ -225,7 +225,7 @@ features = [
 ]
 features = [c for c in features if c in df_train.columns and c in df_future.columns]
 
-# In-time evaluation on the 2020 graph.
+# In-time evaluation on the 2020-10-01 graph.
 X_train_full, X_test, y_train_full, y_test = train_test_split(
     df_train[features],
     df_train[target],
@@ -288,9 +288,9 @@ print(f"Mean CV AUC : {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f}")
 print(f"Folds AUC   : {[f'{a:.4f}' for a in fold_aucs]}")
 
 in_time_holdout_auc = roc_auc_score(y_test, test_preds)
-print(f"\nIn-time holdout AUC (2020 graph): {in_time_holdout_auc:.4f}")
+print(f"\nIn-time holdout AUC (2020-10-01 graph): {in_time_holdout_auc:.4f}")
 
-# Train on full 2020 graph, then score on fully separate 2021 graph.
+# Train on full 2020-10-01 graph, then score on fully separate 2021-01-01 graph.
 final_mdl = CatBoostClassifier(
     loss_function="Logloss",
     eval_metric="AUC",
@@ -325,7 +325,7 @@ con.close()
 * All defined edges use `reduce=True` so signal is rolled up and propagated.
 * `Votes` and `Comments` are instantiated twice with distinct prefixes so user-level and post-level reductions stay separate.
 * Two full graphs are built and executed independently:
-  * training/eval graph at `cut_date=2020-01-01`
+  * training/eval graph at `cut_date=2020-10-01`
   * out-of-time scoring graph at `cut_date=2021-01-01`
 * `Badges.csv` is both:
   * a feature source (historical behavior in the feature window)
