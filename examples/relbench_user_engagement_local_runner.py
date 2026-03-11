@@ -216,6 +216,7 @@ def main() -> None:
     con = duckdb.connect()
     _prepare_view(con, "users_src", data_dir / "Users.csv")
     _prepare_view(con, "posts_src", data_dir / "Posts.csv")
+    _prepare_view(con, "badges_src", data_dir / "Badges.csv")
     _prepare_view(con, "votes_src", data_dir / "Votes.csv")
     _prepare_view(con, "comments_src", data_dir / "Comments.csv")
 
