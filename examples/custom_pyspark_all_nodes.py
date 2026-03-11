@@ -56,9 +56,9 @@ class CustNode(GraphReduceNode):
         return self.df
 
     def do_post_join_annotate(self):
-        ord_ct = F.coalesce(F.col("ord_num_orders"), F.lit(0))
-        not_ct = F.coalesce(F.col("not_num_notifications"), F.lit(0))
-        engaged = F.coalesce(F.col("not_num_engaged_interactions"), F.lit(0))
+        ord_ct = _safe_numeric(self.df, ["ord_num_orders"])
+        not_ct = _safe_numeric(self.df, ["not_num_notifications"])
+        engaged = _safe_numeric(self.df, ["not_num_engaged_interactions"])
 
         self.df = self.df.withColumn("cust_total_events", ord_ct + not_ct + engaged).withColumn(
             "cust_activity_tier",
