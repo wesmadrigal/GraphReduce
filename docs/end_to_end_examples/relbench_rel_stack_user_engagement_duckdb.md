@@ -137,6 +137,41 @@ comment = DuckdbNode(
         sqlop(optype=SQLOpType.agg, opval="comm_UserId"),
     ],
 )
+post_vote = DuckdbNode(
+    fpath=f"'{votes_fpath}'",
+    prefix="pvote",
+    pk="Id",
+    date_key="CreationDate",
+    columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
+    table_name="votes",
+)
+
+post_comment = DuckdbNode(
+    fpath=f"'{comments_fpath}'",
+    prefix="pcomm",
+    pk="Id",
+    date_key="CreationDate",
+    columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
+    table_name="comments",
+)
+
+post_comment_user = DuckdbNode(
+    fpath=f"'{users_fpath}'",
+    prefix="pcu",
+    pk="Id",
+    date_key="CreationDate",
+    columns=["Id", "DisplayName", "Location", "ProfileImageUrl", "WebsiteUrl", "AboutMe", "CreationDate"],
+    table_name="users",
+)
+
+post_comment_badge = DuckdbNode(
+    fpath=f"'{data_dir / 'Badges.csv'}'",
+    prefix="pcbad",
+    pk="Id",
+    date_key="Date",
+    columns=["Id", "UserId", "Class", "Name", "Date"],
+    table_name="badges",
+)
 
 post_history = DuckdbNode(
     fpath=f"'{data_dir / 'PostHistory.csv'}'",
@@ -194,7 +229,7 @@ gr = GraphReduce(
     auto_feature_hops_front=0,
 )
 
-for node in [user, post, vote, comment, post_history, post_links, tag, badge]:
+for node in [user, post, vote, comment, post_vote, post_comment, post_comment_user, post_comment_badge, post_history, post_links, tag, badge]:
     gr.add_node(node)
 
 # User-centric relations.
@@ -202,6 +237,10 @@ gr.add_entity_edge(parent_node=user, relation_node=post, parent_key="Id", relati
 gr.add_entity_edge(parent_node=user, relation_node=vote, parent_key="Id", relation_key="UserId", reduce=True)
 gr.add_entity_edge(parent_node=user, relation_node=comment, parent_key="Id", relation_key="UserId", reduce=True)
 gr.add_entity_edge(parent_node=user, relation_node=badge, parent_key="Id", relation_key="UserId", reduce=True)
+gr.add_entity_edge(parent_node=post, relation_node=post_vote, parent_key="Id", relation_key="PostId", reduce=True)
+gr.add_entity_edge(parent_node=post, relation_node=post_comment, parent_key="Id", relation_key="PostId", reduce=True)
+gr.add_entity_edge(parent_node=post_comment, relation_node=post_comment_user, parent_key="UserId", relation_key="Id", reduce=True)
+gr.add_entity_edge(parent_node=post_comment_user, relation_node=post_comment_badge, parent_key="Id", relation_key="UserId", reduce=True)
 
 # Post branches.
 gr.add_entity_edge(parent_node=post, relation_node=post_history, parent_key="Id", relation_key="PostId", reduce=True)

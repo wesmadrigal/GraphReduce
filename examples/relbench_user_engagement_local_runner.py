@@ -124,6 +124,34 @@ def _build_user_engagement_frame(
             sqlop(optype=SQLOpType.agg, opval="comm_UserId"),
         ],
     )
+    post_vote = DuckdbNode(
+        fpath="votes_src",
+        prefix="pvote",
+        pk="Id",
+        date_key="CreationDate",
+        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
+    )
+    post_comment = DuckdbNode(
+        fpath="comments_src",
+        prefix="pcomm",
+        pk="Id",
+        date_key="CreationDate",
+        columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
+    )
+    post_comment_user = DuckdbNode(
+        fpath="users_src",
+        prefix="pcu",
+        pk="Id",
+        date_key="CreationDate",
+        columns=["Id", "DisplayName", "Location", "ProfileImageUrl", "WebsiteUrl", "AboutMe", "CreationDate"],
+    )
+    post_comment_badge = DuckdbNode(
+        fpath="badges_src",
+        prefix="pcbad",
+        pk="Id",
+        date_key="Date",
+        columns=["Id", "UserId", "Class", "Name", "Date"],
+    )
 
     gr = GraphReduce(
         name=f"relbench-user-engagement-local-{cut_date.date()}",
@@ -145,12 +173,16 @@ def _build_user_engagement_frame(
         auto_feature_hops_front=0,
     )
 
-    for node in [user, post, vote, comment]:
+    for node in [user, post, vote, comment, post_vote, post_comment, post_comment_user, post_comment_badge]:
         gr.add_node(node)
 
     gr.add_entity_edge(user, post, parent_key="Id", relation_key="OwnerUserId", reduce=True)
     gr.add_entity_edge(user, vote, parent_key="Id", relation_key="UserId", reduce=True)
     gr.add_entity_edge(user, comment, parent_key="Id", relation_key="UserId", reduce=True)
+    gr.add_entity_edge(post, post_vote, parent_key="Id", relation_key="PostId", reduce=True)
+    gr.add_entity_edge(post, post_comment, parent_key="Id", relation_key="PostId", reduce=True)
+    gr.add_entity_edge(post_comment, post_comment_user, parent_key="UserId", relation_key="Id", reduce=True)
+    gr.add_entity_edge(post_comment_user, post_comment_badge, parent_key="Id", relation_key="UserId", reduce=True)
 
     gr.do_transformations_sql()
     df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
