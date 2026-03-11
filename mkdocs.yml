@@ -11,13 +11,18 @@ theme:
 
 nav:
   - Home: index.md
+  - Fundamentals:
+    - fundamentals/index.md
+    - Operations Pipeline: fundamentals/operations.md
+    - Joins and Cardinality: fundamentals/joins_and_cardinality.md
+    - Time Windows and Leakage Safety: fundamentals/time_and_leakage.md
   - Abstractions: abstractions.md
   - End-to-End Examples:
     - end_to_end_examples/index.md
     - Hello World: end_to_end_examples/hello_world.md
     - Preserve Child Grain: end_to_end_examples/preserve_child_grain.md
     - Multi-Backend Examples:
-      - "cust+notifications: pandas, sqlite, duckdb, pyspark": end_to_end_examples/multi_backend_cust_notifications.md
+      - "cust+notifications: pandas, sqlite, duckdb, pyspark, snowflake SQL, databricks SQL": end_to_end_examples/multi_backend_cust_notifications.md
       - "custom pyspark: all cust_data nodes": end_to_end_examples/custom_pyspark_all_nodes.md
       - "custom pandas: all cust_data nodes": end_to_end_examples/custom_pandas_all_nodes.md
       - "custom duckdb: all cust_data nodes": end_to_end_examples/custom_duckdb_all_nodes.md
@@ -45,14 +50,6 @@ nav:
     - tutorial_sql_backends_dynamic_queries.md
     - tutorial_method_deps.md
     - tutorial_auto_feature_engineering.md
-  - Command line interface:
-    - tutorial_cli.md
-      #- tutorial_join_deps.md
-      #- tutorial_pandas_dask.md
-      #- tutorial_spark.md
-      #- tutorial_sql.md
-
-
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true

@@ -15,7 +15,7 @@ Start with [Hello World](hello_world.md).
 
 Next: [Preserve Child Grain (`reduce=False`)](preserve_child_grain.md).
 
-Then: [Multi-Backend Same Graph (pandas, sqlite, duckdb, pyspark)](multi_backend_cust_notifications.md).
+Then: [Multi-Backend Same Graph (pandas, sqlite, duckdb, pyspark, snowflake SQL, databricks SQL)](multi_backend_cust_notifications.md).
 
 Then: [Custom PySpark Graph (All `cust_data` Nodes)](custom_pyspark_all_nodes.md).
 

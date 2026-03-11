@@ -14,6 +14,9 @@ Dataset source used in all examples: `tests/data/cust_data/*`
 
 ## Expandable Backend Examples
 
+For now, only `pandas`, `sqlite`, `duckdb`, and `pyspark` are wired to the interactive runner.
+`snowflake` and `databricks` examples below are documentation-only snippets until runner support is configured.
+
 <details>
 <summary><strong>pandas backend</strong></summary>
 
@@ -443,5 +446,180 @@ gr.do_transformations()
   <div class="modal-runner-status" data-status>Idle</div>
   <pre class="modal-runner-log" data-log></pre>
 </div>
+
+</details>
+
+<details>
+<summary><strong>snowflake SQL backend (non-interactive)</strong></summary>
+
+```python
+import datetime
+import os
+
+import snowflake.connector
+
+from graphreduce.graph_reduce import GraphReduce
+from graphreduce.node import SnowflakeNode
+from graphreduce.enum import ComputeLayerEnum, SQLOpType
+from graphreduce.models import sqlop
+
+conn = snowflake.connector.connect(
+    account=os.environ["SNOWFLAKE_ACCOUNT"],
+    user=os.environ["SNOWFLAKE_USER"],
+    password=os.environ["SNOWFLAKE_PASSWORD"],
+    warehouse=os.environ["SNOWFLAKE_WAREHOUSE"],
+    database=os.environ["SNOWFLAKE_DATABASE"],
+    schema=os.environ.get("SNOWFLAKE_SCHEMA", "PUBLIC"),
+)
+
+
+class CustNode(SnowflakeNode):
+    def do_annotate(self):
+        return [sqlop(optype=SQLOpType.select, opval=f"*, LENGTH({self.colabbr('name')}) as {self.colabbr('name_length')}")]
+
+    def do_filters(self):
+        return [sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('id')} < 3")]
+
+    def do_reduce(self, reduce_key):
+        pass
+
+
+class NotificationNode(SnowflakeNode):
+    def do_annotate(self):
+        return [
+            sqlop(
+                optype=SQLOpType.select,
+                opval=f"*, TO_CHAR(TO_TIMESTAMP({self.colabbr('ts')}), 'MM') as {self.colabbr('ts_month')}",
+            )
+        ]
+
+    def do_filters(self):
+        return [sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('ts')} > '2022-06-01'")]
+
+    def do_reduce(self, reduce_key):
+        return [
+            sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_notifications')}"),
+            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
+        ]
+
+
+cust = CustNode(
+    fpath="CUST",
+    prefix="cust",
+    pk="id",
+    client=conn,
+    compute_layer=ComputeLayerEnum.snowflake,
+    columns=["id", "name"],
+)
+notif = NotificationNode(
+    fpath="NOTIFICATIONS",
+    prefix="not",
+    pk="id",
+    date_key="ts",
+    client=conn,
+    compute_layer=ComputeLayerEnum.snowflake,
+    columns=["id", "customer_id", "ts"],
+)
+
+gr = GraphReduce(
+    name="cust_notif_snowflake",
+    parent_node=cust,
+    compute_layer=ComputeLayerEnum.snowflake,
+    sql_client=conn,
+    cut_date=datetime.datetime(2023, 6, 30),
+)
+gr.add_node(cust)
+gr.add_node(notif)
+gr.add_entity_edge(cust, notif, parent_key="id", relation_key="customer_id", reduce=True)
+gr.do_transformations_sql()
+
+conn.close()
+```
+
+</details>
+
+<details>
+<summary><strong>databricks SQL backend (non-interactive)</strong></summary>
+
+```python
+import datetime
+import os
+
+from databricks import sql
+
+from graphreduce.graph_reduce import GraphReduce
+from graphreduce.node import DatabricksNode
+from graphreduce.enum import ComputeLayerEnum, SQLOpType
+from graphreduce.models import sqlop
+
+conn = sql.connect(
+    server_hostname=os.environ["DATABRICKS_SERVER_HOSTNAME"],
+    http_path=os.environ["DATABRICKS_HTTP_PATH"],
+    access_token=os.environ["DATABRICKS_TOKEN"],
+)
+
+
+class CustNode(DatabricksNode):
+    def do_annotate(self):
+        return [sqlop(optype=SQLOpType.select, opval=f"*, LENGTH({self.colabbr('name')}) as {self.colabbr('name_length')}")]
+
+    def do_filters(self):
+        return [sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('id')} < 3")]
+
+    def do_reduce(self, reduce_key):
+        pass
+
+
+class NotificationNode(DatabricksNode):
+    def do_annotate(self):
+        return [
+            sqlop(
+                optype=SQLOpType.select,
+                opval=f"*, date_format(to_timestamp({self.colabbr('ts')}), 'MM') as {self.colabbr('ts_month')}",
+            )
+        ]
+
+    def do_filters(self):
+        return [sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('ts')} > '2022-06-01'")]
+
+    def do_reduce(self, reduce_key):
+        return [
+            sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_notifications')}"),
+            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
+        ]
+
+
+cust = CustNode(
+    fpath="main.default.cust",
+    prefix="cust",
+    pk="id",
+    client=conn,
+    compute_layer=ComputeLayerEnum.databricks,
+    columns=["id", "name"],
+)
+notif = NotificationNode(
+    fpath="main.default.notifications",
+    prefix="not",
+    pk="id",
+    date_key="ts",
+    client=conn,
+    compute_layer=ComputeLayerEnum.databricks,
+    columns=["id", "customer_id", "ts"],
+)
+
+gr = GraphReduce(
+    name="cust_notif_databricks",
+    parent_node=cust,
+    compute_layer=ComputeLayerEnum.databricks,
+    sql_client=conn,
+    cut_date=datetime.datetime(2023, 6, 30),
+)
+gr.add_node(cust)
+gr.add_node(notif)
+gr.add_entity_edge(cust, notif, parent_key="id", relation_key="customer_id", reduce=True)
+gr.do_transformations_sql()
+
+conn.close()
+```
 
 </details>
