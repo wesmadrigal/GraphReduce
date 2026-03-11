@@ -32,6 +32,20 @@ TABLES = [
 ]
 
 
+class PositiveVoteNode(DuckdbNode):
+    def do_labels(self, reduce_key):
+        return [
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval=(
+                    f"sum(case when {self.colabbr('VoteTypeId')} = 2 then 1 else 0 end) "
+                    f"as {self.colabbr('positive_votes_label')}"
+                ),
+            ),
+            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
+        ]
+
+
 def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
     print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
@@ -66,9 +80,14 @@ def _build_post_votes_frame(
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "OwnerUserId", "PostTypeId", "AcceptedAnswerId", "ParentId", "Title", "Tags", "Body", "CreationDate"],
-        do_filters_ops=[sqlop(optype=SQLOpType.where, opval=f"post_CreationDate <= '{cut_date.date()}'")],
+        do_filters_ops=[
+            sqlop(optype=SQLOpType.where, opval=f"post_CreationDate <= '{cut_date.date()}'"),
+            sqlop(optype=SQLOpType.where, opval="post_PostTypeId = 1"),
+            sqlop(optype=SQLOpType.where, opval="post_OwnerUserId is not null"),
+            sqlop(optype=SQLOpType.where, opval="post_OwnerUserId != -1"),
+        ],
     )
-    vote = DuckdbNode(
+    vote = PositiveVoteNode(
         fpath="votes_src",
         prefix="vote",
         pk="Id",
@@ -126,11 +145,9 @@ def _build_post_votes_frame(
         cut_date=cut_date,
         compute_period_val=3650,
         compute_period_unit=PeriodUnit.day,
+        date_filters_on_agg=True,
         auto_features=True,
-        auto_labels=True,
         label_node=vote,
-        label_field="Id",
-        label_operation="count",
         label_period_val=90,
         label_period_unit=PeriodUnit.day,
         auto_feature_hops_back=4,

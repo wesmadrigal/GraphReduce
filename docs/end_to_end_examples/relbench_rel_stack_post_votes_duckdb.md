@@ -1,5 +1,9 @@
 # RelBench Rel-Stack with DuckDB (Post Votes as Label)
 
+[![RelBench rel-stack post-votes graphreduce flow](relbench_rel_stack_post_votes_duckdb_overview.svg)](relbench_rel_stack_post_votes_duckdb_overview.svg)
+
+Open full-size: [SVG](relbench_rel_stack_post_votes_duckdb_overview.svg)
+
 This example follows the same structure as the user-badges workflow but for the
 post-votes task: `Posts.csv` is the parent node and the target is whether a
 post receives votes in the next 90 days.
@@ -63,6 +67,20 @@ for table in TABLES:
 con = duckdb.connect()
 cut_date = datetime.datetime(2020, 1, 1)
 
+
+class PositiveVoteNode(DuckdbNode):
+    def do_labels(self, reduce_key):
+        return [
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval=(
+                    f"sum(case when {self.colabbr('VoteTypeId')} = 2 then 1 else 0 end) "
+                    f"as {self.colabbr('positive_votes_label')}"
+                ),
+            ),
+            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
+        ]
+
 post = DuckdbNode(
     fpath=f"'{data_dir / 'Posts.csv'}'",
     prefix="post",
@@ -74,11 +92,14 @@ post = DuckdbNode(
         sqlop(
             optype=SQLOpType.where,
             opval=f"post_CreationDate <= '{cut_date.date()}'",
-        )
+        ),
+        sqlop(optype=SQLOpType.where, opval="post_PostTypeId = 1"),
+        sqlop(optype=SQLOpType.where, opval="post_OwnerUserId is not null"),
+        sqlop(optype=SQLOpType.where, opval="post_OwnerUserId != -1"),
     ],
 )
 
-vote = DuckdbNode(
+vote = PositiveVoteNode(
     fpath=f"'{data_dir / 'Votes.csv'}'",
     prefix="vote",
     pk="Id",
@@ -149,11 +170,9 @@ gr = GraphReduce(
     cut_date=cut_date,
     compute_period_val=3650,
     compute_period_unit=PeriodUnit.day,
+    date_filters_on_agg=True,
     auto_features=True,
-    auto_labels=True,
     label_node=vote,
-    label_field="Id",
-    label_operation="count",
     label_period_val=90,
     label_period_unit=PeriodUnit.day,
     auto_feature_hops_back=4,
@@ -324,10 +343,14 @@ con.close()
 ## Notes
 
 * This is a full DuckDB SQL graph execution (`gr.do_transformations_sql()`).
-* The parent node is `Posts.csv`, filtered at source to `CreationDate <= cut_date`.
+* The parent node is `Posts.csv`, filtered at source to:
+  * `CreationDate <= cut_date`
+  * `PostTypeId = 1`
+  * `OwnerUserId` present and not `-1`
 * `Votes.csv` is both:
   * a feature source (historical vote behavior in the feature window)
-  * the label source (future **count(Id)** in the 90-day label window)
+  * the label source (future **positive votes where `VoteTypeId = 2`** in the 90-day label window)
+* Label-window time filtering is handled by `GraphReduce(..., date_filters_on_agg=True)`.
 * This benchmark is treated as a **regression** problem and reports **MAE**.
 
 ## Run Interactive
