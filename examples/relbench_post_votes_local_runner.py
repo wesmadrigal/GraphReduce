@@ -32,20 +32,6 @@ TABLES = [
 ]
 
 
-class PositiveVoteNode(DuckdbNode):
-    def do_labels(self, reduce_key):
-        return [
-            sqlop(
-                optype=SQLOpType.aggfunc,
-                opval=(
-                    f"sum(case when {self.colabbr('VoteTypeId')} = 2 then 1 else 0 end) "
-                    f"as {self.colabbr('positive_votes_label')}"
-                ),
-            ),
-            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
-        ]
-
-
 def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
     print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
@@ -87,12 +73,19 @@ def _build_post_votes_frame(
             sqlop(optype=SQLOpType.where, opval="post_OwnerUserId != -1"),
         ],
     )
-    vote = PositiveVoteNode(
+    vote = DuckdbNode(
         fpath="votes_src",
         prefix="vote",
         pk="Id",
         date_key="CreationDate",
         columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
+        do_labels_ops=[
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval="sum(case when vote_VoteTypeId = 2 then 1 else 0 end) as vote_positive_votes_label",
+            ),
+            sqlop(optype=SQLOpType.agg, opval="vote_PostId"),
+        ],
     )
     comment = DuckdbNode(
         fpath="comments_src",

@@ -68,19 +68,6 @@ con = duckdb.connect()
 cut_date = datetime.datetime(2020, 1, 1)
 
 
-class PositiveVoteNode(DuckdbNode):
-    def do_labels(self, reduce_key):
-        return [
-            sqlop(
-                optype=SQLOpType.aggfunc,
-                opval=(
-                    f"sum(case when {self.colabbr('VoteTypeId')} = 2 then 1 else 0 end) "
-                    f"as {self.colabbr('positive_votes_label')}"
-                ),
-            ),
-            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
-        ]
-
 post = DuckdbNode(
     fpath=f"'{data_dir / 'Posts.csv'}'",
     prefix="post",
@@ -99,13 +86,20 @@ post = DuckdbNode(
     ],
 )
 
-vote = PositiveVoteNode(
+vote = DuckdbNode(
     fpath=f"'{data_dir / 'Votes.csv'}'",
     prefix="vote",
     pk="Id",
     date_key="CreationDate",
     columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
     table_name="votes",
+    do_labels_ops=[
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval="sum(case when vote_VoteTypeId = 2 then 1 else 0 end) as vote_positive_votes_label",
+        ),
+        sqlop(optype=SQLOpType.agg, opval="vote_PostId"),
+    ],
 )
 
 comment = DuckdbNode(
