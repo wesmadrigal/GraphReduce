@@ -77,6 +77,7 @@ SCRIPT_MAP: dict[str, str] = {
     "relbench_user_badges": "examples/relbench_user_badges_local_runner.py",
     "relbench_post_votes": "examples/relbench_post_votes_local_runner.py",
     "relbench_user_engagement": "examples/relbench_user_engagement_local_runner.py",
+    "relbench_trial_study_outcome": "examples/relbench_trial_study_outcome_local_runner.py",
     "relbench_hm_user_churn": "examples/relbench_hm_user_churn_local_runner.py",
     "relbench_avito_user_clicks": "examples/relbench_avito_user_clicks_local_runner.py",
     "relbench_avito_user_visits": "examples/relbench_avito_user_visits_local_runner.py",

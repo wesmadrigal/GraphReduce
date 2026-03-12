@@ -33,6 +33,7 @@ nav:
       - "rel-stack: User Badges": end_to_end_examples/relbench_rel_stack_badges_duckdb.md
       - "rel-stack: Post Votes": end_to_end_examples/relbench_rel_stack_post_votes_duckdb.md
       - "rel-stack: User Engagement": end_to_end_examples/relbench_rel_stack_user_engagement_duckdb.md
+      - "rel-trial: Study Outcome": end_to_end_examples/relbench_rel_trial_study_outcome_duckdb.md
       - "rel-hm: User Churn": end_to_end_examples/relbench_rel_hm_user_churn_duckdb.md
       - "rel-hm: Item Sales": end_to_end_examples/relbench_rel_hm_item_sales_duckdb.md
       - "rel-avito: User Clicks": end_to_end_examples/relbench_rel_avito_user_clicks_duckdb.md

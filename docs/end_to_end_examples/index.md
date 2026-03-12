@@ -35,6 +35,8 @@ Then: [RelBench Rel-Stack DuckDB (Post Votes Label)](relbench_rel_stack_post_vot
 
 Then: [RelBench Rel-Stack DuckDB (User Engagement)](relbench_rel_stack_user_engagement_duckdb.md).
 
+Then: [RelBench rel-trial DuckDB (Study Outcome)](relbench_rel_trial_study_outcome_duckdb.md).
+
 Then: [RelBench rel-hm DuckDB (User Churn)](relbench_rel_hm_user_churn_duckdb.md).
 
 Then: [RelBench rel-hm DuckDB (Item Sales)](relbench_rel_hm_item_sales_duckdb.md).
