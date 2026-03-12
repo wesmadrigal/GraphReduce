@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="940" viewBox="0 0 1480 940">
+  <defs>
+    <style>
+      .title { font: 700 31px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .label { font: 700 14px Arial, sans-serif; fill: #102a43; }
+      .text { font: 12px Arial, sans-serif; fill: #243b53; }
+      .small { font: 11px Arial, sans-serif; fill: #486581; }
+      .mono { font: 12px "Courier New", monospace; fill: #1f2933; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#334e68"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#12734a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="940" fill="#f7fafc"/>
+  <text x="40" y="54" class="title">Multi-Backend cust+notifications GraphReduce (Same Graph Spec)</text>
+  <text x="40" y="82" class="subtitle">One parent-child compute graph rendered across pandas, sqlite, duckdb, pyspark, snowflake SQL, and databricks SQL.</text>
+
+  <rect x="34" y="112" width="560" height="600" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="54" y="142" class="section">1) Shared Graph Model</text>
+
+  <rect x="208" y="180" width="214" height="138" rx="10" fill="#e7f0ff" stroke="#486581"/>
+  <text x="224" y="206" class="label">Parent: cust</text>
+  <text x="224" y="226" class="text">pk: id, prefix: cust</text>
+  <text x="224" y="246" class="text">filter: cust_id &lt; 3</text>
+  <text x="224" y="266" class="text">annotate: cust_name_length</text>
+  <text x="224" y="286" class="mono">grain: one row per customer</text>
+
+  <rect x="208" y="366" width="214" height="152" rx="10" fill="#e8fff1" stroke="#486581"/>
+  <text x="224" y="392" class="label">Child: notifications</text>
+  <text x="224" y="412" class="text">fk: customer_id -&gt; cust.id</text>
+  <text x="224" y="432" class="text">filter: ts &gt; '2022-06-01'</text>
+  <text x="224" y="452" class="text">annotate: ts_month</text>
+  <text x="224" y="472" class="mono">reduce: count(id) by customer</text>
+  <text x="224" y="492" class="mono">-&gt; not_num_notifications</text>
+
+  <line x1="315" y1="318" x2="315" y2="366" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="66" y="554" width="496" height="134" rx="10" fill="#f8fafc" stroke="#829ab1"/>
+  <text x="84" y="582" class="label">Compute graph edge (identical for all backends)</text>
+  <text x="84" y="606" class="mono">gr.add_entity_edge(cust, notif, parent_key='id', relation_key='customer_id', reduce=True)</text>
+  <text x="84" y="628" class="mono">gr.do_transformations() or gr.do_transformations_sql()</text>
+  <text x="84" y="650" class="text">Output remains at customer grain with notification aggregates joined to parent.</text>
+
+  <rect x="620" y="112" width="390" height="260" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="640" y="142" class="section">2) Backend Matrix</text>
+
+  <rect x="646" y="168" width="164" height="56" rx="8" fill="#fff6df" stroke="#b7791f"/>
+  <text x="662" y="192" class="label">Python backends</text>
+  <text x="662" y="212" class="mono">pandas, pyspark</text>
+
+  <rect x="822" y="168" width="164" height="56" rx="8" fill="#eef2ff" stroke="#486581"/>
+  <text x="838" y="192" class="label">SQL backends</text>
+  <text x="838" y="212" class="mono">sqlite, duckdb</text>
+
+  <rect x="646" y="236" width="164" height="56" rx="8" fill="#e7fff5" stroke="#2f855a"/>
+  <text x="662" y="260" class="label">Cloud SQL</text>
+  <text x="662" y="280" class="mono">snowflake SQL</text>
+
+  <rect x="822" y="236" width="164" height="56" rx="8" fill="#f0f9ff" stroke="#2b6cb0"/>
+  <text x="838" y="260" class="label">Cloud SQL</text>
+  <text x="838" y="280" class="mono">databricks SQL</text>
+
+  <rect x="646" y="304" width="340" height="50" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
+  <text x="662" y="332" class="mono">same node methods, different ComputeLayerEnum + client</text>
+
+  <rect x="620" y="392" width="390" height="320" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="640" y="422" class="section">3) Execution Pattern</text>
+  <text x="640" y="450" class="text">A) Define backend-specific nodes with identical behavior.</text>
+  <text x="640" y="474" class="text">B) Build GraphReduce with same parent/child edge spec.</text>
+  <text x="640" y="498" class="text">C) Execute transformations in backend-native engine.</text>
+  <text x="640" y="522" class="text">D) Inspect output columns and row shape at parent grain.</text>
+  <rect x="642" y="546" width="346" height="144" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
+  <text x="658" y="572" class="mono">pandas/pyspark: gr.do_transformations()</text>
+  <text x="658" y="594" class="mono">sql backends: gr.do_transformations_sql()</text>
+  <text x="658" y="616" class="mono">final columns include:</text>
+  <text x="658" y="638" class="mono">cust_*</text>
+  <text x="658" y="660" class="mono">not_num_notifications</text>
+
+  <rect x="1040" y="112" width="408" height="600" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="1060" y="142" class="section">4) Interactivity and Deployment State</text>
+
+  <rect x="1062" y="170" width="364" height="244" rx="10" fill="#f8fafc" stroke="#829ab1"/>
+  <text x="1080" y="198" class="label">Interactive docs runner today</text>
+  <text x="1080" y="224" class="mono">enabled: pandas, sqlite, duckdb, pyspark</text>
+  <text x="1080" y="248" class="mono">docs-only: snowflake SQL, databricks SQL</text>
+  <text x="1080" y="276" class="text">Cloud backends are intentionally non-interactive</text>
+  <text x="1080" y="296" class="text">until runner-side credentials/execution are configured.</text>
+  <text x="1080" y="330" class="mono">same graph contract is already documented</text>
+  <text x="1080" y="352" class="mono">for all six backends</text>
+
+  <rect x="1062" y="434" width="364" height="256" rx="10" fill="#e7fff5" stroke="#2f855a"/>
+  <text x="1080" y="462" class="label">Why this page matters</text>
+  <text x="1080" y="488" class="text">Backend portability without rewriting graph logic.</text>
+  <text x="1080" y="512" class="text">Consistent feature semantics across execution engines.</text>
+  <text x="1080" y="536" class="text">Easy progression from local backend to cloud warehouse.</text>
+  <text x="1080" y="560" class="text">Clear path to later interactive runner enablement.</text>
+  <text x="1080" y="596" class="mono">one graph spec, many compute targets</text>
+
+  <line x1="594" y1="430" x2="620" y2="450" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="1010" y1="560" x2="1040" y2="560" stroke="#12734a" stroke-width="2.6" marker-end="url(#arrowGreen)"/>
+
+  <text x="40" y="908" class="small">Specific to end_to_end_examples/multi_backend_cust_notifications.md and its six documented backend variants.</text>
+</svg>

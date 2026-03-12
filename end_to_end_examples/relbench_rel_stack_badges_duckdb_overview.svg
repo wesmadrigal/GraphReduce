@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="940" viewBox="0 0 1480 940">
+  <defs>
+    <style>
+      .title { font: 700 31px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .label { font: 700 14px Arial, sans-serif; fill: #102a43; }
+      .text { font: 12px Arial, sans-serif; fill: #243b53; }
+      .small { font: 11px Arial, sans-serif; fill: #486581; }
+      .mono { font: 12px "Courier New", monospace; fill: #1f2933; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#334e68"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#12734a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="940" fill="#f7fafc"/>
+  <text x="40" y="54" class="title">RelBench Rel-Stack in DuckDB with Badges Label Target</text>
+  <text x="40" y="82" class="subtitle">Dynamic S3 CSV download, Users parent node with cut-date filter, multi-table reductions, and future badge labels at parent grain.</text>
+
+  <rect x="34" y="112" width="560" height="600" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="54" y="142" class="section">1) Graph Model and Node Roles</text>
+
+  <rect x="210" y="176" width="210" height="126" rx="10" fill="#e7f0ff" stroke="#486581"/>
+  <text x="226" y="200" class="label">Parent: Users.csv</text>
+  <text x="226" y="220" class="text">prefix: user, pk: Id</text>
+  <text x="226" y="238" class="text">date_key: CreationDate</text>
+  <text x="226" y="256" class="text">do_filters_ops applied</text>
+  <text x="226" y="274" class="mono">user_CreationDate &lt;= cut_date</text>
+
+  <rect x="44" y="352" width="170" height="110" rx="10" fill="#fff6df" stroke="#486581"/>
+  <text x="58" y="376" class="label">Posts.csv</text>
+  <text x="58" y="394" class="text">OwnerUserId -&gt; user.Id</text>
+  <text x="58" y="412" class="text">reduce=True</text>
+
+  <rect x="230" y="352" width="170" height="110" rx="10" fill="#e8fff1" stroke="#486581"/>
+  <text x="244" y="376" class="label">Badges.csv</text>
+  <text x="244" y="394" class="text">UserId -&gt; user.Id</text>
+  <text x="244" y="412" class="text">reduce=True (label node)</text>
+
+  <rect x="416" y="352" width="170" height="110" rx="10" fill="#eef2ff" stroke="#486581"/>
+  <text x="430" y="376" class="label">Votes.csv</text>
+  <text x="430" y="394" class="text">UserId -&gt; user.Id</text>
+  <text x="430" y="412" class="text">reduce=True</text>
+
+  <rect x="44" y="486" width="170" height="110" rx="10" fill="#fef3c7" stroke="#486581"/>
+  <text x="58" y="510" class="label">Comments.csv</text>
+  <text x="58" y="528" class="text">UserId -&gt; user.Id</text>
+  <text x="58" y="546" class="text">reduce=True</text>
+
+  <rect x="230" y="486" width="170" height="110" rx="10" fill="#f0f9ff" stroke="#486581"/>
+  <text x="244" y="510" class="label">PostHistory.csv</text>
+  <text x="244" y="528" class="text">PostId -&gt; posts.Id</text>
+  <text x="244" y="546" class="text">reduce=True</text>
+
+  <rect x="416" y="486" width="170" height="110" rx="10" fill="#ecfccb" stroke="#486581"/>
+  <text x="430" y="510" class="label">PostLinks.csv</text>
+  <text x="430" y="528" class="text">PostId -&gt; posts.Id</text>
+  <text x="430" y="546" class="text">reduce=True</text>
+
+  <rect x="230" y="620" width="170" height="70" rx="10" fill="#fae8ff" stroke="#486581"/>
+  <text x="244" y="646" class="label">Tags.csv</text>
+  <text x="244" y="664" class="text">ExcerptPostId -&gt; posts.Id</text>
+
+  <line x1="250" y1="302" x2="130" y2="352" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="315" y1="302" x2="315" y2="352" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="380" y1="302" x2="500" y2="352" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="240" y1="302" x2="130" y2="486" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="130" y1="462" x2="315" y2="486" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="130" y1="462" x2="500" y2="486" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="130" y1="462" x2="315" y2="620" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+
+  <rect x="620" y="112" width="390" height="260" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="640" y="142" class="section">2) Time and Label Configuration</text>
+  <rect x="646" y="168" width="340" height="46" rx="8" fill="#f0f4f8" stroke="#9fb3c8"/>
+  <text x="662" y="196" class="mono">cut_date = 2020-01-01</text>
+  <rect x="646" y="224" width="340" height="50" rx="8" fill="#e6fffa" stroke="#2c7a7b"/>
+  <text x="662" y="244" class="label">X window: 3650-day lookback</text>
+  <text x="662" y="262" class="mono">~10 years of history up to cut_date</text>
+  <rect x="646" y="284" width="340" height="50" rx="8" fill="#fffaf0" stroke="#b7791f"/>
+  <text x="662" y="304" class="label">y window: 90-day forward</text>
+  <text x="662" y="322" class="mono">label_node = badges, label_op = count</text>
+
+  <rect x="620" y="392" width="390" height="320" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="640" y="422" class="section">3) Compute Graph Pipeline in DuckDB</text>
+  <text x="640" y="450" class="text">A) Download CSVs from S3 if missing.</text>
+  <text x="640" y="474" class="text">B) Instantiate all 8 tables as `DuckdbNode`.</text>
+  <text x="640" y="498" class="text">C) Add edges with `reduce=True` for upward rollup.</text>
+  <text x="640" y="522" class="text">D) Run `gr.do_transformations_sql()`.</text>
+  <text x="640" y="546" class="text">E) Read final feature/label frame from temp table ref.</text>
+  <rect x="642" y="566" width="346" height="124" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
+  <text x="658" y="592" class="mono">out_df = con.sql(...).to_df()</text>
+  <text x="658" y="614" class="mono">rows: one row per filtered user</text>
+  <text x="658" y="636" class="mono">X: user/post/vote/comment/... aggregates</text>
+  <text x="658" y="658" class="mono">y: badge label column(s)</text>
+
+  <rect x="1040" y="112" width="408" height="600" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="1060" y="142" class="section">4) Output at Parent Grain and Why This Setup</text>
+  <rect x="1062" y="170" width="364" height="262" rx="10" fill="#f8fafc" stroke="#829ab1"/>
+  <text x="1080" y="198" class="label">Example output columns</text>
+  <text x="1080" y="224" class="mono">user_Id, user_DisplayName, ...</text>
+  <text x="1080" y="248" class="mono">post_* aggregates</text>
+  <text x="1080" y="272" class="mono">vote_* aggregates</text>
+  <text x="1080" y="296" class="mono">comm_* aggregates</text>
+  <text x="1080" y="320" class="mono">bad_* feature aggregates</text>
+  <text x="1080" y="344" class="mono">bad_*_label target column(s)</text>
+  <text x="1080" y="378" class="text">Feature matrix and target are model-ready.</text>
+
+  <rect x="1062" y="450" width="364" height="240" rx="10" fill="#e7fff5" stroke="#2f855a"/>
+  <text x="1080" y="478" class="label">Why this setup</text>
+  <text x="1080" y="504" class="text">Users are filtered at source by cut date.</text>
+  <text x="1080" y="528" class="text">All relation signal is reduced upward.</text>
+  <text x="1080" y="552" class="text">Badges drives both historical features and</text>
+  <text x="1080" y="576" class="text">future target labels.</text>
+  <text x="1080" y="610" class="mono">graphreduce + duckdb => training frame</text>
+
+  <line x1="594" y1="430" x2="620" y2="450" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="1010" y1="560" x2="1040" y2="560" stroke="#12734a" stroke-width="2.6" marker-end="url(#arrowGreen)"/>
+
+  <text x="40" y="908" class="small">Specific to end_to_end_examples/relbench_rel_stack_badges_duckdb.md with Users cutoff filtering and Badges label horizon.</text>
+</svg>

@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="940" viewBox="0 0 1480 940">
+  <defs>
+    <style>
+      .title { font: 700 31px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .label { font: 700 14px Arial, sans-serif; fill: #102a43; }
+      .text { font: 12px Arial, sans-serif; fill: #243b53; }
+      .small { font: 11px Arial, sans-serif; fill: #486581; }
+      .mono { font: 12px "Courier New", monospace; fill: #1f2933; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#334e68"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#12734a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="940" fill="#f7fafc"/>
+  <text x="40" y="54" class="title">RelBench Rel-Stack in DuckDB with Post Votes Target</text>
+  <text x="40" y="82" class="subtitle">Posts parent grain, all relation tables reduced, and votes-in-next-90-days used as out-of-time supervised target.</text>
+
+  <rect x="34" y="112" width="560" height="600" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="54" y="142" class="section">1) Graph Model and Node Roles</text>
+
+  <rect x="210" y="176" width="210" height="126" rx="10" fill="#fff6df" stroke="#486581"/>
+  <text x="226" y="200" class="label">Parent: Posts.csv</text>
+  <text x="226" y="220" class="text">prefix: post, pk: Id</text>
+  <text x="226" y="238" class="text">date_key: CreationDate</text>
+  <text x="226" y="256" class="text">do_filters_ops applied</text>
+  <text x="226" y="274" class="mono">post_CreationDate &lt;= cut_date</text>
+
+  <rect x="44" y="352" width="170" height="110" rx="10" fill="#eef2ff" stroke="#486581"/>
+  <text x="58" y="376" class="label">Votes.csv</text>
+  <text x="58" y="394" class="text">PostId -&gt; post.Id</text>
+  <text x="58" y="412" class="text">reduce=True (label node)</text>
+
+  <rect x="230" y="352" width="170" height="110" rx="10" fill="#fef3c7" stroke="#486581"/>
+  <text x="244" y="376" class="label">Comments.csv</text>
+  <text x="244" y="394" class="text">PostId -&gt; post.Id</text>
+  <text x="244" y="412" class="text">reduce=True</text>
+
+  <rect x="416" y="352" width="170" height="110" rx="10" fill="#f0f9ff" stroke="#486581"/>
+  <text x="430" y="376" class="label">PostHistory.csv</text>
+  <text x="430" y="394" class="text">PostId -&gt; post.Id</text>
+  <text x="430" y="412" class="text">reduce=True</text>
+
+  <rect x="44" y="486" width="170" height="110" rx="10" fill="#ecfccb" stroke="#486581"/>
+  <text x="58" y="510" class="label">PostLinks.csv</text>
+  <text x="58" y="528" class="text">PostId -&gt; post.Id</text>
+  <text x="58" y="546" class="text">reduce=True</text>
+
+  <rect x="230" y="486" width="170" height="110" rx="10" fill="#fae8ff" stroke="#486581"/>
+  <text x="244" y="510" class="label">Tags.csv</text>
+  <text x="244" y="528" class="text">ExcerptPostId -&gt; post.Id</text>
+  <text x="244" y="546" class="text">reduce=True</text>
+
+  <rect x="416" y="486" width="170" height="110" rx="10" fill="#e7f0ff" stroke="#486581"/>
+  <text x="430" y="510" class="label">Users.csv</text>
+  <text x="430" y="528" class="text">OwnerUserId -&gt; user.Id</text>
+  <text x="430" y="546" class="text">reduce=True</text>
+
+  <rect x="230" y="620" width="170" height="70" rx="10" fill="#e8fff1" stroke="#486581"/>
+  <text x="244" y="646" class="label">Badges.csv</text>
+  <text x="244" y="664" class="text">UserId -&gt; user.Id</text>
+
+  <line x1="315" y1="302" x2="130" y2="352" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="315" y1="302" x2="315" y2="352" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="315" y1="302" x2="500" y2="352" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="315" y1="302" x2="130" y2="486" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="315" y1="302" x2="315" y2="486" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="315" y1="302" x2="500" y2="486" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+  <line x1="500" y1="596" x2="315" y2="620" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
+
+  <rect x="620" y="112" width="390" height="260" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="640" y="142" class="section">2) Time and Label Configuration</text>
+  <rect x="646" y="168" width="340" height="46" rx="8" fill="#f0f4f8" stroke="#9fb3c8"/>
+  <text x="662" y="196" class="mono">Graph A cut_date = 2020-01-01 (train/eval)</text>
+  <rect x="646" y="224" width="340" height="46" rx="8" fill="#f0f4f8" stroke="#9fb3c8"/>
+  <text x="662" y="252" class="mono">Graph B cut_date = 2021-01-01 (OOT test)</text>
+  <rect x="646" y="280" width="340" height="50" rx="8" fill="#fffaf0" stroke="#b7791f"/>
+  <text x="662" y="300" class="label">Label window: 90 days forward</text>
+  <text x="662" y="318" class="mono">label_node = votes, label_op = count(Id)</text>
+
+  <rect x="620" y="392" width="390" height="320" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="640" y="422" class="section">3) Compute Graph Pipeline in DuckDB</text>
+  <text x="640" y="450" class="text">A) Download CSVs from S3 if missing.</text>
+  <text x="640" y="474" class="text">B) Build full graph at 2020 cut date.</text>
+  <text x="640" y="498" class="text">C) Build fully re-instantiated graph at 2021 cut date.</text>
+  <text x="640" y="522" class="text">D) Train regressor on Graph A and evaluate holdout MAE.</text>
+  <text x="640" y="546" class="text">E) Score Graph B out-of-time MAE with final model.</text>
+  <rect x="642" y="566" width="346" height="124" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
+  <text x="658" y="592" class="mono">out_train = GraphReduce(2020) result</text>
+  <text x="658" y="614" class="mono">out_future = GraphReduce(2021) result</text>
+  <text x="658" y="636" class="mono">X: post/user/comment/history/link/tag aggregates</text>
+  <text x="658" y="658" class="mono">y: vote_*_label (future count target)</text>
+
+  <rect x="1040" y="112" width="408" height="600" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="1060" y="142" class="section">4) Output at Parent Grain and Why This Setup</text>
+  <rect x="1062" y="170" width="364" height="262" rx="10" fill="#f8fafc" stroke="#829ab1"/>
+  <text x="1080" y="198" class="label">Frame shape</text>
+  <text x="1080" y="224" class="mono">one row per post</text>
+  <text x="1080" y="248" class="mono">post_* + reduced relation features</text>
+  <text x="1080" y="272" class="mono">vote_*_label target</text>
+  <text x="1080" y="296" class="mono">continuous regression target</text>
+  <text x="1080" y="320" class="mono">metric: MAE</text>
+  <text x="1080" y="354" class="text">Supports in-time and out-of-time evaluation.</text>
+
+  <rect x="1062" y="450" width="364" height="240" rx="10" fill="#e7fff5" stroke="#2f855a"/>
+  <text x="1080" y="478" class="label">Interactive runner logs</text>
+  <text x="1080" y="504" class="text">Build graph A (2020), train, holdout score.</text>
+  <text x="1080" y="528" class="text">Build graph B (2021), out-of-time score.</text>
+  <text x="1080" y="552" class="text">Prints final steps-completed summary.</text>
+  <text x="1080" y="610" class="mono">graphreduce + catboost regressor</text>
+
+  <line x1="594" y1="430" x2="620" y2="450" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="1010" y1="560" x2="1040" y2="560" stroke="#12734a" stroke-width="2.6" marker-end="url(#arrowGreen)"/>
+
+  <text x="40" y="908" class="small">Specific to end_to_end_examples/relbench_rel_stack_post_votes_duckdb.md with dual-cut graph execution.</text>
+</svg>
