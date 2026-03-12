@@ -30,19 +30,21 @@ nav:
     - Predictive AI with XGBoost: end_to_end_examples/predictive_ai_xgboost.md
     - Predictive AI with TabPFN: end_to_end_examples/predictive_ai_tabpfn.md
     - RelBench Tasks:
-      - "rel-stack: user-badges (classification)": end_to_end_examples/relbench_rel_stack_badges_duckdb.md
-      - "rel-stack: post-votes (regression)": end_to_end_examples/relbench_rel_stack_post_votes_duckdb.md
-      - "rel-stack: user-engagement (classification)": end_to_end_examples/relbench_rel_stack_user_engagement_duckdb.md
-      - "rel-trial: study-outcome (classification)": end_to_end_examples/relbench_rel_trial_study_outcome_duckdb.md
-      - "rel-hm: user-churn (classification)": end_to_end_examples/relbench_rel_hm_user_churn_duckdb.md
-      - "rel-hm: item-sales (regression)": end_to_end_examples/relbench_rel_hm_item_sales_duckdb.md
-      - "rel-avito: user-clicks (classification)": end_to_end_examples/relbench_rel_avito_user_clicks_duckdb.md
-      - "rel-avito: user-visits (classification)": end_to_end_examples/relbench_rel_avito_user_visits_duckdb.md
-      - "rel-avito: ad-ctr (regression)": end_to_end_examples/relbench_rel_avito_ad_ctr_duckdb.md
-      - "rel-amazon: user-churn (classification)": end_to_end_examples/relbench_rel_amazon_user_churn_duckdb.md
-      - "rel-amazon: item-churn (classification)": end_to_end_examples/relbench_rel_amazon_item_churn_duckdb.md
-      - "rel-amazon: user-ltv (regression)": end_to_end_examples/relbench_rel_amazon_user_ltv_duckdb.md
-      - "rel-amazon: item-ltv (regression)": end_to_end_examples/relbench_rel_amazon_item_ltv_duckdb.md
+      - classification:
+        - "rel-stack: user-badges": end_to_end_examples/relbench_rel_stack_badges_duckdb.md
+        - "rel-stack: user-engagement": end_to_end_examples/relbench_rel_stack_user_engagement_duckdb.md
+        - "rel-trial: study-outcome": end_to_end_examples/relbench_rel_trial_study_outcome_duckdb.md
+        - "rel-hm: user-churn": end_to_end_examples/relbench_rel_hm_user_churn_duckdb.md
+        - "rel-avito: user-clicks": end_to_end_examples/relbench_rel_avito_user_clicks_duckdb.md
+        - "rel-avito: user-visits": end_to_end_examples/relbench_rel_avito_user_visits_duckdb.md
+        - "rel-amazon: user-churn": end_to_end_examples/relbench_rel_amazon_user_churn_duckdb.md
+        - "rel-amazon: item-churn": end_to_end_examples/relbench_rel_amazon_item_churn_duckdb.md
+      - regression:
+        - "rel-stack: post-votes": end_to_end_examples/relbench_rel_stack_post_votes_duckdb.md
+        - "rel-hm: item-sales": end_to_end_examples/relbench_rel_hm_item_sales_duckdb.md
+        - "rel-avito: ad-ctr": end_to_end_examples/relbench_rel_avito_ad_ctr_duckdb.md
+        - "rel-amazon: user-ltv": end_to_end_examples/relbench_rel_amazon_user_ltv_duckdb.md
+        - "rel-amazon: item-ltv": end_to_end_examples/relbench_rel_amazon_item_ltv_duckdb.md
   - Tutorial:
     - tutorial_index.md
     - tutorial_time.md
