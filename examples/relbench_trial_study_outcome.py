@@ -18,7 +18,7 @@ from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
 
-REQUIRED_TABLES = [
+TABLES = [
     "studies.parquet",
     "outcomes.parquet",
     "outcome_analyses.parquet",
@@ -30,25 +30,6 @@ REQUIRED_TABLES = [
     "conditions.parquet",
     "facilities.parquet",
     "sponsors.parquet",
-]
-
-# Some rel-trial snapshots include explicit bridge tables, while others expose
-# direct or browse-level tables. Treat these as optional.
-OPTIONAL_TABLES = [
-    "interventions_studies.parquet",
-    "conditions_studies.parquet",
-    "facilities_studies.parquet",
-    "sponsors_studies.parquet",
-    "browse_interventions.parquet",
-    "browse_conditions.parquet",
-    "brief_summaries.parquet",
-    "detailed_descriptions.parquet",
-    "outcome_measurements.parquet",
-]
-
-DOWNLOAD_TABLES = REQUIRED_TABLES + OPTIONAL_TABLES
-
-LEGACY_BRIDGE_TABLES = [
     "interventions_studies.parquet",
     "conditions_studies.parquet",
     "facilities_studies.parquet",
@@ -76,7 +57,7 @@ def _is_valid_parquet(path: Path) -> bool:
 
 def ensure_local_rel_trial_data(data_dir: Path) -> list[str]:
     missing_or_invalid: list[str] = []
-    for table in REQUIRED_TABLES:
+    for table in TABLES:
         out_path = data_dir / table
         if not _is_valid_parquet(out_path):
             missing_or_invalid.append(str(out_path))
@@ -85,14 +66,7 @@ def ensure_local_rel_trial_data(data_dir: Path) -> list[str]:
             "Missing/invalid local rel-trial parquet files. "
             f"Expected local files under {data_dir}: {missing_or_invalid}"
         )
-
-    available: list[str] = []
-    for table in REQUIRED_TABLES + OPTIONAL_TABLES:
-        out_path = data_dir / table
-        if _is_valid_parquet(out_path):
-            available.append(table)
-
-    return available
+    return TABLES.copy()
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
@@ -110,51 +84,6 @@ def _pick(columns: list[str], candidates: list[str], required: bool = True) -> s
             return by_lower[cand.lower()]
     if required:
         raise ValueError(f"Could not find any of {candidates} in columns: {columns}")
-    return None
-
-
-def _pick_pk(columns: list[str], preferred: list[str] | None = None) -> str:
-    candidates = (preferred or []) + [
-        "id",
-        "intervention_id",
-        "condition_id",
-        "facility_id",
-        "sponsor_id",
-        "nct_id",
-    ]
-    picked = _pick(columns, candidates, required=False)
-    if picked:
-        return picked
-    return columns[0]
-
-
-def _pick_date(columns: list[str]) -> str | None:
-    return _pick(
-        columns,
-        [
-            "date",
-            "created_at",
-            "created_on",
-            "first_submitted_date",
-            "last_update_submitted_date",
-            "start_date",
-        ],
-        required=False,
-    )
-
-
-def _select_child_table_with_nct(
-    con: duckdb.DuckDBPyConnection,
-    available_views: dict[str, str],
-    candidates: list[str],
-) -> tuple[str, list[str], str] | None:
-    for view_name in candidates:
-        if view_name not in available_views:
-            continue
-        cols = _infer_columns(con, view_name)
-        nct_col = _pick(cols, ["nct_id"], required=False)
-        if nct_col:
-            return view_name, cols, nct_col
     return None
 
 
@@ -179,15 +108,9 @@ def build_study_outcome_frame(
         "conditions_studies_src": "conditions_studies.parquet",
         "facilities_studies_src": "facilities_studies.parquet",
         "sponsors_studies_src": "sponsors_studies.parquet",
-        "browse_interventions_src": "browse_interventions.parquet",
-        "browse_conditions_src": "browse_conditions.parquet",
     }
-    available_views: dict[str, str] = {}
     for view_name, table_name in views.items():
-        table_path = data_dir / table_name
-        if _is_valid_parquet(table_path):
-            _prepare_view(con, view_name, table_path)
-            available_views[view_name] = table_name
+        _prepare_view(con, view_name, data_dir / table_name)
 
     studies_cols = _infer_columns(con, "studies_src")
     outcomes_cols = _infer_columns(con, "outcomes_src")
@@ -196,6 +119,14 @@ def build_study_outcome_frame(
     reported_event_totals_cols = _infer_columns(con, "reported_event_totals_src")
     designs_cols = _infer_columns(con, "designs_src")
     eligibilities_cols = _infer_columns(con, "eligibilities_src")
+    interventions_cols = _infer_columns(con, "interventions_src")
+    conditions_cols = _infer_columns(con, "conditions_src")
+    facilities_cols = _infer_columns(con, "facilities_src")
+    sponsors_cols = _infer_columns(con, "sponsors_src")
+    interventions_studies_cols = _infer_columns(con, "interventions_studies_src")
+    conditions_studies_cols = _infer_columns(con, "conditions_studies_src")
+    facilities_studies_cols = _infer_columns(con, "facilities_studies_src")
+    sponsors_studies_cols = _infer_columns(con, "sponsors_studies_src")
 
     studies_nct_id = _pick(studies_cols, ["nct_id"])
     studies_start_date = _pick(studies_cols, ["start_date"])
@@ -224,6 +155,26 @@ def build_study_outcome_frame(
     eli_id = _pick(eligibilities_cols, ["id"])
     eli_nct_id = _pick(eligibilities_cols, ["nct_id"])
     eli_date = _pick(eligibilities_cols, ["date"])
+    intv_studies_id = _pick(interventions_studies_cols, ["id"])
+    intv_studies_nct_id = _pick(interventions_studies_cols, ["nct_id"])
+    intv_studies_intv_id = _pick(interventions_studies_cols, ["intervention_id"])
+    intv_studies_date = _pick(interventions_studies_cols, ["date"])
+    cond_studies_id = _pick(conditions_studies_cols, ["id"])
+    cond_studies_nct_id = _pick(conditions_studies_cols, ["nct_id"])
+    cond_studies_cond_id = _pick(conditions_studies_cols, ["condition_id"])
+    cond_studies_date = _pick(conditions_studies_cols, ["date"])
+    fac_studies_id = _pick(facilities_studies_cols, ["id"])
+    fac_studies_nct_id = _pick(facilities_studies_cols, ["nct_id"])
+    fac_studies_fac_id = _pick(facilities_studies_cols, ["facility_id"])
+    fac_studies_date = _pick(facilities_studies_cols, ["date"])
+    spn_studies_id = _pick(sponsors_studies_cols, ["id"])
+    spn_studies_nct_id = _pick(sponsors_studies_cols, ["nct_id"])
+    spn_studies_spn_id = _pick(sponsors_studies_cols, ["sponsor_id"])
+    spn_studies_date = _pick(sponsors_studies_cols, ["date"])
+    interventions_id = _pick(interventions_cols, ["intervention_id"])
+    conditions_id = _pick(conditions_cols, ["condition_id"])
+    facilities_id = _pick(facilities_cols, ["facility_id"])
+    sponsors_id = _pick(sponsors_cols, ["sponsor_id"])
 
     pval_modifier_expr = "true"
     if oa_p_value_modifier:
@@ -316,6 +267,62 @@ def build_study_outcome_frame(
         date_key=eli_date,
         columns=eligibilities_cols,
     )
+    interventions_studies = DuckdbNode(
+        fpath="interventions_studies_src",
+        prefix="ist",
+        pk=intv_studies_id,
+        date_key=intv_studies_date,
+        columns=interventions_studies_cols,
+    )
+    conditions_studies = DuckdbNode(
+        fpath="conditions_studies_src",
+        prefix="cst",
+        pk=cond_studies_id,
+        date_key=cond_studies_date,
+        columns=conditions_studies_cols,
+    )
+    facilities_studies = DuckdbNode(
+        fpath="facilities_studies_src",
+        prefix="fst",
+        pk=fac_studies_id,
+        date_key=fac_studies_date,
+        columns=facilities_studies_cols,
+    )
+    sponsors_studies = DuckdbNode(
+        fpath="sponsors_studies_src",
+        prefix="sst",
+        pk=spn_studies_id,
+        date_key=spn_studies_date,
+        columns=sponsors_studies_cols,
+    )
+    interventions = DuckdbNode(
+        fpath="interventions_src",
+        prefix="intv",
+        pk=interventions_id,
+        date_key=None,
+        columns=interventions_cols,
+    )
+    conditions = DuckdbNode(
+        fpath="conditions_src",
+        prefix="cond",
+        pk=conditions_id,
+        date_key=None,
+        columns=conditions_cols,
+    )
+    facilities = DuckdbNode(
+        fpath="facilities_src",
+        prefix="fac",
+        pk=facilities_id,
+        date_key=None,
+        columns=facilities_cols,
+    )
+    sponsors = DuckdbNode(
+        fpath="sponsors_src",
+        prefix="spn",
+        pk=sponsors_id,
+        date_key=None,
+        columns=sponsors_cols,
+    )
 
     lookback_days = (cut_date - LOOKBACK_START).days + 1
     gr = GraphReduce(
@@ -344,29 +351,15 @@ def build_study_outcome_frame(
         reported_event_totals,
         designs,
         eligibilities,
+        interventions_studies,
+        conditions_studies,
+        facilities_studies,
+        sponsors_studies,
+        interventions,
+        conditions,
+        facilities,
+        sponsors,
     ]
-    optional_children: list[tuple[DuckdbNode, str]] = []
-    child_specs = [
-        ("ist", ["interventions_studies_src", "browse_interventions_src", "interventions_src"]),
-        ("cst", ["conditions_studies_src", "browse_conditions_src", "conditions_src"]),
-        ("fst", ["facilities_studies_src", "facilities_src"]),
-        ("sst", ["sponsors_studies_src", "sponsors_src"]),
-    ]
-    for prefix, candidates in child_specs:
-        selected = _select_child_table_with_nct(con, available_views, candidates)
-        if not selected:
-            continue
-        view_name, cols, nct_col = selected
-        node = DuckdbNode(
-            fpath=view_name,
-            prefix=prefix,
-            pk=_pick_pk(cols),
-            date_key=_pick_date(cols),
-            columns=cols,
-        )
-        nodes.append(node)
-        optional_children.append((node, nct_col))
-
     for node in nodes:
         gr.add_node(node)
 
@@ -376,8 +369,14 @@ def build_study_outcome_frame(
     gr.add_entity_edge(studies, reported_event_totals, parent_key=studies_nct_id, relation_key=evt_nct_id, reduce=True)
     gr.add_entity_edge(studies, designs, parent_key=studies_nct_id, relation_key=dsg_nct_id, reduce=True)
     gr.add_entity_edge(studies, eligibilities, parent_key=studies_nct_id, relation_key=eli_nct_id, reduce=True)
-    for node, relation_key in optional_children:
-        gr.add_entity_edge(studies, node, parent_key=studies_nct_id, relation_key=relation_key, reduce=True)
+    gr.add_entity_edge(studies, interventions_studies, parent_key=studies_nct_id, relation_key=intv_studies_nct_id, reduce=True)
+    gr.add_entity_edge(studies, conditions_studies, parent_key=studies_nct_id, relation_key=cond_studies_nct_id, reduce=True)
+    gr.add_entity_edge(studies, facilities_studies, parent_key=studies_nct_id, relation_key=fac_studies_nct_id, reduce=True)
+    gr.add_entity_edge(studies, sponsors_studies, parent_key=studies_nct_id, relation_key=spn_studies_nct_id, reduce=True)
+    gr.add_entity_edge(interventions_studies, interventions, parent_key=intv_studies_intv_id, relation_key=interventions_id, reduce=True)
+    gr.add_entity_edge(conditions_studies, conditions, parent_key=cond_studies_cond_id, relation_key=conditions_id, reduce=True)
+    gr.add_entity_edge(facilities_studies, facilities, parent_key=fac_studies_fac_id, relation_key=facilities_id, reduce=True)
+    gr.add_entity_edge(sponsors_studies, sponsors, parent_key=spn_studies_spn_id, relation_key=sponsors_id, reduce=True)
 
     gr.do_transformations_sql()
     df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()

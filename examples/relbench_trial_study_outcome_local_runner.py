@@ -8,11 +8,9 @@ from pathlib import Path
 from urllib.request import urlretrieve
 
 from relbench_trial_study_outcome import (
-    DOWNLOAD_TABLES,
     LABEL_DAYS,
     LOOKBACK_START,
-    OPTIONAL_TABLES,
-    REQUIRED_TABLES,
+    TABLES,
     TEST_TIMESTAMP,
     VAL_TIMESTAMP,
     run_rel_trial_study_outcome,
@@ -30,23 +28,15 @@ def main() -> None:
     data_dir = Path("tests/data/relbench/rel-trial")
     data_dir.mkdir(parents=True, exist_ok=True)
     downloaded: list[str] = []
-    skipped_optional: list[str] = []
-    for table in DOWNLOAD_TABLES:
+    for table in TABLES:
         out_path = data_dir / table
         if not out_path.exists():
-            try:
-                urlretrieve(f"{BASE_URL}/{table}", out_path)
-                downloaded.append(table)
-            except Exception:
-                if table in REQUIRED_TABLES:
-                    raise
-                if table in OPTIONAL_TABLES:
-                    skipped_optional.append(table)
+            urlretrieve(f"{BASE_URL}/{table}", out_path)
+            downloaded.append(table)
 
     df_val, df_test, in_time_auc, holdout_auc, n_features, local_tables, target = run_rel_trial_study_outcome()
 
     print("downloaded_files:", downloaded, flush=True)
-    print("optional_files_not_available:", skipped_optional, flush=True)
     print("local_data_path:", "tests/data/relbench/rel-trial", flush=True)
     print("local_tables_verified:", local_tables, flush=True)
     print("val_cut_date:", VAL_TIMESTAMP.date(), flush=True)
