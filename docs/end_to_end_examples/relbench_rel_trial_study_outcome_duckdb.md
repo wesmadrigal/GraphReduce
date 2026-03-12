@@ -9,8 +9,8 @@ It uses the same split points as RelBench:
 * Validation cut date: `2020-01-01`
 * Holdout cut date: `2021-01-01`
 
-Hosted dataset root:
-`https://open-relbench.s3.us-east-1.amazonaws.com/rel-trial`
+Local dataset path:
+`tests/data/relbench/rel-trial`
 
 Tables used:
 
@@ -37,7 +37,6 @@ Tables used:
 ```python
 import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 
@@ -46,7 +45,6 @@ from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-trial"
 TABLES = [
     "studies.parquet",
     "outcomes.parquet",
@@ -75,7 +73,7 @@ def build_frame(con: duckdb.DuckDBPyConnection, data_dir: Path, cut_date: dateti
     for table in TABLES:
         out_path = data_dir / table
         if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
+            raise FileNotFoundError(f"Missing local file: {out_path}")
 
     def prepare_view(view_name: str, table_name: str):
         con.sql(f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM read_parquet('{data_dir / table_name}')")

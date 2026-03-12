@@ -20,9 +20,10 @@ def _is_interactive_mode() -> bool:
 
 def main() -> None:
     print("Running rel-trial study-outcome example...", flush=True)
-    df_val, df_test, in_time_auc, holdout_auc, n_features, downloaded, target = run_rel_trial_study_outcome()
+    df_val, df_test, in_time_auc, holdout_auc, n_features, local_tables, target = run_rel_trial_study_outcome()
 
-    print("downloaded_files:", downloaded, flush=True)
+    print("local_data_path:", "tests/data/relbench/rel-trial", flush=True)
+    print("local_tables_verified:", local_tables, flush=True)
     print("val_cut_date:", VAL_TIMESTAMP.date(), flush=True)
     print("test_cut_date:", TEST_TIMESTAMP.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)

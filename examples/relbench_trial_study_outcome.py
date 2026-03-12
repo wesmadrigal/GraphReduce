@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
@@ -19,7 +18,6 @@ from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-trial"
 TABLES = [
     "studies.parquet",
     "outcomes.parquet",
@@ -57,22 +55,19 @@ def _is_valid_parquet(path: Path) -> bool:
         con.close()
 
 
-def download_rel_trial_data(data_dir: Path) -> list[str]:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded: list[str] = []
+def ensure_local_rel_trial_data(data_dir: Path) -> list[str]:
+    missing_or_invalid: list[str] = []
     for table in TABLES:
         out_path = data_dir / table
-        if _is_valid_parquet(out_path):
-            continue
-        tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
-        if tmp_path.exists():
-            tmp_path.unlink()
-        urlretrieve(f"{BASE_URL}/{table}", tmp_path)
-        tmp_path.replace(out_path)
         if not _is_valid_parquet(out_path):
-            raise RuntimeError(f"Downloaded parquet is invalid: {out_path}")
-        downloaded.append(table)
-    return downloaded
+            missing_or_invalid.append(str(out_path))
+    if missing_or_invalid:
+        raise FileNotFoundError(
+            "Missing/invalid local rel-trial parquet files. "
+            "This example does not download data. "
+            f"Expected local files under {data_dir}: {missing_or_invalid}"
+        )
+    return TABLES.copy()
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
@@ -456,7 +451,7 @@ def run_rel_trial_study_outcome(
     data_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float | None, float | None, int, list[str], str]:
     use_dir = data_dir or Path("tests/data/relbench/rel-trial")
-    downloaded = download_rel_trial_data(use_dir)
+    local_tables = ensure_local_rel_trial_data(use_dir)
 
     con = duckdb.connect()
     try:
@@ -469,12 +464,12 @@ def run_rel_trial_study_outcome(
         raise ValueError(f"Target mismatch between val ({target}) and test ({target_test})")
 
     in_time_auc, holdout_auc, n_features = train_study_outcome_model(df_val, target, df_test)
-    return df_val, df_test, in_time_auc, holdout_auc, n_features, downloaded, target
+    return df_val, df_test, in_time_auc, holdout_auc, n_features, local_tables, target
 
 
 def main() -> None:
-    df_val, df_test, in_time_auc, holdout_auc, n_features, downloaded, target = run_rel_trial_study_outcome()
-    print("downloaded_files:", downloaded, flush=True)
+    df_val, df_test, in_time_auc, holdout_auc, n_features, local_tables, target = run_rel_trial_study_outcome()
+    print("local_tables_verified:", local_tables, flush=True)
     print("val_cut_date:", VAL_TIMESTAMP.date(), flush=True)
     print("test_cut_date:", TEST_TIMESTAMP.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
