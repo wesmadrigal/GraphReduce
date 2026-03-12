@@ -1,4 +1,4 @@
-# rel-avito: user clicks
+# rel-avito: user clicks (Classification)
 
 [![RelBench rel-avito user-clicks graphreduce flow](relbench_rel_avito_user_clicks_overview.svg)](relbench_rel_avito_user_clicks_overview.svg)
 
@@ -55,9 +55,14 @@ count(distinct case when coalesce(try_cast(IsClick as double), 0) > 0 then AdID 
 
 Final binary target:
 
+<details>
+<summary>Show Code</summary>
+
 ```python
 user_multi_click_next_4d = (distinct_clicked_ads > 1).astype("int8")
 ```
+
+</details>
 
 ## Run Example
 

@@ -1,4 +1,4 @@
-# RelBench Rel-Stack with DuckDB (Badges as Label)
+# RelBench Rel-Stack with DuckDB (Badges as Label) (Classification)
 
 [![RelBench rel-stack graphreduce flow](relbench_rel_stack_badges_duckdb_overview.png)](relbench_rel_stack_badges_duckdb_overview.png)
 
@@ -27,6 +27,9 @@ Tables used:
 ## Complete Example
 
 ### Data Preparation
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import datetime
@@ -204,7 +207,12 @@ print("future shape:", df_future.shape)
 print("target:", target)
 ```
 
+</details>
+
 ### Model Training
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import numpy as np
@@ -318,6 +326,8 @@ print(f"Out-of-time AUC (2021 graph): {future_auc:.4f}")
 
 con.close()
 ```
+
+</details>
 
 ## Notes
 

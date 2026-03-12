@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime
+import os
 from pathlib import Path
 from urllib.request import urlretrieve
 
@@ -86,34 +87,93 @@ def _pick(columns: list[str], candidates: list[str], required: bool = True) -> s
     return None
 
 
+def _configure_duckdb_for_large_rel_avito(con: duckdb.DuckDBPyConnection) -> None:
+    temp_dir = os.getenv("GRAPHREDUCE_DUCKDB_TEMP_DIR", "/tmp/duckdb_tmp")
+    max_temp = os.getenv("GRAPHREDUCE_DUCKDB_MAX_TEMP_SIZE", "200GiB")
+    memory_limit = os.getenv("GRAPHREDUCE_DUCKDB_MEMORY_LIMIT", "8GiB")
+    threads = os.getenv("GRAPHREDUCE_DUCKDB_THREADS", "2")
+
+    con.sql(f"SET temp_directory='{temp_dir}'")
+    con.sql(f"SET max_temp_directory_size='{max_temp}'")
+    con.sql(f"SET memory_limit='{memory_limit}'")
+    con.sql(f"SET threads={threads}")
+    con.sql("SET preserve_insertion_order=false")
+
+
 def build_ad_ctr_frame(con: duckdb.DuckDBPyConnection, data_dir: Path) -> tuple[pd.DataFrame, str]:
+    _configure_duckdb_for_large_rel_avito(con)
     _prepare_view(con, "ads_src", data_dir / "AdsInfo.parquet")
-    _prepare_view(con, "search_stream_src", data_dir / "SearchStream.parquet")
-    _prepare_view(con, "search_info_src", data_dir / "SearchInfo.parquet")
-    _prepare_view(con, "visits_src", data_dir / "VisitsStream.parquet")
+    _prepare_view(con, "search_stream_src_raw", data_dir / "SearchStream.parquet")
+    _prepare_view(con, "search_info_src_raw", data_dir / "SearchInfo.parquet")
+    _prepare_view(con, "visits_src_raw", data_dir / "VisitsStream.parquet")
     _prepare_view(con, "category_src", data_dir / "Category.parquet")
     _prepare_view(con, "location_src", data_dir / "Location.parquet")
 
     ads_cols = _infer_columns(con, "ads_src")
-    search_stream_cols = _infer_columns(con, "search_stream_src")
-    search_info_cols = _infer_columns(con, "search_info_src")
-    visits_cols = _infer_columns(con, "visits_src")
+    search_stream_cols_raw = _infer_columns(con, "search_stream_src_raw")
+    search_info_cols_raw = _infer_columns(con, "search_info_src_raw")
+    visits_cols_raw = _infer_columns(con, "visits_src_raw")
     category_cols = _infer_columns(con, "category_src")
     location_cols = _infer_columns(con, "location_src")
 
     ads_id_col = _pick(ads_cols, ["AdID", "AdId", "ad_id", "adid"])
 
-    sstr_search_id_col = _pick(search_stream_cols, ["SearchID", "SearchId", "search_id", "searchid"])
-    sstr_ad_col = _pick(search_stream_cols, ["AdID", "AdId", "ad_id", "adid"])
-    sstr_click_col = _pick(search_stream_cols, ["IsClick", "is_click", "isclick", "Clicked", "clicked"])
-    sstr_date_col = _pick(search_stream_cols, ["SearchDate", "EventDate", "Date", "Timestamp"], required=False)
+    sstr_search_id_col = _pick(search_stream_cols_raw, ["SearchID", "SearchId", "search_id", "searchid"])
+    sstr_ad_col = _pick(search_stream_cols_raw, ["AdID", "AdId", "ad_id", "adid"])
+    sstr_click_col = _pick(search_stream_cols_raw, ["IsClick", "is_click", "isclick", "Clicked", "clicked"])
+    sstr_date_col = _pick(search_stream_cols_raw, ["SearchDate", "EventDate", "Date", "Timestamp"], required=False)
 
-    sinf_search_id_col = _pick(search_info_cols, ["SearchID", "SearchId", "search_id", "searchid"], required=False)
-    sinf_ad_col = _pick(search_info_cols, ["AdID", "AdId", "ad_id", "adid"], required=False)
-    sinf_date_col = _pick(search_info_cols, ["SearchDate", "EventDate", "Date", "Timestamp"], required=False)
+    sinf_search_id_col = _pick(search_info_cols_raw, ["SearchID", "SearchId", "search_id", "searchid"], required=False)
+    sinf_ad_col = _pick(search_info_cols_raw, ["AdID", "AdId", "ad_id", "adid"], required=False)
+    sinf_date_col = _pick(search_info_cols_raw, ["SearchDate", "EventDate", "Date", "Timestamp"], required=False)
 
-    vis_ad_col = _pick(visits_cols, ["AdID", "AdId", "ad_id", "adid"], required=False)
-    vis_date_col = _pick(visits_cols, ["ViewDate", "VisitDate", "EventDate", "Date", "Timestamp", "t_dat"], required=False)
+    vis_ad_col = _pick(visits_cols_raw, ["AdID", "AdId", "ad_id", "adid"], required=False)
+    vis_date_col = _pick(visits_cols_raw, ["ViewDate", "VisitDate", "EventDate", "Date", "Timestamp", "t_dat"], required=False)
+
+    # Pre-filter high-volume stream tables to the feature + label horizon.
+    label_end = CUT_DATE + datetime.timedelta(days=LABEL_PERIOD_DAYS)
+    if sstr_date_col:
+        con.sql(
+            f"""
+            CREATE OR REPLACE VIEW search_stream_src AS
+            SELECT *
+            FROM search_stream_src_raw
+            WHERE {sstr_date_col} >= '{LOOKBACK_START.date()}'
+              AND {sstr_date_col} < '{label_end.date()}'
+            """
+        )
+    else:
+        con.sql("CREATE OR REPLACE VIEW search_stream_src AS SELECT * FROM search_stream_src_raw")
+
+    if sinf_date_col:
+        con.sql(
+            f"""
+            CREATE OR REPLACE VIEW search_info_src AS
+            SELECT *
+            FROM search_info_src_raw
+            WHERE {sinf_date_col} >= '{LOOKBACK_START.date()}'
+              AND {sinf_date_col} < '{label_end.date()}'
+            """
+        )
+    else:
+        con.sql("CREATE OR REPLACE VIEW search_info_src AS SELECT * FROM search_info_src_raw")
+
+    if vis_date_col:
+        con.sql(
+            f"""
+            CREATE OR REPLACE VIEW visits_src AS
+            SELECT *
+            FROM visits_src_raw
+            WHERE {vis_date_col} >= '{LOOKBACK_START.date()}'
+              AND {vis_date_col} < '{CUT_DATE.date()}'
+            """
+        )
+    else:
+        con.sql("CREATE OR REPLACE VIEW visits_src AS SELECT * FROM visits_src_raw")
+
+    search_stream_cols = _infer_columns(con, "search_stream_src")
+    search_info_cols = _infer_columns(con, "search_info_src")
+    visits_cols = _infer_columns(con, "visits_src")
 
     cat_id_col = _pick(category_cols, ["CategoryID", "CategoryId", "category_id", "cat_id", "id"], required=False)
     loc_id_col = _pick(location_cols, ["LocationID", "LocationId", "location_id", "loc_id", "id"], required=False)
@@ -193,7 +253,7 @@ def build_ad_ctr_frame(con: duckdb.DuckDBPyConnection, data_dir: Path) -> tuple[
         label_node=search_stream_node,
         label_period_val=LABEL_PERIOD_DAYS,
         label_period_unit=PeriodUnit.day,
-        auto_feature_hops_back=4,
+        auto_feature_hops_back=2,
         auto_feature_hops_front=0,
         use_temp_tables=True,
     )
@@ -215,7 +275,7 @@ def build_ad_ctr_frame(con: duckdb.DuckDBPyConnection, data_dir: Path) -> tuple[
         gr.add_entity_edge(ads_node, location_node, parent_key=ads_loc_col, relation_key=loc_id_col, reduce=True)
 
     gr.do_transformations_sql()
-    out_df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()
+    out_df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
 
     target = "sstr_ctr_label"
     if target not in out_df.columns:

@@ -1,4 +1,4 @@
-# rel-hm: user churn
+# rel-hm: user churn (Classification)
 
 [![RelBench rel-hm user-churn graphreduce flow](relbench_rel_hm_user_churn_overview.svg)](relbench_rel_hm_user_churn_overview.svg)
 
@@ -21,6 +21,9 @@ Data source:
 ## Complete Example
 
 ### Data Preparation + GraphReduce
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import datetime
@@ -126,7 +129,12 @@ for c in label_cols:
 out_df["user_churn_7d"] = (out_df[label_cols].sum(axis=1) == 0).astype("int8")
 ```
 
+</details>
+
 ### Model Training
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import numpy as np
@@ -166,6 +174,8 @@ model.fit(X_train, y_train)
 auc = roc_auc_score(y_test, model.predict_proba(X_test)[:, 1])
 print("roc_auc:", round(float(auc), 4))
 ```
+
+</details>
 
 Full runnable scripts:
 

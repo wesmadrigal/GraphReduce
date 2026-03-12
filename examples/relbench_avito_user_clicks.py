@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import datetime
+import os
 from pathlib import Path
 from urllib.request import urlretrieve
 
@@ -86,9 +87,23 @@ def _pick(columns: list[str], candidates: list[str], required: bool = True) -> s
     return None
 
 
+def _configure_duckdb_for_large_rel_avito(con: duckdb.DuckDBPyConnection) -> None:
+    temp_dir = os.getenv("GRAPHREDUCE_DUCKDB_TEMP_DIR", "/tmp/duckdb_tmp")
+    max_temp = os.getenv("GRAPHREDUCE_DUCKDB_MAX_TEMP_SIZE", "200GiB")
+    memory_limit = os.getenv("GRAPHREDUCE_DUCKDB_MEMORY_LIMIT", "16GiB")
+    threads = os.getenv("GRAPHREDUCE_DUCKDB_THREADS", "4")
+
+    con.sql(f"SET temp_directory='{temp_dir}'")
+    con.sql(f"SET max_temp_directory_size='{max_temp}'")
+    con.sql(f"SET memory_limit='{memory_limit}'")
+    con.sql(f"SET threads={threads}")
+    con.sql("SET preserve_insertion_order=false")
+
+
 def _build_frame(data_dir: Path, mode: str) -> pd.DataFrame:
     con = duckdb.connect()
     try:
+        _configure_duckdb_for_large_rel_avito(con)
         _prepare_view(con, "ads_src", data_dir / "AdsInfo.parquet")
         _prepare_view(con, "search_info_src", data_dir / "SearchInfo.parquet")
         _prepare_view(con, "search_stream_src", data_dir / "SearchStream.parquet")

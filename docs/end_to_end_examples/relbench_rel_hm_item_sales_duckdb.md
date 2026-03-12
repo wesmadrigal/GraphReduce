@@ -1,4 +1,4 @@
-# rel-hm: item sales
+# rel-hm: item sales (Regression)
 
 This example implements the RelBench rel-hm item-sales setup:
 
@@ -15,6 +15,9 @@ Data source:
 * `https://open-relbench.s3.us-east-1.amazonaws.com/rel-hm`
 
 ## Complete Example (Full Code)
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import datetime
@@ -207,6 +210,8 @@ print("label_period_days:", LABEL_DAYS)
 print("feature_count:", len(feature_cols))
 print("holdout_mae:", round(float(holdout_mae), 4))
 ```
+
+</details>
 
 Full runnable scripts:
 

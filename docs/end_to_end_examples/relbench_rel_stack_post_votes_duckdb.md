@@ -1,4 +1,4 @@
-# RelBench Rel-Stack with DuckDB (Post Votes as Label)
+# RelBench Rel-Stack with DuckDB (Post Votes as Label) (Regression)
 
 [![RelBench rel-stack post-votes graphreduce flow](relbench_rel_stack_post_votes_duckdb_overview.svg)](relbench_rel_stack_post_votes_duckdb_overview.svg)
 
@@ -30,6 +30,9 @@ Tables used:
 ## Complete Example
 
 ### Data Preparation
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import datetime
@@ -200,7 +203,12 @@ print("label columns:", label_cols)
 print(df.head())
 ```
 
+</details>
+
 ### Model Training
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import numpy as np
@@ -333,6 +341,8 @@ print("refit_test_mae:", round(mean_absolute_error(y_test, final_test_pred), 4))
 
 con.close()
 ```
+
+</details>
 
 ## Notes
 

@@ -1,4 +1,4 @@
-# rel-amazon: user churn
+# rel-amazon: user churn (Classification)
 
 [![rel-amazon user churn graphreduce flow](relbench_rel_amazon_user_churn_overview.svg)](relbench_rel_amazon_user_churn_overview.svg)
 

@@ -1,4 +1,4 @@
-# rel-avito: user visits
+# rel-avito: user visits (Classification)
 
 [![RelBench rel-avito user-visits graphreduce flow](relbench_rel_avito_user_visits_overview.svg)](relbench_rel_avito_user_visits_overview.svg)
 
@@ -29,9 +29,14 @@ count(distinct vis_AdID) as vis_distinct_ads_label
 
 and the final binary target is:
 
+<details>
+<summary>Show Code</summary>
+
 ```python
 user_multi_visit_next_4d = (vis_distinct_ads_label > 1).astype("int8")
 ```
+
+</details>
 
 ## Run Example
 

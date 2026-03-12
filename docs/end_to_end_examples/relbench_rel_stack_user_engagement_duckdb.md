@@ -1,4 +1,4 @@
-# RelBench Rel-Stack with DuckDB (User Engagement)
+# RelBench Rel-Stack with DuckDB (User Engagement) (Classification)
 
 [![RelBench rel-stack user-engagement graphreduce flow](relbench_rel_stack_user_engagement_duckdb_overview.svg)](relbench_rel_stack_user_engagement_duckdb_overview.svg)
 
@@ -20,6 +20,9 @@ This example implements the RelBench
 ## Complete Example
 
 ### Data Preparation
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import datetime
@@ -267,7 +270,12 @@ print(df.head())
 # `gr.do_transformations_sql()` again to produce `df_future`.
 ```
 
+</details>
+
 ### Model Training
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import numpy as np
@@ -391,6 +399,8 @@ print("out_of_time_auc_2021_01_01:", round(roc_auc_score(df_future[target], futu
 
 con.close()
 ```
+
+</details>
 
 ## Notes
 

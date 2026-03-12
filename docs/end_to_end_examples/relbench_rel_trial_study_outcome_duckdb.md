@@ -1,4 +1,4 @@
-# RelBench Rel-Trial with DuckDB (Study Outcome Label)
+# RelBench Rel-Trial with DuckDB (Study Outcome Label) (Classification)
 
 This example builds a table-level GraphReduce compute graph for the RelBench
 `rel-trial` dataset, rooted at `studies.parquet`, and predicts whether a study
@@ -33,6 +33,9 @@ Tables used:
 ## Complete Example
 
 ### Data Preparation + Graph Construction
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import datetime
@@ -234,7 +237,12 @@ print("test shape:", df_test.shape)
 print("target:", target)
 ```
 
+</details>
+
 ### Model Training
+
+<details>
+<summary>Show Code</summary>
 
 ```python
 import numpy as np
@@ -278,6 +286,8 @@ out_of_time_auc = roc_auc_score(
 print("in-time AUC (2020-01-01 graph):", f"{in_time_auc:.4f}")
 print("out-of-time AUC (2021-01-01 graph):", f"{out_of_time_auc:.4f}")
 ```
+
+</details>
 
 ## Notes
 
