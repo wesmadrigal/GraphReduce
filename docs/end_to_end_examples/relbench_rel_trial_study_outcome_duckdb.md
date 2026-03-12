@@ -12,7 +12,7 @@ It uses the same split points as RelBench:
 Local dataset path:
 `tests/data/relbench/rel-trial`
 
-Tables used:
+Required local tables:
 
 * `studies.parquet`
 * `outcomes.parquet`
@@ -25,10 +25,18 @@ Tables used:
 * `conditions.parquet`
 * `facilities.parquet`
 * `sponsors.parquet`
+
+Optional tables (automatically used if present):
+
 * `interventions_studies.parquet`
 * `conditions_studies.parquet`
 * `facilities_studies.parquet`
 * `sponsors_studies.parquet`
+* `browse_interventions.parquet`
+* `browse_conditions.parquet`
+* `brief_summaries.parquet`
+* `detailed_descriptions.parquet`
+* `outcome_measurements.parquet`
 
 ## Complete Example
 
