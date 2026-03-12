@@ -181,7 +181,7 @@ def run_rel_hm_item_sales(
         loss_function="MAE",
         eval_metric="MAE",
         random_seed=42,
-        verbose=False,
+        verbose=50,
         allow_writing_files=False,
     )
     X_eval = df_eval[feature_cols].fillna(0)

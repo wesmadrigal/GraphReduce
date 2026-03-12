@@ -83,7 +83,7 @@ def _train_binary(df: pd.DataFrame, target: str) -> tuple[float | None, int]:
         loss_function="Logloss",
         eval_metric="AUC",
         random_seed=42,
-        verbose=False,
+        verbose=50,
         allow_writing_files=False,
     )
     model.fit(X_train, y_train)
@@ -112,7 +112,7 @@ def _train_regression(df: pd.DataFrame, target: str) -> tuple[float | None, int]
         loss_function="MAE",
         eval_metric="MAE",
         random_seed=42,
-        verbose=False,
+        verbose=50,
         allow_writing_files=False,
     )
     model.fit(X_train, y_train)
@@ -366,7 +366,7 @@ def run_amazon_temporal_regression_task(
         loss_function="MAE",
         eval_metric="MAE",
         random_seed=42,
-        verbose=False,
+        verbose=50,
         allow_writing_files=False,
     )
     X_validation = df_validation[feature_cols].fillna(0)

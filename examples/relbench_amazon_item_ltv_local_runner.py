@@ -214,7 +214,7 @@ def main() -> None:
             loss_function="MAE",
             eval_metric="MAE",
             random_seed=42,
-            verbose=False,
+            verbose=50,
             allow_writing_files=False,
         )
         model.fit(X_eval, y_eval)

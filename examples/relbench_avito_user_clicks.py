@@ -327,15 +327,26 @@ def _train_binary_model(df: pd.DataFrame, target: str) -> tuple[float | None, in
         for c in numeric_cols
         if "label" not in c.lower() and not c.lower().endswith("_id") and "userid" not in c.lower()
     ]
+    print(f"[train] target={target}", flush=True)
+    print(f"[train] numeric_feature_candidates={len(numeric_cols)}", flush=True)
+    print(f"[train] selected_feature_count={len(feature_cols)}", flush=True)
     if not feature_cols:
+        print("[train] skipping model training: no usable numeric features", flush=True)
         return None, 0
 
     X = df[feature_cols].fillna(0)
     y = df[target]
+    target_counts = y.value_counts(dropna=False).to_dict()
+    print(f"[train] target_class_counts={target_counts}", flush=True)
     if y.nunique() < 2:
+        print("[train] skipping model training: target has a single class (AUC undefined)", flush=True)
         return None, len(feature_cols)
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+    print(
+        f"[train] split_sizes train={len(X_train)} test={len(X_test)} stratify=yes",
+        flush=True,
+    )
     model = CatBoostClassifier(
         iterations=400,
         depth=8,
@@ -343,12 +354,14 @@ def _train_binary_model(df: pd.DataFrame, target: str) -> tuple[float | None, in
         loss_function="Logloss",
         eval_metric="AUC",
         random_seed=42,
-        verbose=50,
+        verbose=20,
         allow_writing_files=False,
     )
+    print("[train] fitting CatBoostClassifier...", flush=True)
     model.fit(X_train, y_train)
     preds = model.predict_proba(X_test)[:, 1]
     auc = float(roc_auc_score(y_test, preds))
+    print(f"[train] holdout_auc={auc:.6f}", flush=True)
     return auc, len(feature_cols)
 
 
