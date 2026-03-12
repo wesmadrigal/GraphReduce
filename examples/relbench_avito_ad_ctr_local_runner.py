@@ -1,16 +1,16 @@
 #!/usr/bin/env python
-"""Run rel-avito user-visits example for docs interactive mode."""
+"""Run rel-avito ad-ctr example for docs interactive mode."""
 
 from __future__ import annotations
 
 import os
 
-from relbench_avito_user_visits import (
+from relbench_avito_ad_ctr import (
     CUT_DATE,
     LABEL_PERIOD_DAYS,
     LOOKBACK_DAYS,
     LOOKBACK_START,
-    run_rel_avito_user_visits,
+    run_rel_avito_ad_ctr,
 )
 
 
@@ -19,8 +19,8 @@ def _is_interactive_mode() -> bool:
 
 
 def main() -> None:
-    print("Running rel-avito user-visits example...", flush=True)
-    df, auc, n_features, downloaded, target = run_rel_avito_user_visits()
+    print("Running rel-avito ad-ctr example...", flush=True)
+    df, mae, n_features, downloaded, target = run_rel_avito_ad_ctr()
     print("downloaded_files:", downloaded, flush=True)
     print("cut_date:", CUT_DATE.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
@@ -30,7 +30,7 @@ def main() -> None:
     print("rows:", len(df), flush=True)
     print("columns:", len(df.columns), flush=True)
     print("feature_count:", n_features, flush=True)
-    print("model_auc:", auc if auc is not None else "skipped", flush=True)
+    print("model_mae:", mae if mae is not None else "skipped", flush=True)
     if _is_interactive_mode():
         print("df.columns:", df.columns, flush=True)
 

@@ -45,6 +45,8 @@ Then: [RelBench rel-avito DuckDB (User Clicks)](relbench_rel_avito_user_clicks_d
 
 Then: [RelBench rel-avito DuckDB (User Visits)](relbench_rel_avito_user_visits_duckdb.md).
 
+Then: [RelBench rel-avito DuckDB (Ad CTR Regression)](relbench_rel_avito_ad_ctr_duckdb.md).
+
 Then: [RelBench rel-amazon DuckDB (User Churn)](relbench_rel_amazon_user_churn_duckdb.md).
 
 Then: [RelBench rel-amazon DuckDB (Item Churn)](relbench_rel_amazon_item_churn_duckdb.md).

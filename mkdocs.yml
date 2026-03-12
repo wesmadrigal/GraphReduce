@@ -38,6 +38,7 @@ nav:
       - "rel-hm: Item Sales": end_to_end_examples/relbench_rel_hm_item_sales_duckdb.md
       - "rel-avito: User Clicks": end_to_end_examples/relbench_rel_avito_user_clicks_duckdb.md
       - "rel-avito: User Visits": end_to_end_examples/relbench_rel_avito_user_visits_duckdb.md
+      - "rel-avito: Ad CTR (Regression)": end_to_end_examples/relbench_rel_avito_ad_ctr_duckdb.md
       - "rel-amazon: User Churn": end_to_end_examples/relbench_rel_amazon_user_churn_duckdb.md
       - "rel-amazon: Item Churn": end_to_end_examples/relbench_rel_amazon_item_churn_duckdb.md
       - "rel-amazon: User LTV": end_to_end_examples/relbench_rel_amazon_user_ltv_duckdb.md

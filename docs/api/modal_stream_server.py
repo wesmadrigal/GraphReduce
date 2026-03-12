@@ -81,6 +81,7 @@ SCRIPT_MAP: dict[str, str] = {
     "relbench_hm_user_churn": "examples/relbench_hm_user_churn_local_runner.py",
     "relbench_avito_user_clicks": "examples/relbench_avito_user_clicks_local_runner.py",
     "relbench_avito_user_visits": "examples/relbench_avito_user_visits_local_runner.py",
+    "relbench_avito_ad_ctr": "examples/relbench_avito_ad_ctr_local_runner.py",
     "relbench_amazon_user_churn": "examples/relbench_amazon_user_churn_local_runner.py",
     "relbench_amazon_item_churn": "examples/relbench_amazon_item_churn_local_runner.py",
     "relbench_amazon_user_ltv": "examples/relbench_amazon_user_ltv_local_runner.py",
