@@ -85,7 +85,17 @@ def main() -> None:
         )
 
         con.sql("CREATE OR REPLACE VIEW customer_src AS SELECT * FROM customer_src_raw")
-        con.sql("CREATE OR REPLACE VIEW product_src AS SELECT * FROM product_src_raw")
+        if product_amount_col:
+            con.sql(
+                f"""
+                CREATE OR REPLACE VIEW product_src AS
+                SELECT *
+                FROM product_src_raw
+                WHERE TRY_CAST({product_amount_col} AS DOUBLE) IS NOT NULL
+                """
+            )
+        else:
+            con.sql("CREATE OR REPLACE VIEW product_src AS SELECT * FROM product_src_raw")
 
         amount_expr = "0.0"
         if review_amount_col and product_amount_col:
