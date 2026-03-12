@@ -434,7 +434,7 @@ def train_study_outcome_model(
         loss_function="Logloss",
         eval_metric="AUC",
         random_seed=42,
-        verbose=False,
+        verbose=50,
         allow_writing_files=False,
     )
     model.fit(X_train, y_train)

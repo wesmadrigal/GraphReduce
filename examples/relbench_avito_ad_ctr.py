@@ -311,7 +311,7 @@ def train_ad_ctr_model(df: pd.DataFrame, target: str) -> tuple[float | None, int
         loss_function="MAE",
         eval_metric="MAE",
         random_seed=42,
-        verbose=False,
+        verbose=50,
         allow_writing_files=False,
     )
     model.fit(X_train, y_train)
