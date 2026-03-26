@@ -148,6 +148,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         catalog_client: typing.Any = None,
         # The time-series period in days to use.
         ts_periods: list = [1, 3, 4, 7, 14, 30, 60, 90, 180, 365, 730],
+        type_func_map: dict = {},
     ):
         """
         Constructor
@@ -196,6 +197,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
         self._catalog_client = catalog_client
         self.ts_periods = ts_periods
+        self.type_func_map = type_func_map
+
 
     def __repr__(self):
         """
@@ -501,7 +504,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             # so we can determine how many rows to get.
             n = 100
             keep_growing = True
-            while keep_growing and n < 1_000_000:
+            while keep_growing and n < 100_000:
                 small_samp = self.get_sample(n=100)
                 avg_nulls = 0
                 for c in small_samp.columns:
@@ -900,14 +903,19 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         )
                     )
                     counted = True
+            # Do nothing to the reduce_key itself.
             elif self._is_identifier(col) and col == reduce_key:
                 continue
             elif type_func_map.get(_type):
+                # If the physical data type is
+                # a boolean override functionality
+                # that might have been applied and
+                # just call `sum`.
                 if ptypes[col] == "bool":
                     col_new = f"{col}_sum"
                     op = sqlop(
                         optype=SQLOpType.aggfunc,
-                        opval=f"sum(case when {col} = 1 then 1 else 0 end) as {col_new}",
+                        opval=f"sum(case when {col} then 1 else 0 end) as {col_new}"
                     )
                     if op not in agg_funcs:
                         agg_funcs.append(op)
@@ -998,8 +1006,18 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             elif self.__class__.__name__ == "SnowflakeNode":
                 aggfunc = sqlop(
                     optype=SQLOpType.aggfunc,
-                    opval="DATEDIFF('second',MAX({self.prefix}_{self.date_key}),TO_TIMESTAMP('{str(self.cut_date)}')) AS {self.prefix}_seconds_since_last",
+                    opval=f"DATEDIFF('second',MAX({self.prefix}_{self.date_key}),TO_TIMESTAMP('{str(self.cut_date)}')) AS {self.prefix}_seconds_since_last",
                 )
+            elif self.__class__.__name__ == "DatabricksNode":
+                aggfunc = sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            f"timestampdiff(SECOND, "
+                            f"MAX(CAST({self.prefix}_{self.date_key} AS TIMESTAMP)), "
+                            f"TIMESTAMP '{str(self.cut_date)}') "
+                            f"AS {self.prefix}_seconds_since_last"
+                            ),
+                        )
             else:
                 raise Exception(f"Not implemented for {self.__class__.__name__}")
             agg_funcs.append(aggfunc)
@@ -1020,7 +1038,30 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     delt2 = self.cut_date - datetime.timedelta(
                         days=self.ts_periods[ix + 1]
                     )
-                    agg_funcs.append(
+                    if self.__class__.__name__ == "DatabricksNode":
+                        agg_funcs.append(
+                                sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"""
+                                    try_divide(
+                                    SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' THEN 1 ELSE 0 END),
+                                    SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt2)}' THEN 1 ELSE 0 END)
+                                    ) AS {self.prefix}_{self.ts_periods[ix]}dv{self.ts_periods[ix + 1]}_change""",
+                                    )
+                                )
+                    elif self.__class__.__name__ == "SnowflakeNode":
+                        agg_funcs.append(
+                                sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"""
+                                    DIV0(
+                                    SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' THEN 1 ELSE 0 END),
+                                    SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt2)}' THEN 1 ELSE 0 END)
+                                    ) AS {self.prefix}_{self.ts_periods[ix]}dv{self.ts_periods[ix + 1]}_change""",
+                                    )
+                                )
+                    else:
+                        agg_funcs.append(
                         sqlop(
                             optype=SQLOpType.aggfunc,
                             opval=f"""
@@ -1912,7 +1953,8 @@ class SQLNode(GraphReduceNode):
         if not self._temp_refs.get(fn) or overwrite:
             ref_name = self.get_ref_name(fn, schema=schema)
             self._all_refs.append(ref_name)
-            self.create_temp_view(sql, ref_name, dry=dry)
+            if not dry:
+                self.create_temp_view(sql, ref_name, dry=dry)
             self._temp_refs[fn] = ref_name
             return ref_name
         # Reference for this method already created

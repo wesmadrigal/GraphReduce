@@ -99,6 +99,7 @@ class GraphReduce(nx.DiGraph):
             "multicategorical": ["first"],
             "sequence_numerical": ["min", "max"],
             "timestamp": ["min", "max"],
+            "text_embedded": ["dummy"]
         },
         # Label parameters.
         label_node: typing.Optional[
@@ -761,7 +762,8 @@ class GraphReduce(nx.DiGraph):
         if len(dupes):
             raise Exception(f"duplicate prefix on the following nodes: {dupes}")
 
-    def do_transformations_sql(self):
+
+    def do_transformations_sql(self, dry: bool = False):
         """
         Perform all graph transformations
         1) hydrate graph
@@ -793,11 +795,11 @@ class GraphReduce(nx.DiGraph):
             logger.debug(f"do data: {node.build_query(ops)}")
             self.sql_ops.append(node.build_query(ops))
             node.create_ref(
-                node.build_query(ops),
-                node.do_data,
-                schema=self._checkpoint_schema,
-                dry=self.dry_run,
-            )
+                    node.build_query(ops),
+                    node.do_data,
+                    schema=self._checkpoint_schema,
+                    dry=self.dry_run,
+                    )
             # Now append the reference SQL.
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
@@ -805,11 +807,11 @@ class GraphReduce(nx.DiGraph):
             logger.debug(f"do annotate: {node.build_query(node.do_annotate())}")
             self.sql_ops.append(node.build_query(node.do_annotate()))
             node.create_ref(
-                node.build_query(node.do_annotate()),
-                node.do_annotate,
-                schema=self._checkpoint_schema,
-                dry=self.dry_run,
-            )
+                    node.build_query(node.do_annotate()),
+                    node.do_annotate,
+                    schema=self._checkpoint_schema,
+                    dry=self.dry_run,
+                    )
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
