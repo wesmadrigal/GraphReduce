@@ -952,6 +952,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         func = "sum"
 
                     if func:
+
+                        if func == "count" and counted:
+                            continue
+
                         # Check if there was a last function
                         # applied and, if so, if the recommended
                         # function is in it's available combinations.
@@ -985,6 +989,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             )
                             if op not in agg_funcs:
                                 agg_funcs.append(op)
+
+                        if func == "count":
+                            counted = True
 
         # If we have time-series data we want to
         # do historical counts over the last periods.
