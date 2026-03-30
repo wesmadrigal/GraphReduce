@@ -2566,6 +2566,11 @@ class RedshiftNode(SQLNode):
                         func = "sum"
 
                     if func:
+                        # Check if a count has been
+                        # applied to this table yet.
+                        if counted and func == "count":
+                            continue
+
                         # Check if there was a last function
                         # applied and, if so, if the recommended
                         # function is in it's available combinations.
@@ -2598,6 +2603,9 @@ class RedshiftNode(SQLNode):
                             )
                             if op not in agg_funcs:
                                 agg_funcs.append(op)
+
+                        if func == "count":
+                            counted = True
 
         # If we have time-series data we want to
         # do historical counts over the last periods.
