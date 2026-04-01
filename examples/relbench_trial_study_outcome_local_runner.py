@@ -4,19 +4,14 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
-from urllib.request import urlretrieve
 
 from relbench_trial_study_outcome import (
     LABEL_DAYS,
     LOOKBACK_START,
-    TABLES,
     TEST_TIMESTAMP,
     VAL_TIMESTAMP,
     run_rel_trial_study_outcome,
 )
-
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-trial"
 
 
 def _is_interactive_mode() -> bool:
@@ -25,20 +20,10 @@ def _is_interactive_mode() -> bool:
 
 def main() -> None:
     print("Running rel-trial study-outcome example...", flush=True)
-    data_dir = Path("tests/data/relbench/rel-trial")
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
-            downloaded.append(table)
+    df_val, df_test, in_time_auc, holdout_auc, n_features, materialized, target = run_rel_trial_study_outcome()
 
-    df_val, df_test, in_time_auc, holdout_auc, n_features, local_tables, target = run_rel_trial_study_outcome()
-
-    print("downloaded_files:", downloaded, flush=True)
+    print("materialized_files:", materialized, flush=True)
     print("local_data_path:", "tests/data/relbench/rel-trial", flush=True)
-    print("local_tables_verified:", local_tables, flush=True)
     print("val_cut_date:", VAL_TIMESTAMP.date(), flush=True)
     print("test_cut_date:", TEST_TIMESTAMP.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)

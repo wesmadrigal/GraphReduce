@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
 from catboost import CatBoostClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
+from relbench_dataset_utils import materialize_relbench_dataset
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
@@ -19,22 +19,20 @@ from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
 from graphreduce.stypes import infer_df_stype
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-stack"
-TABLES = [
-    "Users.csv",
-    "Posts.csv",
-    "Badges.csv",
-    "PostHistory.csv",
-    "PostLinks.csv",
-    "Votes.csv",
-    "Comments.csv",
-    "Tags.csv",
-]
+TABLE_NAME_TO_FILENAME = {
+    "users": "Users.csv",
+    "posts": "Posts.csv",
+    "badges": "Badges.csv",
+    "postHistory": "PostHistory.csv",
+    "postLinks": "PostLinks.csv",
+    "votes": "Votes.csv",
+    "comments": "Comments.csv",
+}
 
 
-def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
+def _print_steps_summary(materialized_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
-    print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
+    print(f"1. Materialized relbench tables: {len(materialized_files)} file(s).", flush=True)
     print("2. Prepared and aggregated train/eval and out-of-time datasets with GraphReduce.", flush=True)
     print("3. Trained model.", flush=True)
     print("4. Predicted and scored on holdout set.", flush=True)
@@ -68,7 +66,6 @@ def _build_badges_frame(
     _prepare_view(con, "post_links_src", data_dir / "PostLinks.csv")
     _prepare_view(con, "votes_src", data_dir / "Votes.csv")
     _prepare_view(con, "comments_src", data_dir / "Comments.csv")
-    _prepare_view(con, "tags_src", data_dir / "Tags.csv")
 
     user = DuckdbNode(
         fpath="users_src",
@@ -138,14 +135,6 @@ def _build_badges_frame(
         date_key="CreationDate",
         columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
     )
-    tag = DuckdbNode(
-        fpath="tags_src",
-        prefix="tag",
-        pk="Id",
-        date_key=None,
-        columns=["Id", "TagName", "Count", "ExcerptPostId", "WikiPostId"],
-    )
-
     gr = GraphReduce(
         name=f"relbench-user-badges-{cut_date.date()}",
         parent_node=user,
@@ -165,7 +154,7 @@ def _build_badges_frame(
         auto_feature_hops_front=0,
     )
 
-    for node in [user, post, badge, post_history, post_links, vote_user, comment_user, vote_post, comment_post, tag]:
+    for node in [user, post, badge, post_history, post_links, vote_user, comment_user, vote_post, comment_post]:
         gr.add_node(node)
 
     gr.add_entity_edge(parent_node=user, relation_node=post, parent_key="Id", relation_key="OwnerUserId", reduce=True)
@@ -176,8 +165,6 @@ def _build_badges_frame(
     gr.add_entity_edge(parent_node=post, relation_node=post_links, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(parent_node=post, relation_node=vote_post, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(parent_node=post, relation_node=comment_post, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(parent_node=post, relation_node=tag, parent_key="Id", relation_key="ExcerptPostId", reduce=True)
-
     gr.do_transformations_sql()
     df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()
 
@@ -191,13 +178,7 @@ def _build_badges_frame(
 
 def main() -> None:
     data_dir = Path("tests/data/relbench/rel-stack")
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded_files: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
-            downloaded_files.append(table)
+    materialized_files = materialize_relbench_dataset("rel-stack", data_dir, TABLE_NAME_TO_FILENAME)
 
     train_cut_date = datetime.datetime(2020, 10, 1)
     future_cut_date = datetime.datetime(2021, 1, 1)
@@ -226,7 +207,7 @@ def main() -> None:
 
     if len(features) == 0 or df_train[target].nunique() < 2:
         print("insufficient features or single-class target; skipping model fit", flush=True)
-        _print_steps_summary(downloaded_files, "model fit skipped due to insufficient features or single-class target")
+        _print_steps_summary(materialized_files, "model fit skipped due to insufficient features or single-class target")
         return
 
     X_train_full, X_test, y_train_full, y_test = train_test_split(
@@ -298,7 +279,7 @@ def main() -> None:
     if df_future[target].nunique() < 2:
         print("future target is single-class; skipping out-of-time AUC", flush=True)
         _print_steps_summary(
-            downloaded_files,
+            materialized_files,
             f"in-time holdout ROC AUC ({train_cut_date.date()} cut date) = {holdout_auc:.4f}; out-of-time AUC ({future_cut_date.date()} cut date) skipped",
         )
         return
@@ -306,7 +287,7 @@ def main() -> None:
     future_auc = roc_auc_score(df_future[target], future_preds)
     print(f"out_of_time_auc_2021: {future_auc:.4f}", flush=True)
     _print_steps_summary(
-        downloaded_files,
+        materialized_files,
         f"in-time holdout ROC AUC ({train_cut_date.date()} cut date) = {holdout_auc:.4f}; out-of-time ROC AUC ({future_cut_date.date()} cut date) = {future_auc:.4f}",
     )
 

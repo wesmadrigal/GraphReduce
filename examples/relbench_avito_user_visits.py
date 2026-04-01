@@ -24,8 +24,8 @@ def run_rel_avito_user_visits(data_dir: Path | None = None):
 
 
 def main() -> None:
-    df, auc, n_features, downloaded, target = run_rel_avito_user_visits()
-    print("downloaded_files:", downloaded, flush=True)
+    df, auc, n_features, materialized, target = run_rel_avito_user_visits()
+    print("materialized_files:", materialized, flush=True)
     print("cut_date:", CUT_DATE.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("lookback_days:", LOOKBACK_DAYS, flush=True)

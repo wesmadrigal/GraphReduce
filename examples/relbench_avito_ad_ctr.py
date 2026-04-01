@@ -6,7 +6,6 @@ from __future__ import annotations
 import datetime
 import os
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
@@ -14,23 +13,23 @@ import pandas as pd
 from catboost import CatBoostRegressor
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
+from relbench_dataset_utils import materialize_relbench_dataset
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-avito"
-TABLES = [
-    "AdsInfo.parquet",
-    "Category.parquet",
-    "Location.parquet",
-    "PhoneRequestsStream.parquet",
-    "SearchInfo.parquet",
-    "SearchStream.parquet",
-    "UserInfo.parquet",
-    "VisitsStream.parquet",
-]
+TABLE_NAME_TO_FILENAME = {
+    "AdsInfo": "AdsInfo.parquet",
+    "Category": "Category.parquet",
+    "Location": "Location.parquet",
+    "PhoneRequestsStream": "PhoneRequestsStream.parquet",
+    "SearchInfo": "SearchInfo.parquet",
+    "SearchStream": "SearchStream.parquet",
+    "UserInfo": "UserInfo.parquet",
+    "VisitStream": "VisitsStream.parquet",
+}
 
 CUT_DATE = datetime.datetime(2015, 5, 14)
 LOOKBACK_START = datetime.datetime(2015, 4, 25)
@@ -38,35 +37,8 @@ LOOKBACK_DAYS = (CUT_DATE - LOOKBACK_START).days + 1
 LABEL_PERIOD_DAYS = 5
 
 
-def _is_valid_parquet(path: Path) -> bool:
-    if not path.exists() or path.stat().st_size == 0:
-        return False
-    con = duckdb.connect()
-    try:
-        con.sql(f"select 1 from read_parquet('{path}') limit 1").fetchall()
-        return True
-    except Exception:
-        return False
-    finally:
-        con.close()
-
-
-def download_rel_avito_data(data_dir: Path) -> list[str]:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if _is_valid_parquet(out_path):
-            continue
-        tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
-        if tmp_path.exists():
-            tmp_path.unlink()
-        urlretrieve(f"{BASE_URL}/{table}", tmp_path)
-        tmp_path.replace(out_path)
-        if not _is_valid_parquet(out_path):
-            raise RuntimeError(f"Downloaded parquet is still invalid: {out_path}")
-        downloaded.append(table)
-    return downloaded
+def materialize_rel_avito_data(data_dir: Path) -> list[str]:
+    return materialize_relbench_dataset("rel-avito", data_dir, TABLE_NAME_TO_FILENAME)
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
@@ -322,7 +294,7 @@ def train_ad_ctr_model(df: pd.DataFrame, target: str) -> tuple[float | None, int
 
 def run_rel_avito_ad_ctr(data_dir: Path | None = None) -> tuple[pd.DataFrame, float | None, int, list[str], str]:
     use_dir = data_dir or Path("tests/data/relbench/rel-avito")
-    downloaded = download_rel_avito_data(use_dir)
+    materialized = materialize_rel_avito_data(use_dir)
     con = duckdb.connect()
     try:
         df, target = build_ad_ctr_frame(con, use_dir)
@@ -330,12 +302,12 @@ def run_rel_avito_ad_ctr(data_dir: Path | None = None) -> tuple[pd.DataFrame, fl
         con.close()
 
     mae, n_features = train_ad_ctr_model(df, target)
-    return df, mae, n_features, downloaded, target
+    return df, mae, n_features, materialized, target
 
 
 def main() -> None:
-    df, mae, n_features, downloaded, target = run_rel_avito_ad_ctr()
-    print("downloaded_files:", downloaded, flush=True)
+    df, mae, n_features, materialized, target = run_rel_avito_ad_ctr()
+    print("materialized_files:", materialized, flush=True)
     print("cut_date:", CUT_DATE.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("lookback_days:", LOOKBACK_DAYS, flush=True)

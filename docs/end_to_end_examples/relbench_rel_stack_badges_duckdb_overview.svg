@@ -62,7 +62,7 @@
   <text x="430" y="546" class="text">reduce=True</text>
 
   <rect x="230" y="620" width="170" height="70" rx="10" fill="#fae8ff" stroke="#486581"/>
-  <text x="244" y="646" class="label">Tags.csv</text>
+  <text x="244" y="646" class="label">tag node removed</text>
   <text x="244" y="664" class="text">ExcerptPostId -&gt; posts.Id</text>
 
   <line x1="250" y1="302" x2="130" y2="352" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
@@ -85,7 +85,7 @@
   <text x="662" y="322" class="mono">label_node = badges, label_op = count</text>
 
   <rect x="620" y="392" width="390" height="320" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
-  <text x="640" y="422" class="section">3) SQL Pipeline in DuckDB</text>
+  <text x="640" y="422" class="section">3) Compute Graph Pipeline in DuckDB</text>
   <text x="640" y="450" class="text">A) Download CSVs from S3 if missing.</text>
   <text x="640" y="474" class="text">B) Instantiate all 8 tables as `DuckdbNode`.</text>
   <text x="640" y="498" class="text">C) Add edges with `reduce=True` for upward rollup.</text>
@@ -98,7 +98,7 @@
   <text x="658" y="658" class="mono">y: badge label column(s)</text>
 
   <rect x="1040" y="112" width="408" height="600" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
-  <text x="1060" y="142" class="section">4) Output at Parent Grain</text>
+  <text x="1060" y="142" class="section">4) Output at Parent Grain and Why This Setup</text>
   <rect x="1062" y="170" width="364" height="262" rx="10" fill="#f8fafc" stroke="#829ab1"/>
   <text x="1080" y="198" class="label">Example output columns</text>
   <text x="1080" y="224" class="mono">user_Id, user_DisplayName, ...</text>

@@ -1,353 +1,38 @@
-# RelBench Rel-Stack with DuckDB (Badges as Label) (Classification)
+# rel-stack: user badges (Classification)
 
-[![RelBench rel-stack graphreduce flow](relbench_rel_stack_badges_duckdb_overview.png)](relbench_rel_stack_badges_duckdb_overview.png)
-
-Open full-size: [PNG](relbench_rel_stack_badges_duckdb_overview.png) | [SVG](relbench_rel_stack_badges_duckdb_overview.svg)
-
-This example dynamically downloads the hosted
-[RelBench `rel-stack` dataset](https://relbench.stanford.edu/datasets/rel-stack/#user-badge)
-CSV files,
-instantiates all tables as `DuckdbNode` objects, and predicts future
-`Badges.csv` activity by using `Badges.csv` as the label node.
-
-Hosted dataset root:
-`https://open-relbench.s3.us-east-1.amazonaws.com/rel-stack`
-
-Tables used:
-
-* `Users.csv`
-* `Posts.csv`
-* `Badges.csv`
-* `PostHistory.csv`
-* `PostLinks.csv`
-* `Votes.csv`
-* `Comments.csv`
-* `Tags.csv`
-
-## Complete Example
-
-### Data Preparation
-
-<details>
-<summary>Show Code</summary>
+This docs example now reflects the current runner path: the local script materializes the official `rel-stack` tables from the `relbench` library and then runs the GraphReduce badge pipeline. The old S3 CSV download and separate `Tags.csv` dependency are no longer part of the example.
 
 ```python
-import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
+from relbench_dataset_utils import materialize_relbench_dataset
 
-import duckdb
-
-from graphreduce.graph_reduce import GraphReduce
-from graphreduce.node import DuckdbNode
-from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
-from graphreduce.models import sqlop
-
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-stack"
-TABLES = [
-    "Users.csv",
-    "Posts.csv",
-    "Badges.csv",
-    "PostHistory.csv",
-    "PostLinks.csv",
-    "Votes.csv",
-    "Comments.csv",
-    "Tags.csv",
-]
-
-data_dir = Path("data/relbench/rel-stack")
-data_dir.mkdir(parents=True, exist_ok=True)
-
-# Download data dynamically (skip files that already exist).
-for table in TABLES:
-    out_path = data_dir / table
-    if not out_path.exists():
-        urlretrieve(f"{BASE_URL}/{table}", out_path)
-
-con = duckdb.connect()
-
-def build_badges_frame(cut_date: datetime.datetime):
-    # Fully re-instantiate nodes + graph for each cut date.
-    user = DuckdbNode(
-        fpath=f"'{data_dir / 'Users.csv'}'",
-        prefix="user",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "DisplayName", "Location", "ProfileImageUrl", "WebsiteUrl", "AboutMe", "CreationDate"],
-        table_name="users",
-        do_filters_ops=[
-            sqlop(optype=SQLOpType.where, opval=f"user_CreationDate <= '{cut_date.date()}'"),
-            sqlop(optype=SQLOpType.where, opval="user_Id is not null"),
-        ],
-    )
-    post = DuckdbNode(
-        fpath=f"'{data_dir / 'Posts.csv'}'",
-        prefix="post",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "OwnerUserId", "PostTypeId", "AcceptedAnswerId", "ParentId", "Title", "Tags", "Body", "CreationDate"],
-        table_name="posts",
-    )
-    badge = DuckdbNode(
-        fpath=f"'{data_dir / 'Badges.csv'}'",
-        prefix="bad",
-        pk="Id",
-        date_key="Date",
-        columns=["Id", "UserId", "Class", "Name", "Date"],
-        table_name="badges",
-        do_filters_ops=[sqlop(optype=SQLOpType.where, opval="bad_UserId is not null")],
-    )
-    post_history = DuckdbNode(
-        fpath=f"'{data_dir / 'PostHistory.csv'}'",
-        prefix="ph",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "PostHistoryTypeId", "PostId", "RevisionGUID", "CreationDate", "UserId", "Text", "Comment", "ContentLicense"],
-        table_name="post_history",
-    )
-    post_links = DuckdbNode(
-        fpath=f"'{data_dir / 'PostLinks.csv'}'",
-        prefix="plink",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "CreationDate", "PostId", "RelatedPostId", "LinkTypeId"],
-        table_name="post_links",
-    )
-    vote_user = DuckdbNode(
-        fpath=f"'{data_dir / 'Votes.csv'}'",
-        prefix="voteu",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
-        table_name="votes",
-    )
-    comment_user = DuckdbNode(
-        fpath=f"'{data_dir / 'Comments.csv'}'",
-        prefix="commu",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
-        table_name="comments",
-    )
-    vote_post = DuckdbNode(
-        fpath=f"'{data_dir / 'Votes.csv'}'",
-        prefix="votep",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
-        table_name="votes",
-    )
-    comment_post = DuckdbNode(
-        fpath=f"'{data_dir / 'Comments.csv'}'",
-        prefix="commp",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
-        table_name="comments",
-    )
-    tag = DuckdbNode(
-        fpath=f"'{data_dir / 'Tags.csv'}'",
-        prefix="tag",
-        pk="Id",
-        date_key=None,
-        columns=["Id", "TagName", "Count", "ExcerptPostId", "WikiPostId"],
-        table_name="tags",
-    )
-
-    gr = GraphReduce(
-        name=f"rel-stack-badges-{cut_date.date()}",
-        parent_node=user,
-        compute_layer=ComputeLayerEnum.duckdb,
-        sql_client=con,
-        cut_date=cut_date,
-        compute_period_val=3650,
-        compute_period_unit=PeriodUnit.day,
-        auto_features=True,
-        auto_labels=True,
-        label_node=badge,
-        label_field="Id",
-        label_operation="count",
-        label_period_val=90,
-        label_period_unit=PeriodUnit.day,
-        auto_feature_hops_back=4,
-        auto_feature_hops_front=0,
-    )
-
-    for node in [user, post, badge, post_history, post_links, vote_user, comment_user, vote_post, comment_post, tag]:
-        gr.add_node(node)
-
-    gr.add_entity_edge(parent_node=user, relation_node=post, parent_key="Id", relation_key="OwnerUserId", reduce=True)
-    gr.add_entity_edge(parent_node=user, relation_node=vote_user, parent_key="Id", relation_key="UserId", reduce=True)
-    gr.add_entity_edge(parent_node=user, relation_node=comment_user, parent_key="Id", relation_key="UserId", reduce=True)
-    gr.add_entity_edge(parent_node=user, relation_node=badge, parent_key="Id", relation_key="UserId", reduce=True)
-    gr.add_entity_edge(parent_node=post, relation_node=post_history, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(parent_node=post, relation_node=post_links, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(parent_node=post, relation_node=vote_post, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(parent_node=post, relation_node=comment_post, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(parent_node=post, relation_node=tag, parent_key="Id", relation_key="ExcerptPostId", reduce=True)
-
-    gr.do_transformations_sql()
-    df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()
-    label_cols = [c for c in df.columns if c.startswith("bad_") and "label" in c.lower()]
-    if not label_cols:
-        raise ValueError("No badge label columns were found in df.")
-    target = label_cols[0]
-    df[target] = (df[target].fillna(0) > 0).astype("int8")
-    return df, target
-
-# 1) Training/eval graph at 2020-10-01.
-df_train, target = build_badges_frame(datetime.datetime(2020, 10, 1))
-
-# 2) Fully separate out-of-time graph at 2021-01-01.
-df_future, target_future = build_badges_frame(datetime.datetime(2021, 1, 1))
-assert target == target_future
-
-print("train shape:", df_train.shape)
-print("future shape:", df_future.shape)
-print("target:", target)
+materialized = materialize_relbench_dataset(
+    "rel-stack",
+    Path("tests/data/relbench/rel-stack"),
+    {
+        "users": "Users.csv",
+        "posts": "Posts.csv",
+        "badges": "Badges.csv",
+        "postHistory": "PostHistory.csv",
+        "postLinks": "PostLinks.csv",
+        "votes": "Votes.csv",
+        "comments": "Comments.csv",
+    },
+)
+print(materialized)
 ```
 
-</details>
+Current implementation:
 
-### Model Training
+* [`examples/relbench_user_badges_local_runner.py`](../../examples/relbench_user_badges_local_runner.py)
 
-<details>
-<summary>Show Code</summary>
-
-```python
-import numpy as np
-from torch_frame.utils import infer_df_stype
-from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.metrics import roc_auc_score
-from catboost import CatBoostClassifier
-
-# Continue from `df_train`, `df_future`, and `target`.
-stypes = infer_df_stype(df_train)
-features = [
-    k
-    for k, v in stypes.items()
-    if str(v) == "numerical"
-    and k not in ["user_Id", "user_AccountId"]
-    and "label" not in k
-    and "had_engagement" not in k
-]
-features = [c for c in features if c in df_train.columns and c in df_future.columns]
-
-# In-time evaluation on the 2020-10-01 graph.
-X_train_full, X_test, y_train_full, y_test = train_test_split(
-    df_train[features],
-    df_train[target],
-    test_size=0.20,
-    stratify=df_train[target],
-    random_state=42,
-)
-
-k = 3
-skf = StratifiedKFold(n_splits=k, shuffle=True, random_state=42)
-
-fold_aucs = []
-test_preds = np.zeros(len(X_test))
-
-for fold, (idx_tr, idx_va) in enumerate(skf.split(X_train_full, y_train_full), 1):
-    print(f"\n=== Fold {fold} ===")
-
-    X_tr, X_va = X_train_full.iloc[idx_tr], X_train_full.iloc[idx_va]
-    y_tr, y_va = y_train_full.iloc[idx_tr], y_train_full.iloc[idx_va]
-
-    mdl = CatBoostClassifier(
-        loss_function="Logloss",
-        eval_metric="AUC",
-        custom_metric=["AUC", "PRAUC", "F1", "Recall", "Precision", "Logloss"],
-        use_best_model=True,
-        iterations=8000,
-        learning_rate=0.02,
-        depth=6,
-        l2_leaf_reg=5.0,
-        min_data_in_leaf=20,
-        boosting_type="Ordered",
-        auto_class_weights="Balanced",
-        bootstrap_type="Bayesian",
-        bagging_temperature=0.5,
-        random_strength=0.8,
-        rsm=0.8,
-        feature_border_type="GreedyLogSum",
-        od_type="Iter",
-        od_wait=250,
-        verbose=200,
-    )
-
-    mdl.fit(
-        X_tr,
-        y_tr,
-        eval_set=(X_va, y_va),
-        use_best_model=True,
-        verbose=200,
-    )
-
-    val_pred = mdl.predict_proba(X_va)[:, 1]
-    val_auc = roc_auc_score(y_va, val_pred)
-    fold_aucs.append(val_auc)
-    print(f"Fold {fold} validation AUC : {val_auc:.4f}")
-
-    test_preds += mdl.predict_proba(X_test)[:, 1] / k
-
-print("\n=== CV Summary ===")
-print(f"Mean CV AUC : {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f}")
-print(f"Folds AUC   : {[f'{a:.4f}' for a in fold_aucs]}")
-
-in_time_holdout_auc = roc_auc_score(y_test, test_preds)
-print(f"\nIn-time holdout AUC (2020-10-01 graph): {in_time_holdout_auc:.4f}")
-
-# Train on full 2020-10-01 graph, then score on fully separate 2021-01-01 graph.
-final_mdl = CatBoostClassifier(
-    loss_function="Logloss",
-    eval_metric="AUC",
-    custom_metric=["AUC", "PRAUC", "F1", "Recall", "Precision", "Logloss"],
-    iterations=int(mdl.best_iteration_ * 1.1),
-    learning_rate=0.02,
-    depth=6,
-    l2_leaf_reg=5.0,
-    min_data_in_leaf=20,
-    boosting_type="Ordered",
-    auto_class_weights="Balanced",
-    bootstrap_type="Bayesian",
-    bagging_temperature=0.5,
-    random_strength=0.8,
-    rsm=0.8,
-    feature_border_type="GreedyLogSum",
-    od_type="Iter",
-    od_wait=250,
-    verbose=200,
-)
-final_mdl.fit(df_train[features], df_train[target], verbose=200)
-future_pred = final_mdl.predict_proba(df_future[features])[:, 1]
-future_auc = roc_auc_score(df_future[target], future_pred)
-print(f"Out-of-time AUC (2021 graph): {future_auc:.4f}")
-
-con.close()
-```
-
-</details>
-
-## Notes
-
-* This is a full DuckDB SQL graph execution (`gr.do_transformations_sql()`).
-* All defined edges use `reduce=True` so signal is rolled up and propagated.
-* `Votes` and `Comments` are instantiated twice with distinct prefixes so user-level and post-level reductions stay separate.
-* Two full graphs are built and executed independently:
-  * training/eval graph at `cut_date=2020-10-01`
-  * out-of-time scoring graph at `cut_date=2021-01-01`
-* `Badges.csv` is both:
-  * a feature source (historical behavior in the feature window)
-  * the label source (future behavior in the 90-day label window)
-
-## Run Interactive
+## Interactive Runner
 
 <div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_user_badges">
   <div class="modal-runner-controls">
     <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
-    <button data-run-btn>Run rel-stack User Badges</button>
+    <button data-run-btn>Run rel-stack user badges</button>
   </div>
   <div class="modal-runner-status" data-status>Idle</div>
   <pre class="modal-runner-log" data-log></pre>

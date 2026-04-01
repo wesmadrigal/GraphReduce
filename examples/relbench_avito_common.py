@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
@@ -18,17 +17,18 @@ from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
+from relbench_dataset_utils import materialize_relbench_dataset
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-avito"
-TABLES = [
-    "AdsInfo.parquet",
-    "Category.parquet",
-    "Location.parquet",
-    "PhoneRequestsStream.parquet",
-    "SearchInfo.parquet",
-    "UserInfo.parquet",
-    "VisitsStream.parquet",
-]
+TABLE_NAME_TO_FILENAME = {
+    "AdsInfo": "AdsInfo.parquet",
+    "Category": "Category.parquet",
+    "Location": "Location.parquet",
+    "PhoneRequestsStream": "PhoneRequestsStream.parquet",
+    "SearchInfo": "SearchInfo.parquet",
+    "SearchStream": "SearchStream.parquet",
+    "UserInfo": "UserInfo.parquet",
+    "VisitStream": "VisitsStream.parquet",
+}
 
 CUT_DATE = datetime.datetime(2015, 5, 14)
 LOOKBACK_START = datetime.datetime(2015, 4, 25)
@@ -36,35 +36,8 @@ LOOKBACK_DAYS = (CUT_DATE - LOOKBACK_START).days + 1
 LABEL_PERIOD_DAYS = 5  # 4-day task window with GraphReduce's strict-less-than boundary.
 
 
-def _is_valid_parquet(path: Path) -> bool:
-    if not path.exists() or path.stat().st_size == 0:
-        return False
-    con = duckdb.connect()
-    try:
-        con.sql(f"select 1 from read_parquet('{path}') limit 1").fetchall()
-        return True
-    except Exception:
-        return False
-    finally:
-        con.close()
-
-
-def download_rel_avito_data(data_dir: Path) -> list[str]:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        needs_download = not _is_valid_parquet(out_path)
-        if needs_download:
-            tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
-            if tmp_path.exists():
-                tmp_path.unlink()
-            urlretrieve(f"{BASE_URL}/{table}", tmp_path)
-            tmp_path.replace(out_path)
-            if not _is_valid_parquet(out_path):
-                raise RuntimeError(f"Downloaded parquet is still invalid: {out_path}")
-            downloaded.append(table)
-    return downloaded
+def materialize_rel_avito_data(data_dir: Path) -> list[str]:
+    return materialize_relbench_dataset("rel-avito", data_dir, TABLE_NAME_TO_FILENAME)
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
@@ -333,7 +306,7 @@ def run_avito_task(mode: str, data_dir: Path | None = None) -> tuple[pd.DataFram
         raise ValueError("mode must be 'user_clicks' or 'user_visits'")
 
     use_dir = data_dir or Path("tests/data/relbench/rel-avito")
-    downloaded = download_rel_avito_data(use_dir)
+    materialized = materialize_rel_avito_data(use_dir)
     df = _build_frame(use_dir, mode=mode)
 
     if mode == "user_clicks":
@@ -342,4 +315,4 @@ def run_avito_task(mode: str, data_dir: Path | None = None) -> tuple[pd.DataFram
         target = "user_multi_visit_next_4d"
 
     auc, n_features = _train_binary_model(df, target=target)
-    return df, auc, n_features, downloaded, target
+    return df, auc, n_features, materialized, target

@@ -14,9 +14,9 @@ def _is_interactive_mode() -> bool:
 
 def main() -> None:
     print("Running rel-hm item-sales example...", flush=True)
-    df_eval, df_holdout, holdout_mae, n_features, downloaded, target = run_rel_hm_item_sales()
+    df_eval, df_holdout, holdout_mae, n_features, materialized, target = run_rel_hm_item_sales()
 
-    print("downloaded_files:", downloaded, flush=True)
+    print("materialized_files:", materialized, flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("eval_timestamp:", EVAL_DATE.date(), flush=True)
     print("holdout_timestamp:", HOLDOUT_DATE.date(), flush=True)

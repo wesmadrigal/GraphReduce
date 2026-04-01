@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
 from catboost import CatBoostClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
+from relbench_dataset_utils import materialize_relbench_dataset
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
@@ -19,22 +19,20 @@ from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
 from graphreduce.stypes import infer_df_stype
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-stack"
-TABLES = [
-    "Users.csv",
-    "Posts.csv",
-    "Badges.csv",
-    "PostHistory.csv",
-    "PostLinks.csv",
-    "Votes.csv",
-    "Comments.csv",
-    "Tags.csv",
-]
+TABLE_NAME_TO_FILENAME = {
+    "users": "Users.csv",
+    "posts": "Posts.csv",
+    "badges": "Badges.csv",
+    "postHistory": "PostHistory.csv",
+    "postLinks": "PostLinks.csv",
+    "votes": "Votes.csv",
+    "comments": "Comments.csv",
+}
 
 
-def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
+def _print_steps_summary(materialized_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
-    print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
+    print(f"1. Materialized relbench tables: {len(materialized_files)} file(s).", flush=True)
     print("2. Prepared and aggregated two GraphReduce datasets (2020-10-01 train/eval, 2021-01-01 out-of-time).", flush=True)
     print("3. Trained model on the 2020-10-01 dataset.", flush=True)
     print("4. Predicted and scored on 2020-10-01 holdout and 2021-01-01 out-of-time datasets.", flush=True)
@@ -203,13 +201,7 @@ def _build_user_engagement_frame(
 
 def main() -> None:
     data_dir = Path("tests/data/relbench/rel-stack")
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded_files: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
-            downloaded_files.append(table)
+    materialized_files = materialize_relbench_dataset("rel-stack", data_dir, TABLE_NAME_TO_FILENAME)
 
     train_cut_date = datetime.datetime(2020, 10, 1)
     future_cut_date = datetime.datetime(2021, 1, 1)
@@ -253,7 +245,7 @@ def main() -> None:
 
     if y.nunique() < 2:
         print("single-class target; skipping model fit", flush=True)
-        _print_steps_summary(downloaded_files, "model fit skipped due to single-class target")
+        _print_steps_summary(materialized_files, "model fit skipped due to single-class target")
         return
 
     X_train_full, X_test, y_train_full, y_test = train_test_split(
@@ -305,7 +297,7 @@ def main() -> None:
     if future_y.nunique() < 2:
         print("future target is single-class; skipping out-of-time AUC", flush=True)
         _print_steps_summary(
-            downloaded_files,
+            materialized_files,
             f"in-time holdout ROC AUC ({train_cut_date.date()} cut date) = {holdout_auc:.4f}; out-of-time AUC ({future_cut_date.date()} cut date) skipped",
         )
         return
@@ -314,7 +306,7 @@ def main() -> None:
     future_auc = roc_auc_score(future_y, future_preds)
     print(f"out_of_time_auc_2021: {future_auc:.4f}", flush=True)
     _print_steps_summary(
-        downloaded_files,
+        materialized_files,
         f"in-time holdout ROC AUC ({train_cut_date.date()} cut date) = {holdout_auc:.4f}; out-of-time ROC AUC ({future_cut_date.date()} cut date) = {future_auc:.4f}",
     )
 

@@ -20,9 +20,9 @@ def _is_interactive_mode() -> bool:
 
 def main() -> None:
     print("Running rel-hm user churn example...", flush=True)
-    df, auc, n_features, downloaded = run_rel_hm_user_churn()
+    df, auc, n_features, materialized = run_rel_hm_user_churn()
 
-    print("downloaded_files:", downloaded, flush=True)
+    print("materialized_files:", materialized, flush=True)
     print("cut_date:", CUT_DATE.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("lookback_days:", LOOKBACK_DAYS, flush=True)

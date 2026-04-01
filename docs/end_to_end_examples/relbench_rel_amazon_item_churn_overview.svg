@@ -51,7 +51,7 @@
   <rect x="646" y="168" width="340" height="46" rx="8" fill="#f0f4f8" stroke="#9fb3c8"/>
   <text x="662" y="196" class="mono">cut_date = 2016-01-01</text>
   <rect x="646" y="224" width="340" height="50" rx="8" fill="#e6fffa" stroke="#2c7a7b"/>
-  <text x="662" y="244" class="label">X window: from 1996-06-25</text>
+  <text x="662" y="244" class="label">X window: from 2008-01-01</text>
   <text x="662" y="262" class="mono">LOOKBACK_DAYS = 7129 (inclusive start)</text>
   <rect x="646" y="284" width="340" height="50" rx="8" fill="#fffaf0" stroke="#b7791f"/>
   <text x="662" y="304" class="label">y window: 90 days forward</text>

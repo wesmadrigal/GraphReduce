@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
@@ -19,27 +18,24 @@ from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
+from relbench_dataset_utils import materialize_relbench_dataset
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-amazon"
-TABLES = ["customer.parquet", "product.parquet", "review.parquet"]
+TABLE_NAME_TO_FILENAME = {
+    "customer": "customer.parquet",
+    "product": "product.parquet",
+    "review": "review.parquet",
+}
 
-VALIDATION_CUT_DATE = datetime.datetime(2015, 1, 1)
+VALIDATION_CUT_DATE = datetime.datetime(2015, 10, 1)
 HOLDOUT_CUT_DATE = datetime.datetime(2016, 1, 1)
 CUT_DATE = HOLDOUT_CUT_DATE
-LOOKBACK_START = datetime.datetime(1996, 6, 25)
+LOOKBACK_START = datetime.datetime(2008, 1, 1)
 LOOKBACK_DAYS = (HOLDOUT_CUT_DATE - LOOKBACK_START).days + 1
 LABEL_PERIOD_DAYS = 90
 
 
-def download_rel_amazon_data(data_dir: Path) -> list[str]:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
-            downloaded.append(table)
-    return downloaded
+def materialize_rel_amazon_data(data_dir: Path) -> list[str]:
+    return materialize_relbench_dataset("rel-amazon", data_dir, TABLE_NAME_TO_FILENAME)
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
@@ -308,25 +304,25 @@ def run_amazon_task(
 ) -> tuple[pd.DataFrame, float | None, int, list[str], str]:
     use_dir = data_dir or Path("tests/data/relbench/rel-amazon")
     use_cut_date = cut_date or CUT_DATE
-    downloaded = download_rel_amazon_data(use_dir)
+    materialized = materialize_rel_amazon_data(use_dir)
     df = _build_frame(use_dir, mode=mode, cut_date=use_cut_date)
 
     if mode == "user_churn":
         target = "user_churn_90d"
         auc, n_features = _train_binary(df, target=target)
-        return df, auc, n_features, downloaded, target
+        return df, auc, n_features, materialized, target
     if mode == "item_churn":
         target = "item_has_review_next_90d"
         auc, n_features = _train_binary(df, target=target)
-        return df, auc, n_features, downloaded, target
+        return df, auc, n_features, materialized, target
     if mode == "user_ltv":
         target = "user_ltv_90d_usd"
         mae, n_features = _train_regression(df, target=target)
-        return df, mae, n_features, downloaded, target
+        return df, mae, n_features, materialized, target
     if mode == "item_ltv":
         target = "item_ltv_90d_usd"
         mae, n_features = _train_regression(df, target=target)
-        return df, mae, n_features, downloaded, target
+        return df, mae, n_features, materialized, target
     raise ValueError("mode must be user_churn, item_churn, user_ltv, or item_ltv")
 
 
@@ -340,7 +336,7 @@ def run_amazon_temporal_regression_task(
         raise ValueError("mode must be user_ltv or item_ltv")
 
     use_dir = data_dir or Path("tests/data/relbench/rel-amazon")
-    downloaded = download_rel_amazon_data(use_dir)
+    materialized = materialize_rel_amazon_data(use_dir)
     df_validation = _build_frame(use_dir, mode=mode, cut_date=validation_cut_date)
     df_holdout = _build_frame(use_dir, mode=mode, cut_date=holdout_cut_date)
 
@@ -357,7 +353,7 @@ def run_amazon_temporal_regression_task(
     ]
     feature_cols = [c for c in feature_cols if c in df_holdout.columns]
     if not feature_cols:
-        return df_validation, df_holdout, None, 0, downloaded, target
+        return df_validation, df_holdout, None, 0, materialized, target
 
     model = CatBoostRegressor(
         iterations=700,
@@ -376,4 +372,4 @@ def run_amazon_temporal_regression_task(
     model.fit(X_validation, y_validation)
     holdout_preds = model.predict(X_holdout)
     holdout_mae = float(mean_absolute_error(y_holdout, holdout_preds))
-    return df_validation, df_holdout, holdout_mae, len(feature_cols), downloaded, target
+    return df_validation, df_holdout, holdout_mae, len(feature_cols), materialized, target

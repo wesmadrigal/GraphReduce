@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
@@ -17,25 +16,22 @@ from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
+from relbench_dataset_utils import materialize_relbench_dataset
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-hm"
-TABLES = ["article.parquet", "customer.parquet", "transactions.parquet"]
-LOOKBACK_START = datetime.datetime(2018, 9, 20)
+TABLE_NAME_TO_FILENAME = {
+    "article": "article.parquet",
+    "customer": "customer.parquet",
+    "transactions": "transactions.parquet",
+}
+LOOKBACK_START = datetime.datetime(2019, 9, 7)
 EVAL_DATE = datetime.datetime(2020, 9, 7)
 HOLDOUT_DATE = datetime.datetime(2020, 9, 14)
 # GraphReduce label horizon is [cut_date, cut_date + period), so use 8 to include 7 full days.
 LABEL_DAYS = 8
 
 
-def download_rel_hm_data(data_dir: Path) -> list[str]:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
-            downloaded.append(table)
-    return downloaded
+def materialize_rel_hm_data(data_dir: Path) -> list[str]:
+    return materialize_relbench_dataset("rel-hm", data_dir, TABLE_NAME_TO_FILENAME)
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
@@ -154,7 +150,7 @@ def run_rel_hm_item_sales(
     data_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float | None, int, list[str], str]:
     use_dir = data_dir or Path("tests/data/relbench/rel-hm")
-    downloaded = download_rel_hm_data(use_dir)
+    materialized = materialize_rel_hm_data(use_dir)
     con = duckdb.connect()
     try:
         df_eval = build_item_sales_frame(con, use_dir, cut_date=EVAL_DATE)
@@ -172,7 +168,7 @@ def run_rel_hm_item_sales(
     feature_cols = [c for c in feature_cols if c in df_holdout.columns]
 
     if not feature_cols:
-        return df_eval, df_holdout, None, 0, downloaded, target
+        return df_eval, df_holdout, None, 0, materialized, target
 
     model = CatBoostRegressor(
         iterations=700,
@@ -191,12 +187,12 @@ def run_rel_hm_item_sales(
     model.fit(X_eval, y_eval)
     preds = model.predict(X_holdout)
     holdout_mae = float(mean_absolute_error(y_holdout, preds))
-    return df_eval, df_holdout, holdout_mae, len(feature_cols), downloaded, target
+    return df_eval, df_holdout, holdout_mae, len(feature_cols), materialized, target
 
 
 def main() -> None:
-    df_eval, df_holdout, holdout_mae, n_features, downloaded, target = run_rel_hm_item_sales()
-    print("downloaded_files:", downloaded, flush=True)
+    df_eval, df_holdout, holdout_mae, n_features, materialized, target = run_rel_hm_item_sales()
+    print("materialized_files:", materialized, flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("eval_timestamp:", EVAL_DATE.date(), flush=True)
     print("holdout_timestamp:", HOLDOUT_DATE.date(), flush=True)

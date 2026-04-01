@@ -12,6 +12,7 @@ import pandas as pd
 from catboost import CatBoostClassifier
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
+from relbench_dataset_utils import materialize_relbench_dataset
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
@@ -40,33 +41,27 @@ VAL_TIMESTAMP = datetime.datetime(2020, 1, 1)
 TEST_TIMESTAMP = datetime.datetime(2021, 1, 1)
 LOOKBACK_START = datetime.datetime(2000, 1, 1)
 LABEL_DAYS = 365
+TABLE_NAME_TO_FILENAME = {
+    "studies": "studies.parquet",
+    "outcomes": "outcomes.parquet",
+    "outcome_analyses": "outcome_analyses.parquet",
+    "drop_withdrawals": "drop_withdrawals.parquet",
+    "reported_event_totals": "reported_event_totals.parquet",
+    "designs": "designs.parquet",
+    "eligibilities": "eligibilities.parquet",
+    "interventions": "interventions.parquet",
+    "conditions": "conditions.parquet",
+    "facilities": "facilities.parquet",
+    "sponsors": "sponsors.parquet",
+    "interventions_studies": "interventions_studies.parquet",
+    "conditions_studies": "conditions_studies.parquet",
+    "facilities_studies": "facilities_studies.parquet",
+    "sponsors_studies": "sponsors_studies.parquet",
+}
 
 
-def _is_valid_parquet(path: Path) -> bool:
-    if not path.exists() or path.stat().st_size == 0:
-        return False
-    con = duckdb.connect()
-    try:
-        con.sql(f"select 1 from read_parquet('{path}') limit 1").fetchall()
-        return True
-    except Exception:
-        return False
-    finally:
-        con.close()
-
-
-def ensure_local_rel_trial_data(data_dir: Path) -> list[str]:
-    missing_or_invalid: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not _is_valid_parquet(out_path):
-            missing_or_invalid.append(str(out_path))
-    if missing_or_invalid:
-        raise FileNotFoundError(
-            "Missing/invalid local rel-trial parquet files. "
-            f"Expected local files under {data_dir}: {missing_or_invalid}"
-        )
-    return TABLES.copy()
+def materialize_rel_trial_data(data_dir: Path) -> list[str]:
+    return materialize_relbench_dataset("rel-trial", data_dir, TABLE_NAME_TO_FILENAME)
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
@@ -436,7 +431,7 @@ def run_rel_trial_study_outcome(
     data_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, float | None, float | None, int, list[str], str]:
     use_dir = data_dir or Path("tests/data/relbench/rel-trial")
-    local_tables = ensure_local_rel_trial_data(use_dir)
+    materialized = materialize_rel_trial_data(use_dir)
 
     con = duckdb.connect()
     try:
@@ -449,12 +444,12 @@ def run_rel_trial_study_outcome(
         raise ValueError(f"Target mismatch between val ({target}) and test ({target_test})")
 
     in_time_auc, holdout_auc, n_features = train_study_outcome_model(df_val, target, df_test)
-    return df_val, df_test, in_time_auc, holdout_auc, n_features, local_tables, target
+    return df_val, df_test, in_time_auc, holdout_auc, n_features, materialized, target
 
 
 def main() -> None:
-    df_val, df_test, in_time_auc, holdout_auc, n_features, local_tables, target = run_rel_trial_study_outcome()
-    print("local_tables_verified:", local_tables, flush=True)
+    df_val, df_test, in_time_auc, holdout_auc, n_features, materialized, target = run_rel_trial_study_outcome()
+    print("materialized_files:", materialized, flush=True)
     print("val_cut_date:", VAL_TIMESTAMP.date(), flush=True)
     print("test_cut_date:", TEST_TIMESTAMP.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
