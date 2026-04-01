@@ -19,7 +19,7 @@
 
   <rect x="0" y="0" width="1480" height="940" fill="#f7fafc"/>
   <text x="40" y="54" class="title">RelBench Rel-Stack in DuckDB with Badges Label Target</text>
-  <text x="40" y="82" class="subtitle">Dynamic S3 CSV download, Users parent node with cut-date filter, multi-table reductions, and future badge labels at parent grain.</text>
+  <text x="40" y="82" class="subtitle">Relbench-backed local table materialization, Users parent node with cut-date filter, multi-table reductions, and future badge labels at parent grain.</text>
 
   <rect x="34" y="112" width="560" height="600" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
   <text x="54" y="142" class="section">1) Graph Model and Node Roles</text>
@@ -62,7 +62,7 @@
   <text x="430" y="546" class="text">reduce=True</text>
 
   <rect x="230" y="620" width="170" height="70" rx="10" fill="#fae8ff" stroke="#486581"/>
-  <text x="244" y="646" class="label">Tags.csv</text>
+  <text x="244" y="646" class="label">tag node removed</text>
   <text x="244" y="664" class="text">ExcerptPostId -&gt; posts.Id</text>
 
   <line x1="250" y1="302" x2="130" y2="352" stroke="#334e68" stroke-width="2.1" marker-end="url(#arrow)"/>
@@ -86,7 +86,7 @@
 
   <rect x="620" y="392" width="390" height="320" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
   <text x="640" y="422" class="section">3) Compute Graph Pipeline in DuckDB</text>
-  <text x="640" y="450" class="text">A) Download CSVs from S3 if missing.</text>
+  <text x="640" y="450" class="text">A) Materialize rel-stack tables from the relbench library.</text>
   <text x="640" y="474" class="text">B) Instantiate all 8 tables as `DuckdbNode`.</text>
   <text x="640" y="498" class="text">C) Add edges with `reduce=True` for upward rollup.</text>
   <text x="640" y="522" class="text">D) Run `gr.do_transformations_sql()`.</text>

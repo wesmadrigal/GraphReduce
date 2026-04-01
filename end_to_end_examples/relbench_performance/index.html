@@ -8,13 +8,13 @@
       
       
       
-        <link rel="canonical" href="https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_rel_stack_user_engagement_duckdb/">
+        <link rel="canonical" href="https://github.com/wesmadrigal/graphreduce/end_to_end_examples/relbench_performance/">
       
       
-        <link rel="prev" href="../relbench_rel_stack_badges_duckdb/">
+        <link rel="prev" href="../predictive_ai_tabpfn/">
       
       
-        <link rel="next" href="../relbench_rel_trial_study_outcome_duckdb/">
+        <link rel="next" href="../relbench_rel_stack_badges_duckdb/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>rel-stack: user-engagement - graphreduce</title>
+        <title>Performance Comparison - graphreduce</title>
       
     
     
@@ -68,7 +68,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rel-stack-user-engagement-classification" class="md-skip">
+        <a href="#relbench-graphreduce-catboost-performance-comparison" class="md-skip">
           Skip to content
         </a>
       
@@ -104,7 +104,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              rel-stack: user-engagement
+              Performance Comparison
             
           </span>
         </div>
@@ -1000,10 +1000,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../relbench_performance/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance Comparison
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1019,6 +1046,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#best-per-task-summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Best-Per-Task Summary
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1028,8 +1086,6 @@
                 
   
   
-    
-  
   
   
     
@@ -1040,11 +1096,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8_2" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8_2" >
         
           
           <label class="md-nav__link" for="__nav_4_8_2" id="__nav_4_8_2_label" tabindex="0">
@@ -1065,7 +1121,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_8_2_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_8_2_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4_8_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1108,37 +1164,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    rel-stack: user-engagement
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../relbench_rel_stack_user_engagement_duckdb/" class="md-nav__link">
         
   
   
@@ -1154,37 +1183,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#interactive-runner" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Interactive Runner
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1887,10 +1885,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#interactive-runner" class="md-nav__link">
+  <a href="#best-per-task-summary" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Interactive Runner
+        Best-Per-Task Summary
       
     </span>
   </a>
@@ -1917,40 +1915,123 @@
   
 
 
-<h1 id="rel-stack-user-engagement-classification">rel-stack: user engagement (Classification)</h1>
-<p>This docs example now matches the current local runner: it materializes the official <code>rel-stack</code> tables through the <code>relbench</code> library and then builds the GraphReduce user-engagement frame from those CSVs.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">relbench_dataset_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">materialize_relbench_dataset</span>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">materialized</span> <span class="o">=</span> <span class="n">materialize_relbench_dataset</span><span class="p">(</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="s2">&quot;rel-stack&quot;</span><span class="p">,</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>    <span class="n">Path</span><span class="p">(</span><span class="s2">&quot;tests/data/relbench/rel-stack&quot;</span><span class="p">),</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a>    <span class="p">{</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>        <span class="s2">&quot;users&quot;</span><span class="p">:</span> <span class="s2">&quot;Users.csv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a>        <span class="s2">&quot;posts&quot;</span><span class="p">:</span> <span class="s2">&quot;Posts.csv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>        <span class="s2">&quot;badges&quot;</span><span class="p">:</span> <span class="s2">&quot;Badges.csv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a>        <span class="s2">&quot;postHistory&quot;</span><span class="p">:</span> <span class="s2">&quot;PostHistory.csv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-12"><a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a>        <span class="s2">&quot;postLinks&quot;</span><span class="p">:</span> <span class="s2">&quot;PostLinks.csv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-13"><a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a>        <span class="s2">&quot;votes&quot;</span><span class="p">:</span> <span class="s2">&quot;Votes.csv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-14"><a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a>        <span class="s2">&quot;comments&quot;</span><span class="p">:</span> <span class="s2">&quot;Comments.csv&quot;</span><span class="p">,</span>
-</span><span id="__span-0-15"><a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a>    <span class="p">},</span>
-</span><span id="__span-0-16"><a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="p">)</span>
-</span><span id="__span-0-17"><a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="nb">print</span><span class="p">(</span><span class="n">materialized</span><span class="p">)</span>
-</span></code></pre></div>
-<p>Current implementation:</p>
+<h1 id="relbench-graphreduce-catboost-performance-comparison">RelBench GraphReduce + CatBoost Performance Comparison</h1>
+<p>This table compares performance across RelBench tasks currently listed in these docs.</p>
+<h2 id="best-per-task-summary">Best-Per-Task Summary</h2>
 <ul>
-<li><a href="../../examples/relbench_user_engagement_local_runner.py"><code>examples/relbench_user_engagement_local_runner.py</code></a></li>
+<li>GraphReduce + CatBoost: <strong>6 wins</strong></li>
+<li>Kumo (fine tuned): <strong>4 wins</strong></li>
+<li>RDL: <strong>1 win</strong> (tie)</li>
+<li>Data Scientist: <strong>0 wins</strong></li>
+<li>Kumo (in context): <strong>0 wins</strong></li>
 </ul>
-<h2 id="interactive-runner">Interactive Runner</h2>
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_user_engagement">
-  <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
-    <button data-save-api-btn>Save API URL</button>
-    <button data-run-btn>Run rel-stack user engagement</button>
-  </div>
-  <div class="modal-runner-status" data-status>Idle</div>
-  <pre class="modal-runner-log" data-log></pre>
-</div>
+<p>Notes:
+- Ties are counted for each tied solution.</p>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th style="text-align: right;">Data Scientist</th>
+<th style="text-align: right;">RDL</th>
+<th style="text-align: right;">Kumo (in context)</th>
+<th style="text-align: right;">Kumo (fine tuned)</th>
+<th style="text-align: right;">GraphReduce + CatBoost</th>
+<th>Metric</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>rel-stack-user-engagement</td>
+<td style="text-align: right;">90.3</td>
+<td style="text-align: right;">90.2</td>
+<td style="text-align: right;">87.09</td>
+<td style="text-align: right;"><strong>90.7</strong></td>
+<td style="text-align: right;">89.21</td>
+<td>AUCROC</td>
+</tr>
+<tr>
+<td>rel-stack-user-badges</td>
+<td style="text-align: right;">86.2</td>
+<td style="text-align: right;"><strong>89.86</strong></td>
+<td style="text-align: right;">80</td>
+<td style="text-align: right;"><strong>89.86</strong></td>
+<td style="text-align: right;">84.30</td>
+<td>AUCROC</td>
+</tr>
+<tr>
+<td>rel-trial-study-outcome</td>
+<td style="text-align: right;">72.00</td>
+<td style="text-align: right;">68.60</td>
+<td style="text-align: right;">70.79</td>
+<td style="text-align: right;">71.16</td>
+<td style="text-align: right;"><strong>93.20</strong></td>
+<td>AUCROC</td>
+</tr>
+<tr>
+<td>rel-amazon-user-churn</td>
+<td style="text-align: right;">67.6</td>
+<td style="text-align: right;">70.42</td>
+<td style="text-align: right;">67.29</td>
+<td style="text-align: right;">70.46</td>
+<td style="text-align: right;"><strong>72.00</strong></td>
+<td>AUCROC</td>
+</tr>
+<tr>
+<td>rel-amazon-item-churn</td>
+<td style="text-align: right;">81.8</td>
+<td style="text-align: right;">82.81</td>
+<td style="text-align: right;">79.93</td>
+<td style="text-align: right;"><strong>82.83</strong></td>
+<td style="text-align: right;">81.00</td>
+<td>AUCROC</td>
+</tr>
+<tr>
+<td>rel-hm-user-churn</td>
+<td style="text-align: right;">69</td>
+<td style="text-align: right;">69.88</td>
+<td style="text-align: right;">67.71</td>
+<td style="text-align: right;">71.23</td>
+<td style="text-align: right;"><strong>76.50</strong></td>
+<td>AUCROC</td>
+</tr>
+<tr>
+<td>rel-stack-post-votes</td>
+<td style="text-align: right;">0.068</td>
+<td style="text-align: right;">0.065</td>
+<td style="text-align: right;">0.065</td>
+<td style="text-align: right;">0.065</td>
+<td style="text-align: right;"><strong>0.0626</strong></td>
+<td>MAE</td>
+</tr>
+<tr>
+<td>rel-hm-item-sales</td>
+<td style="text-align: right;">0.036</td>
+<td style="text-align: right;">0.056</td>
+<td style="text-align: right;">0.04</td>
+<td style="text-align: right;"><strong>0.034</strong></td>
+<td style="text-align: right;">0.0429</td>
+<td>MAE</td>
+</tr>
+<tr>
+<td>rel-amazon-user-ltv</td>
+<td style="text-align: right;">13.92</td>
+<td style="text-align: right;">14.31</td>
+<td style="text-align: right;">16.16</td>
+<td style="text-align: right;">14.22</td>
+<td style="text-align: right;"><strong>6.593</strong></td>
+<td>MAE</td>
+</tr>
+<tr>
+<td>rel-amazon-item-ltv</td>
+<td style="text-align: right;">41.12</td>
+<td style="text-align: right;">50.05</td>
+<td style="text-align: right;">55.25</td>
+<td style="text-align: right;">48.67</td>
+<td style="text-align: right;"><strong>18.58</strong></td>
+<td>MAE</td>
+</tr>
+</tbody>
+</table>
 
 
 

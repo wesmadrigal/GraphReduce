@@ -52,7 +52,7 @@
   <text x="58" y="546" class="text">reduce=True</text>
 
   <rect x="230" y="486" width="170" height="110" rx="10" fill="#fae8ff" stroke="#486581"/>
-  <text x="244" y="510" class="label">Tags.csv</text>
+  <text x="244" y="510" class="label">relbench table materialization</text>
   <text x="244" y="528" class="text">ExcerptPostId -&gt; post.Id</text>
   <text x="244" y="546" class="text">reduce=True</text>
 
@@ -85,7 +85,7 @@
 
   <rect x="620" y="392" width="390" height="320" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
   <text x="640" y="422" class="section">3) Compute Graph Pipeline in DuckDB</text>
-  <text x="640" y="450" class="text">A) Download CSVs from S3 if missing.</text>
+  <text x="640" y="450" class="text">A) Materialize rel-stack tables from the relbench library.</text>
   <text x="640" y="474" class="text">B) Build full graph at 2020 cut date.</text>
   <text x="640" y="498" class="text">C) Build fully re-instantiated graph at 2021 cut date.</text>
   <text x="640" y="522" class="text">D) Train regressor on Graph A and evaluate holdout MAE.</text>
