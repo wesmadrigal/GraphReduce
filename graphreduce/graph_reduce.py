@@ -951,7 +951,14 @@ class GraphReduce(nx.DiGraph):
 
                 # Get the reference right before `do_reduce`
                 # so the records are not aggregated yet.
-                data_ref = relation_node.get_ref_name(
+                if relation_node._merged:
+                    data_ref = relation_node.get_ref_name(
+                    "join",
+                    lookup=True,
+                    schema=self._checkpoint_schema
+                    )
+                else:
+                    data_ref = relation_node.get_ref_name(
                     relation_node.do_filters,
                     lookup=True,
                     schema=self._checkpoint_schema,

@@ -5,11 +5,11 @@ from __future__ import annotations
 
 import datetime
 from pathlib import Path
-from urllib.request import urlretrieve
 
 import duckdb
 import numpy as np
 from catboost import CatBoostRegressor
+from relbench.datasets import get_dataset
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import KFold, train_test_split
 
@@ -19,26 +19,37 @@ from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
 from graphreduce.stypes import infer_df_stype
 
-BASE_URL = "https://open-relbench.s3.us-east-1.amazonaws.com/rel-stack"
-TABLES = [
-    "Users.csv",
-    "Posts.csv",
-    "Badges.csv",
-    "PostHistory.csv",
-    "PostLinks.csv",
-    "Votes.csv",
-    "Comments.csv",
-    "Tags.csv",
-]
+TABLE_NAME_TO_CSV = {
+    "users": "Users.csv",
+    "posts": "Posts.csv",
+    "badges": "Badges.csv",
+    "postHistory": "PostHistory.csv",
+    "postLinks": "PostLinks.csv",
+    "votes": "Votes.csv",
+    "comments": "Comments.csv",
+}
 
 
-def _print_steps_summary(downloaded_files: list[str], result_text: str) -> None:
+def _print_steps_summary(materialized_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
-    print(f"1. Downloaded files: {len(downloaded_files)} new file(s).", flush=True)
+    print(f"1. Materialized relbench CSVs to disk: {len(materialized_files)} file(s).", flush=True)
     print("2. Prepared and aggregated two GraphReduce datasets (2020 train/eval, 2021 out-of-time).", flush=True)
     print("3. Trained model on the 2020 dataset.", flush=True)
     print("4. Predicted and scored on 2020 holdout and 2021 out-of-time datasets.", flush=True)
     print(f"5. Achieved the following result: {result_text}", flush=True)
+
+
+def _materialize_relbench_stack_csvs(data_dir: Path) -> list[str]:
+    dataset = get_dataset("rel-stack", download=True)
+    db = dataset.get_db(upto_test_timestamp=False)
+    materialized_files: list[str] = []
+
+    for table_name, csv_name in TABLE_NAME_TO_CSV.items():
+        out_path = data_dir / csv_name
+        db.table_dict[table_name].df.to_csv(out_path, index=False)
+        materialized_files.append(csv_name)
+
+    return materialized_files
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, csv_path: Path) -> None:
@@ -65,7 +76,7 @@ def _build_post_votes_frame(
         prefix="post",
         pk="Id",
         date_key="CreationDate",
-        columns=["Id", "OwnerUserId", "PostTypeId", "AcceptedAnswerId", "ParentId", "Title", "Tags", "Body", "CreationDate"],
+        columns=["Id", "OwnerUserId", "PostTypeId", "ParentId", "Title", "Tags", "Body", "CreationDate"],
         do_filters_ops=[
             sqlop(optype=SQLOpType.where, opval=f"post_CreationDate <= '{cut_date.date()}'"),
             sqlop(optype=SQLOpType.where, opval="post_PostTypeId = 1"),
@@ -108,13 +119,6 @@ def _build_post_votes_frame(
         date_key="CreationDate",
         columns=["Id", "CreationDate", "PostId", "RelatedPostId", "LinkTypeId"],
     )
-    tag = DuckdbNode(
-        fpath="tags_src",
-        prefix="tag",
-        pk="Id",
-        date_key=None,
-        columns=["Id", "TagName", "Count", "ExcerptPostId", "WikiPostId"],
-    )
     user = DuckdbNode(
         fpath="users_src",
         prefix="user",
@@ -147,14 +151,13 @@ def _build_post_votes_frame(
         auto_feature_hops_front=0,
     )
 
-    for node in [post, vote, comment, post_history, post_links, tag, user, badge]:
+    for node in [post, vote, comment, post_history, post_links, user, badge]:
         gr.add_node(node)
 
     gr.add_entity_edge(post, vote, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(post, comment, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(post, post_history, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(post, post_links, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, tag, parent_key="Id", relation_key="ExcerptPostId", reduce=True)
     gr.add_entity_edge(post, user, parent_key="OwnerUserId", relation_key="Id", reduce=True)
     gr.add_entity_edge(user, badge, parent_key="Id", relation_key="UserId", reduce=True)
 
@@ -171,12 +174,7 @@ def _build_post_votes_frame(
 def main() -> None:
     data_dir = Path("tests/data/relbench/rel-stack")
     data_dir.mkdir(parents=True, exist_ok=True)
-    downloaded_files: list[str] = []
-    for table in TABLES:
-        out_path = data_dir / table
-        if not out_path.exists():
-            urlretrieve(f"{BASE_URL}/{table}", out_path)
-            downloaded_files.append(table)
+    materialized_files = _materialize_relbench_stack_csvs(data_dir)
 
     train_cut_date = datetime.datetime(2020, 1, 1)
     future_cut_date = datetime.datetime(2021, 1, 1)
@@ -188,7 +186,6 @@ def main() -> None:
     _prepare_view(con, "post_links_src", data_dir / "PostLinks.csv")
     _prepare_view(con, "votes_src", data_dir / "Votes.csv")
     _prepare_view(con, "comments_src", data_dir / "Comments.csv")
-    _prepare_view(con, "tags_src", data_dir / "Tags.csv")
 
     print("Starting rel-stack post votes pipeline...", flush=True)
     print("Building 2020 training/eval graph...", flush=True)
@@ -216,7 +213,7 @@ def main() -> None:
 
     if len(features) == 0:
         print("no numerical features; skipping model fit", flush=True)
-        _print_steps_summary(downloaded_files, "model fit skipped due to no numerical features")
+        _print_steps_summary(materialized_files, "model fit skipped due to no numerical features")
         return
 
     X_train_full, X_test, y_train_full, y_test = train_test_split(
@@ -266,7 +263,7 @@ def main() -> None:
     future_mae = mean_absolute_error(df_future[target], future_preds)
     print(f"out_of_time_mae_2021: {future_mae:.4f}", flush=True)
     _print_steps_summary(
-        downloaded_files,
+        materialized_files,
         f"in-time holdout MAE (2020 cut date) = {holdout_mae:.4f}; out-of-time MAE (2021 cut date) = {future_mae:.4f}",
     )
 
