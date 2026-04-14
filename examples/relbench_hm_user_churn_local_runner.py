@@ -20,7 +20,7 @@ def _is_interactive_mode() -> bool:
 
 def main() -> None:
     print("Running rel-hm user churn example...", flush=True)
-    df, auc, n_features, materialized = run_rel_hm_user_churn()
+    df, catboost_auc, n_features, materialized = run_rel_hm_user_churn()
 
     print("materialized_files:", materialized, flush=True)
     print("cut_date:", CUT_DATE.date(), flush=True)
@@ -30,7 +30,7 @@ def main() -> None:
     print("rows:", len(df), flush=True)
     print("columns:", len(df.columns), flush=True)
     print("feature_count:", n_features, flush=True)
-    print("model_auc:", auc if auc is not None else "skipped", flush=True)
+    print("catboost_auc:", catboost_auc if catboost_auc is not None else "skipped", flush=True)
     if _is_interactive_mode():
         print("df.columns:", df.columns, flush=True)
 

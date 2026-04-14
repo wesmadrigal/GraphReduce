@@ -84,8 +84,8 @@ def _train_binary(df: pd.DataFrame, target: str) -> tuple[float | None, int]:
     )
     model.fit(X_train, y_train)
     preds = model.predict_proba(X_test)[:, 1]
-    auc = float(roc_auc_score(y_test, preds))
-    return auc, len(feature_cols)
+    catboost_auc = float(roc_auc_score(y_test, preds))
+    return catboost_auc, len(feature_cols)
 
 
 def _train_regression(df: pd.DataFrame, target: str) -> tuple[float | None, int]:
@@ -113,8 +113,8 @@ def _train_regression(df: pd.DataFrame, target: str) -> tuple[float | None, int]
     )
     model.fit(X_train, y_train)
     preds = model.predict(X_test)
-    mae = float(mean_absolute_error(y_test, preds))
-    return mae, len(feature_cols)
+    catboost_mae = float(mean_absolute_error(y_test, preds))
+    return catboost_mae, len(feature_cols)
 
 
 def _build_frame(data_dir: Path, mode: str, cut_date: datetime.datetime) -> pd.DataFrame:
@@ -309,20 +309,20 @@ def run_amazon_task(
 
     if mode == "user_churn":
         target = "user_churn_90d"
-        auc, n_features = _train_binary(df, target=target)
-        return df, auc, n_features, materialized, target
+        catboost_auc, n_features = _train_binary(df, target=target)
+        return df, catboost_auc, n_features, materialized, target
     if mode == "item_churn":
         target = "item_has_review_next_90d"
-        auc, n_features = _train_binary(df, target=target)
-        return df, auc, n_features, materialized, target
+        catboost_auc, n_features = _train_binary(df, target=target)
+        return df, catboost_auc, n_features, materialized, target
     if mode == "user_ltv":
         target = "user_ltv_90d_usd"
-        mae, n_features = _train_regression(df, target=target)
-        return df, mae, n_features, materialized, target
+        catboost_mae, n_features = _train_regression(df, target=target)
+        return df, catboost_mae, n_features, materialized, target
     if mode == "item_ltv":
         target = "item_ltv_90d_usd"
-        mae, n_features = _train_regression(df, target=target)
-        return df, mae, n_features, materialized, target
+        catboost_mae, n_features = _train_regression(df, target=target)
+        return df, catboost_mae, n_features, materialized, target
     raise ValueError("mode must be user_churn, item_churn, user_ltv, or item_ltv")
 
 
@@ -371,5 +371,12 @@ def run_amazon_temporal_regression_task(
     y_holdout = df_holdout[target].fillna(0).astype("float64")
     model.fit(X_validation, y_validation)
     holdout_preds = model.predict(X_holdout)
-    holdout_mae = float(mean_absolute_error(y_holdout, holdout_preds))
-    return df_validation, df_holdout, holdout_mae, len(feature_cols), materialized, target
+    catboost_holdout_mae = float(mean_absolute_error(y_holdout, holdout_preds))
+    return (
+        df_validation,
+        df_holdout,
+        catboost_holdout_mae,
+        len(feature_cols),
+        materialized,
+        target,
+    )

@@ -34,7 +34,7 @@ def _print_steps_summary(materialized_files: list[str], result_text: str) -> Non
     print("\nSteps completed:", flush=True)
     print(f"1. Materialized relbench CSVs to disk: {len(materialized_files)} file(s).", flush=True)
     print("2. Prepared and aggregated two GraphReduce datasets (2020 train/eval, 2021 out-of-time).", flush=True)
-    print("3. Trained model on the 2020 dataset.", flush=True)
+    print("3. Trained CatBoost model on the 2020 dataset.", flush=True)
     print("4. Predicted and scored on 2020 holdout and 2021 out-of-time datasets.", flush=True)
     print(f"5. Achieved the following result: {result_text}", flush=True)
 
@@ -264,7 +264,10 @@ def main() -> None:
     print(f"out_of_time_mae_2021: {future_mae:.4f}", flush=True)
     _print_steps_summary(
         materialized_files,
-        f"in-time holdout MAE (2020 cut date) = {holdout_mae:.4f}; out-of-time MAE (2021 cut date) = {future_mae:.4f}",
+        (
+            f"CatBoost in-time holdout MAE (2020 cut date) = {holdout_mae:.4f}; "
+            f"CatBoost out-of-time MAE (2021 cut date) = {future_mae:.4f}"
+        ),
     )
 
 

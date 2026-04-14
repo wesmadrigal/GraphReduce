@@ -297,11 +297,13 @@ def _train_binary_model(df: pd.DataFrame, target: str) -> tuple[float | None, in
     )
     model.fit(X_train, y_train)
     preds = model.predict_proba(X_test)[:, 1]
-    auc = float(roc_auc_score(y_test, preds))
-    return auc, len(feature_cols)
+    catboost_auc = float(roc_auc_score(y_test, preds))
+    return catboost_auc, len(feature_cols)
 
 
-def run_avito_task(mode: str, data_dir: Path | None = None) -> tuple[pd.DataFrame, float | None, int, list[str], str]:
+def run_avito_task(
+    mode: str, data_dir: Path | None = None
+) -> tuple[pd.DataFrame, float | None, int, list[str], str]:
     if mode not in {"user_clicks", "user_visits"}:
         raise ValueError("mode must be 'user_clicks' or 'user_visits'")
 
@@ -314,5 +316,5 @@ def run_avito_task(mode: str, data_dir: Path | None = None) -> tuple[pd.DataFram
     else:
         target = "user_multi_visit_next_4d"
 
-    auc, n_features = _train_binary_model(df, target=target)
-    return df, auc, n_features, materialized, target
+    catboost_auc, n_features = _train_binary_model(df, target=target)
+    return df, catboost_auc, n_features, materialized, target

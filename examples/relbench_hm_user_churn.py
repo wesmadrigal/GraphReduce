@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""RelBench rel-hm user churn example with DuckDB + GraphReduce."""
+"""RelBench rel-hm: user churn example aligned to the official task definition."""
 
 from __future__ import annotations
 
@@ -10,145 +10,173 @@ import duckdb
 import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
-
-from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
-from graphreduce.graph_reduce import GraphReduce
-from graphreduce.models import sqlop
-from graphreduce.node import DuckdbNode
+from relbench.metrics import accuracy, average_precision, f1, roc_auc
 from relbench_dataset_utils import materialize_relbench_dataset
+
+from graphreduce.enum import ComputeLayerEnum, PeriodUnit
+from graphreduce.graph_reduce import GraphReduce
+from graphreduce.node import DuckdbNode
 
 TABLE_NAME_TO_FILENAME = {
     "article": "article.parquet",
     "customer": "customer.parquet",
     "transactions": "transactions.parquet",
 }
-CUT_DATE = datetime.datetime(2020, 9, 14)
+
 LOOKBACK_START = datetime.datetime(2019, 9, 7)
-LOOKBACK_DAYS = (CUT_DATE - LOOKBACK_START).days
+VALIDATION_CUT_DATE = datetime.datetime(2020, 9, 7)
+TEST_CUT_DATE = datetime.datetime(2020, 9, 14)
+CUT_DATE = TEST_CUT_DATE
 LABEL_DAYS = 7
+LOOKBACK_DAYS = (TEST_CUT_DATE - LOOKBACK_START).days
+TRAIN_CUT_DATE = VALIDATION_CUT_DATE - datetime.timedelta(days=LABEL_DAYS)
 
 
-def materialize_rel_hm_data(data_dir: Path) -> list[str]:
-    return materialize_relbench_dataset("rel-hm", data_dir, TABLE_NAME_TO_FILENAME)
+def run_rel_hm_user_churn(
+    data_dir: Path | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
+    use_dir = data_dir or Path("tests/data/relbench/rel-hm")
+    materialized = materialize_relbench_dataset("rel-hm", use_dir, TABLE_NAME_TO_FILENAME)
 
+    con = duckdb.connect()
+    split_frames: dict[str, pd.DataFrame] = {}
 
-def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
-    con.sql(f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM read_parquet('{parquet_path}')")
+    try:
+        con.sql(f"CREATE OR REPLACE VIEW article_src AS SELECT * FROM read_parquet('{use_dir / 'article.parquet'}')")
+        con.sql(f"CREATE OR REPLACE VIEW customer_src AS SELECT * FROM read_parquet('{use_dir / 'customer.parquet'}')")
+        con.sql(
+            f"""
+            CREATE OR REPLACE VIEW transactions_src AS
+            SELECT
+                row_number() OVER () AS transaction_id,
+                *
+            FROM read_parquet('{use_dir / 'transactions.parquet'}')
+            """
+        )
 
+        article_columns = con.sql("SELECT * FROM article_src LIMIT 0").to_df().columns.tolist()
+        customer_columns = con.sql("SELECT * FROM customer_src LIMIT 0").to_df().columns.tolist()
+        transaction_columns = con.sql("SELECT * FROM transactions_src LIMIT 0").to_df().columns.tolist()
 
-def _infer_columns(con: duckdb.DuckDBPyConnection, view_name: str) -> list[str]:
-    return con.sql(f"select * from {view_name} limit 0").to_df().columns.tolist()
+        article_id_col = {column.lower(): column for column in article_columns}["article_id"]
+        customer_id_col = {column.lower(): column for column in customer_columns}["customer_id"]
+        tx_id_col = {column.lower(): column for column in transaction_columns}["transaction_id"]
+        tx_customer_col = {column.lower(): column for column in transaction_columns}["customer_id"]
+        tx_article_col = {column.lower(): column for column in transaction_columns}["article_id"]
+        tx_date_col = {column.lower(): column for column in transaction_columns}["t_dat"]
 
-
-def build_user_churn_frame(con: duckdb.DuckDBPyConnection, data_dir: Path) -> pd.DataFrame:
-    _prepare_view(con, "article_src", data_dir / "article.parquet")
-    _prepare_view(con, "customer_src", data_dir / "customer.parquet")
-    _prepare_view(con, "transactions_src", data_dir / "transactions.parquet")
-
-    article_columns = _infer_columns(con, "article_src")
-    customer_columns = _infer_columns(con, "customer_src")
-    transaction_columns = _infer_columns(con, "transactions_src")
-
-    article_id_col = "article_id"
-    customer_id_col = "customer_id"
-    tx_date_col = "t_dat"
-
-    customer = DuckdbNode(
-        fpath="customer_src",
-        prefix="cust",
-        pk=customer_id_col,
-        date_key=None,
-        columns=customer_columns,
-        do_filters_ops=[
-            sqlop(
-                optype=SQLOpType.where,
-                opval=(
-                    f"exists ("
-                    f"select 1 from transactions_src tx "
-                    f"where tx.{customer_id_col} = cust_{customer_id_col} "
-                    f"and tx.{tx_date_col} < '{CUT_DATE.date()}'"
-                    f")"
-                ),
+        for split_name, cut_date in {
+            "train": TRAIN_CUT_DATE,
+            "val": VALIDATION_CUT_DATE,
+            "test": TEST_CUT_DATE,
+        }.items():
+            customer = DuckdbNode(
+                fpath="customer_src",
+                prefix="cust",
+                pk=customer_id_col,
+                date_key=None,
+                columns=customer_columns,
             )
-        ],
-    )
+            article = DuckdbNode(
+                fpath="article_src",
+                prefix="art",
+                pk=article_id_col,
+                date_key=None,
+                columns=article_columns,
+            )
+            transactions = DuckdbNode(
+                fpath="transactions_src",
+                prefix="txn",
+                pk=tx_id_col,
+                date_key=tx_date_col,
+                columns=transaction_columns,
+            )
 
-    article = DuckdbNode(
-        fpath="article_src",
-        prefix="art",
-        pk=article_id_col,
-        date_key=None,
-        columns=article_columns,
-    )
+            graph = GraphReduce(
+                name=f"rel_hm_user_churn_{cut_date.date()}",
+                parent_node=customer,
+                compute_layer=ComputeLayerEnum.duckdb,
+                sql_client=con,
+                cut_date=cut_date,
+                compute_period_val=(cut_date - LOOKBACK_START).days,
+                compute_period_unit=PeriodUnit.day,
+                auto_features=True,
+                auto_labels=False,
+                date_filters_on_agg=True,
+                auto_feature_hops_back=3,
+                auto_feature_hops_front=0,
+            )
 
-    transactions = DuckdbNode(
-        fpath="transactions_src",
-        prefix="txn",
-        pk=article_id_col,
-        date_key=tx_date_col,
-        columns=transaction_columns,
-    )
+            for node in [customer, article, transactions]:
+                graph.add_node(node)
 
-    gr = GraphReduce(
-        name="rel_hm_user_churn",
-        parent_node=customer,
-        compute_layer=ComputeLayerEnum.duckdb,
-        sql_client=con,
-        cut_date=CUT_DATE,
-        compute_period_val=LOOKBACK_DAYS,
-        compute_period_unit=PeriodUnit.day,
-        auto_features=True,
-        auto_labels=True,
-        date_filters_on_agg=True,
-        label_node=transactions,
-        label_field=article_id_col,
-        label_operation="count",
-        label_period_val=LABEL_DAYS,
-        label_period_unit=PeriodUnit.day,
-        auto_feature_hops_back=3,
-        auto_feature_hops_front=0,
-    )
+            graph.add_entity_edge(customer, transactions, parent_key=customer_id_col, relation_key=tx_customer_col, reduce=True)
+            graph.add_entity_edge(transactions, article, parent_key=tx_article_col, relation_key=article_id_col, reduce=True)
 
-    for node in [customer, article, transactions]:
-        gr.add_node(node)
+            graph.do_transformations_sql()
+            features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
 
-    gr.add_entity_edge(customer, transactions, parent_key=customer_id_col, relation_key=customer_id_col, reduce=True)
-    gr.add_entity_edge(transactions, article, parent_key=article_id_col, relation_key=article_id_col, reduce=True)
+            labels = con.sql(
+                f"""
+                WITH timestamp_df AS (
+                    SELECT TIMESTAMP '{cut_date}' AS timestamp
+                )
+                SELECT
+                    timestamp,
+                    customer_id,
+                    CAST(
+                        NOT EXISTS (
+                            SELECT 1
+                            FROM transactions_src
+                            WHERE
+                                transactions_src.{tx_customer_col} = customer_src.{customer_id_col}
+                                AND transactions_src.{tx_date_col} > timestamp
+                                AND transactions_src.{tx_date_col} <= timestamp + INTERVAL '{LABEL_DAYS} days'
+                        ) AS INTEGER
+                    ) AS churn
+                FROM
+                    timestamp_df,
+                    customer_src
+                WHERE
+                    EXISTS (
+                        SELECT 1
+                        FROM transactions_src
+                        WHERE
+                            transactions_src.{tx_customer_col} = customer_src.{customer_id_col}
+                            AND transactions_src.{tx_date_col} > timestamp - INTERVAL '{LABEL_DAYS} days'
+                            AND transactions_src.{tx_date_col} <= timestamp
+                    )
+                """
+            ).to_df()
 
-    gr.do_transformations_sql()
-    out_df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
+            frame = features.merge(
+                labels[["customer_id", "churn"]],
+                left_on=f"cust_{customer_id_col}",
+                right_on="customer_id",
+                how="inner",
+            ).drop(columns=["customer_id"])
+            frame["churn"] = frame["churn"].astype("int8")
+            split_frames[split_name] = frame
+    finally:
+        con.close()
 
-    label_cols = [c for c in out_df.columns if c.startswith("txn_") and "label" in c.lower()]
-    if not label_cols:
-        raise ValueError("No transaction label columns found in output dataframe.")
+    df_train = split_frames["train"]
+    df_val = split_frames["val"]
+    df_test = split_frames["test"]
+    target = "churn"
 
-    for c in label_cols:
-        out_df[c] = out_df[c].fillna(0)
-
-    out_df["user_churn_7d"] = (out_df[label_cols].sum(axis=1) == 0).astype("int8")
-    return out_df
-
-
-def train_user_churn_model(df: pd.DataFrame) -> tuple[float | None, int]:
-    target = "user_churn_7d"
-    numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target]
-    feature_cols = [
-        c
-        for c in numeric_cols
-        if "label" not in c.lower() and not c.lower().endswith("_id") and c not in {"cust_customer_id", "txn_article_id"}
+    common_columns = set(df_train.columns) & set(df_val.columns) & set(df_test.columns)
+    feature_columns = [
+        column
+        for column in df_train.select_dtypes(include=[np.number]).columns
+        if column != target
+        and "label" not in column.lower()
+        and not column.lower().endswith("_id")
+        and column in common_columns
     ]
+    if not feature_columns or df_train[target].nunique() < 2:
+        return df_train, df_val, df_test, None, None, len(feature_columns), materialized, target
 
-    if not feature_cols:
-        return None, 0
-
-    X = df[feature_cols].fillna(0)
-    y = df[target]
-    if y.nunique() < 2:
-        return None, len(feature_cols)
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
     model = CatBoostClassifier(
         iterations=400,
         depth=8,
@@ -159,35 +187,49 @@ def train_user_churn_model(df: pd.DataFrame) -> tuple[float | None, int]:
         verbose=50,
         allow_writing_files=False,
     )
-    model.fit(X_train, y_train)
-    preds = model.predict_proba(X_test)[:, 1]
-    auc = float(roc_auc_score(y_test, preds))
-    return auc, len(feature_cols)
+    model.fit(
+        df_train[feature_columns].fillna(0),
+        df_train[target],
+        eval_set=(df_val[feature_columns].fillna(0), df_val[target]),
+        use_best_model=True,
+        verbose=50,
+    )
 
+    val_predictions = model.predict_proba(df_val[feature_columns].fillna(0))[:, 1]
+    test_predictions = model.predict_proba(df_test[feature_columns].fillna(0))[:, 1]
 
-def run_rel_hm_user_churn(data_dir: Path | None = None) -> tuple[pd.DataFrame, float | None, int, list[str]]:
-    use_dir = data_dir or Path("tests/data/relbench/rel-hm")
-    materialized = materialize_rel_hm_data(use_dir)
-    con = duckdb.connect()
-    try:
-        df = build_user_churn_frame(con, use_dir)
-    finally:
-        con.close()
-    auc, n_features = train_user_churn_model(df)
-    return df, auc, n_features, materialized
+    val_metrics = {
+        "average_precision": float(average_precision(df_val[target].to_numpy(), val_predictions)),
+        "accuracy": float(accuracy(df_val[target].to_numpy(), val_predictions)),
+        "f1": float(f1(df_val[target].to_numpy(), val_predictions)),
+        "roc_auc": float(roc_auc(df_val[target].to_numpy(), val_predictions)),
+    }
+    test_metrics = {
+        "average_precision": float(average_precision(df_test[target].to_numpy(), test_predictions)),
+        "accuracy": float(accuracy(df_test[target].to_numpy(), test_predictions)),
+        "f1": float(f1(df_test[target].to_numpy(), test_predictions)),
+        "roc_auc": float(roc_auc(df_test[target].to_numpy(), test_predictions)),
+    }
+
+    return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, target
 
 
 def main() -> None:
-    df, auc, n_features, materialized = run_rel_hm_user_churn()
+    df_train, df_val, df_test, val_metrics, test_metrics, n_features, materialized, target = run_rel_hm_user_churn()
     print("materialized_files:", materialized, flush=True)
-    print("cut_date:", CUT_DATE.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
-    print("lookback_days:", LOOKBACK_DAYS, flush=True)
+    print("train_timestamp:", TRAIN_CUT_DATE.date(), flush=True)
+    print("validation_timestamp:", VALIDATION_CUT_DATE.date(), flush=True)
+    print("test_timestamp:", TEST_CUT_DATE.date(), flush=True)
     print("label_period_days:", LABEL_DAYS, flush=True)
-    print("rows:", len(df), flush=True)
-    print("columns:", len(df.columns), flush=True)
+    print("target:", target, flush=True)
+    print("train_rows:", len(df_train), flush=True)
+    print("validation_rows:", len(df_val), flush=True)
+    print("test_rows:", len(df_test), flush=True)
+    print("columns:", len(df_train.columns), flush=True)
     print("feature_count:", n_features, flush=True)
-    print("model_auc:", auc if auc is not None else "skipped", flush=True)
+    print("validation_metrics:", val_metrics if val_metrics is not None else "skipped", flush=True)
+    print("test_metrics:", test_metrics if test_metrics is not None else "skipped", flush=True)
 
 
 if __name__ == "__main__":

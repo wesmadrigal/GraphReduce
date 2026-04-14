@@ -2,11 +2,7 @@
 from __future__ import annotations
 
 # std lib
-import os
-import sys
-import abc
 import datetime
-import enum
 import typing
 
 # third party
@@ -29,8 +25,8 @@ except Exception:  # pragma: no cover - optional dependency
     daft = None
 
 # internal
-from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode
-from graphreduce.enum import ComputeLayerEnum, PeriodUnit
+from graphreduce.node import GraphReduceNode, DynamicNode
+from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.storage import StorageClient
 from graphreduce.models import sqlop
 
@@ -43,9 +39,17 @@ if pyspark is not None:  # pragma: no branch
         t
         for t in [
             getattr(getattr(pyspark, "sql", None), "DataFrame", None),
-            getattr(getattr(getattr(pyspark, "sql", None), "dataframe", None), "DataFrame", None),
             getattr(
-                getattr(getattr(getattr(pyspark, "sql", None), "connect", None), "dataframe", None),
+                getattr(getattr(pyspark, "sql", None), "dataframe", None),
+                "DataFrame",
+                None,
+            ),
+            getattr(
+                getattr(
+                    getattr(getattr(pyspark, "sql", None), "connect", None),
+                    "dataframe",
+                    None,
+                ),
                 "DataFrame",
                 None,
             ),
@@ -55,14 +59,16 @@ if pyspark is not None:  # pragma: no branch
 
 DAFT_DF_TYPES = tuple()
 if daft is not None:  # pragma: no branch
-    daft_df = getattr(getattr(getattr(daft, "dataframe", None), "dataframe", None), "DataFrame", None)
+    daft_df = getattr(
+        getattr(getattr(daft, "dataframe", None), "dataframe", None), "DataFrame", None
+    )
     DAFT_DF_TYPES = (daft_df,) if daft_df is not None else tuple()
 
 
 def _require_backend(module: typing.Any, backend: str, extra: str) -> None:
     if module is None:
         raise ImportError(
-            f"{backend} backend is not installed. Install with `pip install \"graphreduce[{extra}]\"`."
+            f'{backend} backend is not installed. Install with `pip install "graphreduce[{extra}]"`.'
         )
 
 
@@ -99,7 +105,7 @@ class GraphReduce(nx.DiGraph):
             "multicategorical": ["first"],
             "sequence_numerical": ["min", "max"],
             "timestamp": ["min", "max"],
-            "text_embedded": ["dummy"]
+            "text_embedded": ["dummy"],
         },
         # Label parameters.
         label_node: typing.Optional[
@@ -121,6 +127,7 @@ class GraphReduce(nx.DiGraph):
         debug: bool = False,
         checkpoint_schema: str = None,
         date_filters_on_agg: bool = False,
+        date_node: typing.Optional[GraphReduceNode] = None,
         *args,
         **kwargs,
     ):
@@ -195,6 +202,14 @@ class GraphReduce(nx.DiGraph):
         # Keep track of all the SQL queries.
         self.sql_ops = []
 
+        # If we have a date node.
+        self.date_node = date_node
+        if isinstance(self.date_node, GraphReduceNode) or issubclass(
+            self.date_node.__class__, GraphReduceNode
+        ):
+            if not self.date_node.is_date_node:
+                self.date_node.is_date_node = True
+
         if self.compute_layer == ComputeLayerEnum.spark:
             _require_backend(pyspark, "spark", "spark")
         if self.compute_layer == ComputeLayerEnum.spark and self.spark_sqlctx is None:
@@ -208,7 +223,7 @@ class GraphReduce(nx.DiGraph):
             self.label_period_val is None or self.label_period_unit is None
         ):
             raise Exception(
-                f"If label_node is parameterized must provide values for `label_period_val` and `label_period_unit`"
+                "If label_node is parameterized must provide values for `label_period_val` and `label_period_unit`"
             )
 
     def __repr__(self):
@@ -262,6 +277,7 @@ class GraphReduce(nx.DiGraph):
             "date_filters_on_agg": self.date_filters_on_agg,
             "debug": self.debug,
             "lazy_execution": self._lazy_execution,
+            "date_node": self.date_node,
         }
 
     def assign_parent(
@@ -287,6 +303,7 @@ class GraphReduce(nx.DiGraph):
             "_lazy_execution",
             "_catalog_client",
             "_sql_client",
+            # "date_node"
         ],
     ):
         """
@@ -332,8 +349,14 @@ class GraphReduce(nx.DiGraph):
         """
         Add an entity relation
         """
+
+        if parent_node.is_date_node:
+            raise Exception(
+                "Date nodes can only be relation nodes in relationships like this `.add_entity_edge(parent_node, date_node, ...)`"
+            )
+
         if reduce and reduce_after_join:
-            raise Exception(f"only one can be true: `reduce` or `reduce_after_join`")
+            raise Exception("only one can be true: `reduce` or `reduce_after_join`")
         if not self.has_edge(parent_node, relation_node):
             self.add_edge(
                 parent_node,
@@ -583,10 +606,10 @@ class GraphReduce(nx.DiGraph):
 
         meta = self.get_edge_data(parent_node, relation_node)
 
-        if not meta:
+        if not meta and not parent_node_key and not relation_node_key:
             meta = self.get_edge_data(relation_node, parent_node)
             raise Exception(f"no edge metadata for {parent_node} and {relation_node}")
-        if meta.get("keys"):
+        if meta and meta.get("keys"):
             meta = meta["keys"]
 
         if meta and meta["relation_type"] == "parent_child":
@@ -595,6 +618,9 @@ class GraphReduce(nx.DiGraph):
         elif meta and meta["relation_type"] == "peer":
             parent_pk = meta["parent_key"]
             relation_fk = meta["relation_key"]
+        elif not meta and parent_node_key and relation_node_key:
+            parent_pk = parent_node_key
+            relation_fk = relation_node_key
 
         parent_table = (
             parent_node._cur_data_ref
@@ -762,12 +788,13 @@ class GraphReduce(nx.DiGraph):
         if len(dupes):
             raise Exception(f"duplicate prefix on the following nodes: {dupes}")
 
-
     def do_transformations_sql(self, dry: bool = False):
         """
         Perform all graph transformations
         1) hydrate graph
         2) check for duplicate prefixes
+         2a) if there is a `date_node` push it
+             down to the whole graph
         3) annotate date
         4) filter data
         5) clip anomalies
@@ -784,7 +811,10 @@ class GraphReduce(nx.DiGraph):
         self.prefix_uniqueness()
 
         # Node-level data prep operations.
-        for node in self.nodes():
+        for node in nx.bfs_tree(self, source=self.parent_node):
+            if node.is_date_node:
+                continue
+            # for node in self.nodes():
             # `self.do_data` must always return some `sqlop`
             ops = node.do_data()
             if not ops:
@@ -795,23 +825,105 @@ class GraphReduce(nx.DiGraph):
             logger.debug(f"do data: {node.build_query(ops)}")
             self.sql_ops.append(node.build_query(ops))
             node.create_ref(
-                    node.build_query(ops),
-                    node.do_data,
-                    schema=self._checkpoint_schema,
-                    dry=self.dry_run,
-                    )
+                node.build_query(ops),
+                node.do_data,
+                schema=self._checkpoint_schema,
+                dry=self.dry_run,
+            )
             # Now append the reference SQL.
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
+
+            # If there is a `date_node` then we need
+            # to push it down to all of the relationships.
+            # For now we require that the `date_node` be
+            # at the `parent_node` granularity and linked
+            # to it.
+            # The first iteration of this will always be
+            # the `parent_node`.
+            if self.date_node:
+                logger.info(f"Found date node {self.date_node}")
+                if node == self.parent_node:
+                    # Load the data into the date node.
+                    self.date_node.create_ref(
+                        self.date_node.build_query(self.date_node.do_data()),
+                        self.date_node.do_data,
+                        schema=self._checkpoint_schema,
+                        dry=self.dry_run,
+                    )
+                    if self.date_node._ref_sql:
+                        self.sql_ops.append(self.date_node._ref_sql)
+                    # Merge the date table with the parent node.
+                    self.join_sql(
+                        node,
+                        self.date_node,
+                        parent_node_key=node.pk,
+                        relation_node_key=self.date_node.pk,
+                    )
+                    node.date_node = self.date_node
+                # Needs a date key
+                elif node.date_key:
+                    # For all other nodes we need to leverage
+                    # leverage the existing relationship paths
+                    # to push the date_node down through the graph.
+                    # Parent:pk -> DateNode:pk = Child:fk -> DateNode:pk
+                    parent_edge = [e for e in self.edges() if e[1] == node][0]
+                    my_parent = parent_edge[0]
+                    meta = self.get_edge_data(parent_edge[0], parent_edge[1])
+                    if meta.get("keys"):
+                        meta = meta["keys"]
+                    if meta and meta["relation_type"] == "parent_child":
+                        parent_pk = meta["parent_key"]
+                        relation_fk = meta["relation_key"]
+                    elif meta and meta["relation_type"] == "peer":
+                        parent_pk = meta["parent_key"]
+                        relation_fk = meta["relation_key"]
+                    # Grab the date data from the parent and merge
+                    # it.
+                    dn = my_parent.__class__(
+                        fpath=my_parent.date_node.prefix,
+                        prefix=my_parent.date_node.prefix,
+                        date_key=my_parent.date_node.date_key,
+                        table_name=my_parent.date_node.table_name,
+                        # Use the parent table's primary key.
+                        pk=my_parent.pk,
+                        do_data_ops=sqlop(
+                            optype=SQLOpType.custom,
+                            opval=f"""
+                                select {my_parent.prefix}_{my_parent.pk} as {my_parent.date_node.prefix}_{my_parent.pk},
+                                first({my_parent.date_node.prefix}_{my_parent.date_node.date_key}) as {my_parent.date_node.prefix}_{my_parent.date_node.date_key}
+                                from {my_parent._cur_data_ref}
+                                group by {my_parent.prefix}_{my_parent.pk}
+                                """,
+                        ),
+                        client=self._sql_client,
+                    )
+                    dn.create_ref(
+                        dn.build_query(dn.do_data()),
+                        dn.do_data,
+                        schema=self._checkpoint_schema,
+                        dry=self.dry_run,
+                    )
+                    if dn._ref_sql:
+                        self.sql_ops.append(dn._ref_sql)
+                    # merge these now.
+                    self.join_sql(
+                        node, dn, parent_node_key=relation_fk, relation_node_key=dn.pk
+                    )
+                    # Go ahead and add the date node
+                    # to this node as a reference for
+                    # future.
+                    node.date_node = dn
+
             logger.debug(f"do annotate: {node.build_query(node.do_annotate())}")
             self.sql_ops.append(node.build_query(node.do_annotate()))
             node.create_ref(
-                    node.build_query(node.do_annotate()),
-                    node.do_annotate,
-                    schema=self._checkpoint_schema,
-                    dry=self.dry_run,
-                    )
+                node.build_query(node.do_annotate()),
+                node.do_annotate,
+                schema=self._checkpoint_schema,
+                dry=self.dry_run,
+            )
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
@@ -866,7 +978,7 @@ class GraphReduce(nx.DiGraph):
             if edge_data.get("keys"):
                 edge_data = edge_data["keys"]
 
-            if edge_data["reduce"]:
+            if edge_data["reduce"] and not relation_node.is_date_node:
                 logger.info(f"reducing relation {relation_node}")
 
                 # Check for automatic feature engineering.
@@ -953,16 +1065,14 @@ class GraphReduce(nx.DiGraph):
                 # so the records are not aggregated yet.
                 if relation_node._merged:
                     data_ref = relation_node.get_ref_name(
-                    "join",
-                    lookup=True,
-                    schema=self._checkpoint_schema
+                        "join", lookup=True, schema=self._checkpoint_schema
                     )
                 else:
                     data_ref = relation_node.get_ref_name(
-                    relation_node.do_filters,
-                    lookup=True,
-                    schema=self._checkpoint_schema,
-                )
+                        relation_node.do_filters,
+                        lookup=True,
+                        schema=self._checkpoint_schema,
+                    )
 
                 # TODO: don't need to reduce if it's 1:1 cardinality.
                 if self.auto_features and not relation_node.do_labels(
@@ -1049,7 +1159,7 @@ class GraphReduce(nx.DiGraph):
 
             # post-join annotations (if any)
             pja_sql = parent_node.build_query(parent_node.do_post_join_annotate())
-            logger.info(f"Running do_post_join_annotate")
+            logger.info("Running do_post_join_annotate")
             logger.info(f"{pja_sql}")
             self.sql_ops.append(pja_sql)
             pja_ref = parent_node.create_ref(

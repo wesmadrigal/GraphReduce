@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Run rel-stack user-badges example as a script (no pytest)."""
+"""Run rel-stack user-badges example aligned to the RelBench task definition."""
 
 from __future__ import annotations
 
@@ -7,10 +7,9 @@ import datetime
 from pathlib import Path
 
 import duckdb
-import numpy as np
+import pandas as pd
 from catboost import CatBoostClassifier
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import StratifiedKFold, train_test_split
+from relbench.metrics import accuracy, average_precision, f1, roc_auc
 from relbench_dataset_utils import materialize_relbench_dataset
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
@@ -29,14 +28,10 @@ TABLE_NAME_TO_FILENAME = {
     "comments": "Comments.csv",
 }
 
-
-def _print_steps_summary(materialized_files: list[str], result_text: str) -> None:
-    print("\nSteps completed:", flush=True)
-    print(f"1. Materialized relbench tables: {len(materialized_files)} file(s).", flush=True)
-    print("2. Prepared and aggregated train/eval and out-of-time datasets with GraphReduce.", flush=True)
-    print("3. Trained model.", flush=True)
-    print("4. Predicted and scored on holdout set.", flush=True)
-    print(f"5. Achieved the following result: {result_text}", flush=True)
+VALIDATION_CUT_DATE = datetime.datetime(2020, 10, 1)
+TEST_CUT_DATE = datetime.datetime(2021, 1, 1)
+LABEL_PERIOD_DAYS = 365 // 4
+TRAIN_CUT_DATE = VALIDATION_CUT_DATE - datetime.timedelta(days=LABEL_PERIOD_DAYS)
 
 
 def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, csv_path: Path) -> None:
@@ -58,7 +53,7 @@ def _build_badges_frame(
     con: duckdb.DuckDBPyConnection,
     data_dir: Path,
     cut_date: datetime.datetime,
-) -> tuple[object, str]:
+) -> tuple[pd.DataFrame, str]:
     _prepare_view(con, "users_src", data_dir / "Users.csv")
     _prepare_view(con, "posts_src", data_dir / "Posts.csv")
     _prepare_view(con, "badges_src", data_dir / "Badges.csv")
@@ -74,7 +69,7 @@ def _build_badges_frame(
         date_key="CreationDate",
         columns=["Id", "DisplayName", "Location", "ProfileImageUrl", "WebsiteUrl", "AboutMe", "CreationDate"],
         do_filters_ops=[
-            sqlop(optype=SQLOpType.where, opval=f"user_CreationDate <= '{cut_date.date()}'"),
+            sqlop(optype=SQLOpType.where, opval=f"user_CreationDate <= '{cut_date}'"),
             sqlop(optype=SQLOpType.where, opval="user_Id is not null"),
         ],
     )
@@ -83,7 +78,7 @@ def _build_badges_frame(
         prefix="post",
         pk="Id",
         date_key="CreationDate",
-        columns=["Id", "OwnerUserId", "PostTypeId", "AcceptedAnswerId", "ParentId", "Title", "Tags", "Body", "CreationDate"],
+        columns=["Id", "OwnerUserId", "PostTypeId", "ParentId", "Title", "Tags", "Body", "CreationDate"],
     )
     badge = DuckdbNode(
         fpath="badges_src",
@@ -135,6 +130,7 @@ def _build_badges_frame(
         date_key="CreationDate",
         columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
     )
+
     gr = GraphReduce(
         name=f"relbench-user-badges-{cut_date.date()}",
         parent_node=user,
@@ -144,12 +140,8 @@ def _build_badges_frame(
         compute_period_val=3650,
         compute_period_unit=PeriodUnit.day,
         auto_features=True,
-        auto_labels=True,
-        label_node=badge,
-        label_field="Id",
-        label_operation="count",
-        label_period_val=90,
-        label_period_unit=PeriodUnit.day,
+        auto_labels=False,
+        date_filters_on_agg=True,
         auto_feature_hops_back=4,
         auto_feature_hops_front=0,
     )
@@ -165,100 +157,86 @@ def _build_badges_frame(
     gr.add_entity_edge(parent_node=post, relation_node=post_links, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(parent_node=post, relation_node=vote_post, parent_key="Id", relation_key="PostId", reduce=True)
     gr.add_entity_edge(parent_node=post, relation_node=comment_post, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.do_transformations_sql()
-    df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()
 
-    label_cols = [c for c in df.columns if c.startswith("bad_") and "label" in c.lower()]
-    if not label_cols:
-        raise ValueError("No badge label columns found.")
-    target = label_cols[0]
-    df[target] = (df[target].fillna(0) > 0).astype("int8")
-    return df, target
+    gr.do_transformations_sql()
+    features = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()
+
+    labels = con.sql(
+        f"""
+        WITH timestamp_df AS (
+            SELECT TIMESTAMP '{cut_date}' AS timestamp
+        )
+        SELECT
+            t.timestamp,
+            u.Id AS UserId,
+            CASE WHEN COUNT(b.Id) >= 1 THEN 1 ELSE 0 END AS WillGetBadge
+        FROM
+            timestamp_df t
+        LEFT JOIN users_src u
+            ON u.CreationDate <= t.timestamp
+        LEFT JOIN badges_src b
+            ON u.Id = b.UserID
+            AND b.Date > t.timestamp
+            AND b.Date <= t.timestamp + INTERVAL '{LABEL_PERIOD_DAYS} days'
+        GROUP BY
+            t.timestamp,
+            u.Id
+        """
+    ).to_df()
+
+    labels = labels.dropna(subset=["UserId"]).copy()
+    labels["UserId"] = labels["UserId"].astype("int64")
+    frame = features.merge(labels[["UserId", "WillGetBadge"]], left_on="user_Id", right_on="UserId", how="inner")
+    frame = frame.drop(columns=["UserId"])
+    frame["WillGetBadge"] = frame["WillGetBadge"].astype("int8")
+    return frame, "WillGetBadge"
 
 
 def main() -> None:
     data_dir = Path("tests/data/relbench/rel-stack")
     materialized_files = materialize_relbench_dataset("rel-stack", data_dir, TABLE_NAME_TO_FILENAME)
 
-    train_cut_date = datetime.datetime(2020, 10, 1)
-    future_cut_date = datetime.datetime(2021, 1, 1)
     con = duckdb.connect()
-    print("Starting rel-stack user badges pipeline...", flush=True)
-    df_train, target = _build_badges_frame(con, data_dir, train_cut_date)
-    df_future, target_future = _build_badges_frame(con, data_dir, future_cut_date)
-    if target != target_future:
-        raise ValueError(f"Target mismatch between train ({target}) and future ({target_future})")
+    print("Running rel-stack user-badges task...", flush=True)
+
+    df_train, target = _build_badges_frame(con, data_dir, TRAIN_CUT_DATE)
+    df_val, target_val = _build_badges_frame(con, data_dir, VALIDATION_CUT_DATE)
+    df_test, target_test = _build_badges_frame(con, data_dir, TEST_CUT_DATE)
+
+    if target != target_val or target != target_test:
+        raise ValueError(f"Target mismatch across splits: train={target}, val={target_val}, test={target_test}")
 
     stypes = infer_df_stype(df_train)
     features = [
-        k for k, v in stypes.items()
-        if str(v) == "numerical" and k not in ["user_Id", "user_AccountId"] and "label" not in k and "had_engagement" not in k
+        k
+        for k, v in stypes.items()
+        if str(v) == "numerical"
+        and k not in ["user_Id", "user_AccountId"]
+        and "label" not in k.lower()
+        and k != target
+        and k in df_val.columns
+        and k in df_test.columns
     ]
-    features = [c for c in features if c in df_train.columns and c in df_future.columns]
 
-    print(f"train rows: {len(df_train)}", flush=True)
-    print(f"train columns: {len(df_train.columns)}", flush=True)
-    print("train shape:", df_train.shape, flush=True)
-    print(f"future rows: {len(df_future)}", flush=True)
-    print(f"future columns: {len(df_future.columns)}", flush=True)
-    print("future shape:", df_future.shape, flush=True)
-    print(f"target: {target}", flush=True)
-    print(f"num_features: {len(features)}", flush=True)
+    print("materialized_files:", materialized_files, flush=True)
+    print("train_cut_date:", TRAIN_CUT_DATE.date(), flush=True)
+    print("validation_cut_date:", VALIDATION_CUT_DATE.date(), flush=True)
+    print("test_cut_date:", TEST_CUT_DATE.date(), flush=True)
+    print("label_period_days:", LABEL_PERIOD_DAYS, flush=True)
+    print("target:", target, flush=True)
+    print("train_rows:", len(df_train), flush=True)
+    print("validation_rows:", len(df_val), flush=True)
+    print("test_rows:", len(df_test), flush=True)
+    print("feature_count:", len(features), flush=True)
 
-    if len(features) == 0 or df_train[target].nunique() < 2:
-        print("insufficient features or single-class target; skipping model fit", flush=True)
-        _print_steps_summary(materialized_files, "model fit skipped due to insufficient features or single-class target")
+    if not features or df_train[target].nunique() < 2:
+        print("insufficient features or single-class training target; skipping model fit", flush=True)
         return
 
-    X_train_full, X_test, y_train_full, y_test = train_test_split(
-        df_train[features], df_train[target], test_size=0.2, stratify=df_train[target], random_state=42
-    )
-    skf = StratifiedKFold(n_splits=3, shuffle=True, random_state=42)
-    fold_aucs: list[float] = []
-    test_preds = np.zeros(len(X_test))
-
-    for fold, (idx_tr, idx_va) in enumerate(skf.split(X_train_full, y_train_full), 1):
-        if fold > 1:
-            break
-        print(f"\n=== Fold {fold} ===", flush=True)
-        X_tr, X_va = X_train_full.iloc[idx_tr], X_train_full.iloc[idx_va]
-        y_tr, y_va = y_train_full.iloc[idx_tr], y_train_full.iloc[idx_va]
-        mdl = CatBoostClassifier(
-            loss_function="Logloss",
-            eval_metric="AUC",
-            use_best_model=True,
-            iterations=300,
-            learning_rate=0.05,
-            depth=4,
-            l2_leaf_reg=8.0,
-            min_data_in_leaf=50,
-            boosting_type="Ordered",
-            auto_class_weights="Balanced",
-            bootstrap_type="Bayesian",
-            bagging_temperature=1.0,
-            random_strength=1.5,
-            rsm=0.7,
-            od_type="Iter",
-            od_wait=50,
-            verbose=100,
-        )
-        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=100)
-        val_pred = mdl.predict_proba(X_va)[:, 1]
-        val_auc = roc_auc_score(y_va, val_pred)
-        fold_aucs.append(val_auc)
-        print(f"Fold {fold} validation AUC : {val_auc:.4f}", flush=True)
-        test_preds += mdl.predict_proba(X_test)[:, 1]
-
-    print("\n=== CV Summary ===", flush=True)
-    print(f"Mean CV AUC : {np.mean(fold_aucs):.4f} ± {np.std(fold_aucs):.4f}", flush=True)
-    print(f"Folds AUC   : {[f'{a:.4f}' for a in fold_aucs]}", flush=True)
-    holdout_auc = roc_auc_score(y_test, test_preds)
-    print(f"in_time_holdout_auc_{train_cut_date.date()}: {holdout_auc:.4f}", flush=True)
-
-    final_mdl = CatBoostClassifier(
+    model = CatBoostClassifier(
         loss_function="Logloss",
         eval_metric="AUC",
-        iterations=max(100, int(mdl.best_iteration_ * 1.05)),
+        iterations=300,
         learning_rate=0.05,
         depth=4,
         l2_leaf_reg=8.0,
@@ -273,23 +251,32 @@ def main() -> None:
         od_wait=50,
         verbose=100,
     )
-    final_mdl.fit(df_train[features], df_train[target], verbose=100)
-    future_preds = final_mdl.predict_proba(df_future[features])[:, 1]
-
-    if df_future[target].nunique() < 2:
-        print("future target is single-class; skipping out-of-time AUC", flush=True)
-        _print_steps_summary(
-            materialized_files,
-            f"in-time holdout ROC AUC ({train_cut_date.date()} cut date) = {holdout_auc:.4f}; out-of-time AUC ({future_cut_date.date()} cut date) skipped",
-        )
-        return
-
-    future_auc = roc_auc_score(df_future[target], future_preds)
-    print(f"out_of_time_auc_2021: {future_auc:.4f}", flush=True)
-    _print_steps_summary(
-        materialized_files,
-        f"in-time holdout ROC AUC ({train_cut_date.date()} cut date) = {holdout_auc:.4f}; out-of-time ROC AUC ({future_cut_date.date()} cut date) = {future_auc:.4f}",
+    model.fit(
+        df_train[features].fillna(0),
+        df_train[target],
+        eval_set=(df_val[features].fillna(0), df_val[target]),
+        use_best_model=True,
+        verbose=100,
     )
+
+    val_pred = model.predict_proba(df_val[features].fillna(0))[:, 1]
+    test_pred = model.predict_proba(df_test[features].fillna(0))[:, 1]
+
+    val_metrics = {
+        "average_precision": float(average_precision(df_val[target].to_numpy(), val_pred)),
+        "accuracy": float(accuracy(df_val[target].to_numpy(), val_pred)),
+        "f1": float(f1(df_val[target].to_numpy(), val_pred)),
+        "roc_auc": float(roc_auc(df_val[target].to_numpy(), val_pred)),
+    }
+    test_metrics = {
+        "average_precision": float(average_precision(df_test[target].to_numpy(), test_pred)),
+        "accuracy": float(accuracy(df_test[target].to_numpy(), test_pred)),
+        "f1": float(f1(df_test[target].to_numpy(), test_pred)),
+        "roc_auc": float(roc_auc(df_test[target].to_numpy(), test_pred)),
+    }
+
+    print("validation_metrics:", val_metrics, flush=True)
+    print("test_metrics:", test_metrics, flush=True)
 
 
 if __name__ == "__main__":

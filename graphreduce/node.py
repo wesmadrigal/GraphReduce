@@ -57,9 +57,17 @@ if pyspark is not None:  # pragma: no branch
         t
         for t in [
             getattr(getattr(pyspark, "sql", None), "DataFrame", None),
-            getattr(getattr(getattr(pyspark, "sql", None), "dataframe", None), "DataFrame", None),
             getattr(
-                getattr(getattr(getattr(pyspark, "sql", None), "connect", None), "dataframe", None),
+                getattr(getattr(pyspark, "sql", None), "dataframe", None),
+                "DataFrame",
+                None,
+            ),
+            getattr(
+                getattr(
+                    getattr(getattr(pyspark, "sql", None), "connect", None),
+                    "dataframe",
+                    None,
+                ),
                 "DataFrame",
                 None,
             ),
@@ -69,14 +77,16 @@ if pyspark is not None:  # pragma: no branch
 
 DAFT_DF_TYPES = tuple()
 if daft is not None:  # pragma: no branch
-    daft_df = getattr(getattr(getattr(daft, "dataframe", None), "dataframe", None), "DataFrame", None)
+    daft_df = getattr(
+        getattr(getattr(daft, "dataframe", None), "dataframe", None), "DataFrame", None
+    )
     DAFT_DF_TYPES = (daft_df,) if daft_df is not None else tuple()
 
 
 def _require_backend(module: typing.Any, backend: str, extra: str) -> None:
     if module is None:
         raise ImportError(
-            f"{backend} backend is not installed. Install with `pip install \"graphreduce[{extra}]\"`."
+            f'{backend} backend is not installed. Install with `pip install "graphreduce[{extra}]"`.'
         )
 
 
@@ -149,6 +159,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # The time-series period in days to use.
         ts_periods: list = [1, 3, 4, 7, 14, 30, 60, 90, 180, 365, 730],
         type_func_map: dict = {},
+        is_date_node: bool = False,
     ):
         """
         Constructor
@@ -159,6 +170,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # For when this is already set on the class definition.
         if not hasattr(self, "prefix"):
             self.prefix = prefix
+
+        if not self.prefix:
+            raise Exception(f"{self.__class__} instances must have a prefix")
         # For when this is already set on the class definition.
         if not hasattr(self, "date_key"):
             self.date_key = date_key
@@ -199,6 +213,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self.ts_periods = ts_periods
         self.type_func_map = type_func_map
 
+        self.is_date_node = is_date_node
+
+        if self.is_date_node and not self.date_key:
+            raise Exception(f"Date nodes must have `date_key` set got {self.date_key}")
 
     def __repr__(self):
         """
@@ -380,12 +398,13 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         elif self.compute_layer.value == "daft":
             _require_backend(daft, "daft", "daft")
             if not hasattr(self, "df") or (
-                hasattr(self, "df")
-                and not isinstance(self.df, DAFT_DF_TYPES)
+                hasattr(self, "df") and not isinstance(self.df, DAFT_DF_TYPES)
             ):
                 # Iceberg.
                 if self._catalog_client:
-                    if RestCatalog is not None and isinstance(self._catalog_client, RestCatalog):
+                    if RestCatalog is not None and isinstance(
+                        self._catalog_client, RestCatalog
+                    ):
                         tbl = self._catalog_client.load_table(self.fpath)
                         self.df = daft.read_iceberg(tbl)
                     elif self._catalog_client.__class__.__name__ == "UnityCatalog":
@@ -833,6 +852,28 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             grouped = grouped.drop(F.col("cut_date"))
         return grouped
 
+    def _date_subtract_days(self, col: str, days: int) -> str:
+        """Return SQL for `col - N days` in the current compute layer's dialect."""
+        if self.__class__.__name__ in ["DuckdbNode", "PostgresNode", "RedshiftNode"]:
+            return f"{col} - INTERVAL '{days} days'"
+
+        elif self.__class__.__name__ in ["SnowflakeNode", "MySQLNode"]:
+            return f"DATEADD(DAY, -{days}, {col})"
+
+        elif self.__class__.__name__ == "DatabricksNode":
+            return f"{col} - INTERVAL {days} DAYS"
+
+        elif self.__class__.__name__ == "AthenaNode":
+            return f"{col} - INTERVAL '{days}' DAY"
+
+        elif self.__class__.__name__ == "SQLNode":  # SQLite
+            return f"DATE({col}, '-{days} days')"
+
+        else:
+            raise NotImplementedError(
+                f"_date_subtract_days not implemented for {self.__class__.__name__}"
+            )
+
     def sql_auto_features(
         self,
         table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
@@ -915,7 +956,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     col_new = f"{col}_sum"
                     op = sqlop(
                         optype=SQLOpType.aggfunc,
-                        opval=f"sum(case when {col} then 1 else 0 end) as {col_new}"
+                        opval=f"sum(case when {col} then 1 else 0 end) as {col_new}",
                     )
                     if op not in agg_funcs:
                         agg_funcs.append(op)
@@ -952,7 +993,6 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         func = "sum"
 
                     if func:
-
                         if func == "count" and counted:
                             continue
 
@@ -997,84 +1037,129 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # do historical counts over the last periods.
         if ts_data:
             logger.info(f"had time-series aggregations for {self}")
+            if hasattr(self, "date_node") and self.date_node:
+                # Use the date_node column as the reference point
+                ref_col = f"MAX({self.date_node.prefix}_{self.date_node.date_key})"
+                max_col = f"MAX({self.prefix}_{self.date_key})"
+            else:
+                # Fallback to fixed cut_date (original behavior)
+                ref_col = f"TIMESTAMP '{str(self.cut_date)}'"
+                max_col = f"MAX({self.prefix}_{self.date_key})"
 
-            # This will be different between
-            # different dialects (e.g., Redshift, Snowflake)
-            if self.__class__.__name__ == "SQLNode":
+            # Now define the aggfunc per dialect
+            if self.__class__.__name__ == "SQLNode":  # SQLite
+                ref_col = f"'{str(self.cut_date)}'"
                 aggfunc = sqlop(
                     optype=SQLOpType.aggfunc,
-                    opval=f"(julianday('{str(self.cut_date)}') - julianday(MAX({self.prefix}_{self.date_key}))) * 86400 AS {self.prefix}_seconds_since_last",
+                    opval=f"(julianday({ref_col}) - julianday({max_col})) * 86400 AS {self.prefix}_seconds_since_last",
                 )
+
             elif self.__class__.__name__ == "DuckdbNode":
                 aggfunc = sqlop(
                     optype=SQLOpType.aggfunc,
-                    opval=f"date_diff('second', MAX(CAST({self.prefix}_{self.date_key} AS TIMESTAMP)), TIMESTAMP '{str(self.cut_date)}') AS {self.prefix}_seconds_since_last",
+                    opval=f"date_diff('second', {max_col}, {ref_col}) AS {self.prefix}_seconds_since_last",
                 )
+
+            elif (
+                self.__class__.__name__ == "PostgresNode"
+                or self.__class__.__name__ == "RedshiftNode"
+            ):
+                aggfunc = sqlop(
+                    optype=SQLOpType.aggfunc,
+                    opval=f"EXTRACT(EPOCH FROM ({ref_col} - {max_col})) AS {self.prefix}_seconds_since_last",
+                )
+
             elif self.__class__.__name__ == "SnowflakeNode":
                 aggfunc = sqlop(
                     optype=SQLOpType.aggfunc,
-                    opval=f"DATEDIFF('second',MAX({self.prefix}_{self.date_key}),TO_TIMESTAMP('{str(self.cut_date)}')) AS {self.prefix}_seconds_since_last",
+                    opval=f"TIMESTAMPDIFF(SECOND, {max_col}, {ref_col}) AS {self.prefix}_seconds_since_last",
                 )
+
             elif self.__class__.__name__ == "DatabricksNode":
                 aggfunc = sqlop(
-                        optype=SQLOpType.aggfunc,
-                        opval=(
-                            f"timestampdiff(SECOND, "
-                            f"MAX(CAST({self.prefix}_{self.date_key} AS TIMESTAMP)), "
-                            f"TIMESTAMP '{str(self.cut_date)}') "
-                            f"AS {self.prefix}_seconds_since_last"
-                            ),
-                        )
-            else:
-                raise Exception(f"Not implemented for {self.__class__.__name__}")
-            agg_funcs.append(aggfunc)
+                    optype=SQLOpType.aggfunc,
+                    opval=f"timestampdiff(SECOND, {max_col}, {ref_col}) AS {self.prefix}_seconds_since_last",
+                )
 
-            # period lookbacks
-            for period in self.ts_periods:
-                # count the number of identifiers in this period.
-                delt = self.cut_date - datetime.timedelta(days=period)
+            elif self.__class__.__name__ == "AthenaNode":  # Presto/Trino
                 aggfunc = sqlop(
                     optype=SQLOpType.aggfunc,
-                    opval=f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' then 1 else 0 end) as {self.prefix}_num_events_{period}d",
+                    opval=f"date_diff('second', {max_col}, {ref_col}) AS {self.prefix}_seconds_since_last",
+                )
+
+            elif self.__class__.__name__ == "MySQLNode":
+                aggfunc = sqlop(
+                    optype=SQLOpType.aggfunc,
+                    opval=f"TIMESTAMPDIFF(SECOND, {max_col}, {ref_col}) AS {self.prefix}_seconds_since_last",
+                )
+
+            else:
+                raise NotImplementedError(
+                    f"seconds_since_last not implemented for {self.__class__.__name__}"
+                )
+
+            # Append it to the agg_funcs.
+            agg_funcs.append(aggfunc)
+
+            # Determine the reference timestamp (either fixed cut_date or date_node column)
+            if hasattr(self, "date_node") and self.date_node:
+                # Use the date_node column as the reference point (dynamic per row)
+                ref_ts = f"{self.date_node.prefix}_{self.date_node.date_key}"
+                use_dynamic_ref = True
+            else:
+                # Fallback to fixed cut_date (original behavior)
+                ref_ts = f"'{str(self.cut_date)}'"
+                use_dynamic_ref = False
+
+            # === 1. Rolling Event Counts (num_events_Xd) ===
+            for period in self.ts_periods:
+                if use_dynamic_ref:
+                    # Relative to date_node column
+                    threshold = self._date_subtract_days(
+                        ref_ts, period
+                    )  # We'll define this helper below
+                    case_expr = f"CASE WHEN {self.colabbr(self.date_key)} >= {threshold} THEN 1 ELSE 0 END"
+                else:
+                    # Fixed cut_date
+                    delt = self.cut_date - datetime.timedelta(days=period)
+                    case_expr = f"CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' THEN 1 ELSE 0 END"
+
+                aggfunc = sqlop(
+                    optype=SQLOpType.aggfunc,
+                    opval=f"SUM({case_expr}) as {self.prefix}_num_events_{period}d",
                 )
                 agg_funcs.append(aggfunc)
-            # period division
-            for ix in range(len(self.ts_periods)):
-                if ix < len(self.ts_periods) - 1:
-                    delt = self.cut_date - datetime.timedelta(days=self.ts_periods[ix])
-                    delt2 = self.cut_date - datetime.timedelta(
-                        days=self.ts_periods[ix + 1]
+
+            # === 2. Period Change Ratios (Xd vs Yd) ===
+            for ix in range(len(self.ts_periods) - 1):
+                period1 = self.ts_periods[ix]  # e.g. 1
+                period2 = self.ts_periods[ix + 1]  # e.g. 3
+
+                if use_dynamic_ref:
+                    thresh1 = self._date_subtract_days(ref_ts, period1)
+                    thresh2 = self._date_subtract_days(ref_ts, period2)
+                    num_expr = f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= {thresh1} THEN 1 ELSE 0 END)"
+                    denom_expr = f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= {thresh2} THEN 1 ELSE 0 END)"
+                else:
+                    delt1 = self.cut_date - datetime.timedelta(days=period1)
+                    delt2 = self.cut_date - datetime.timedelta(days=period2)
+                    num_expr = f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt1)}' THEN 1 ELSE 0 END)"
+                    denom_expr = f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt2)}' THEN 1 ELSE 0 END)"
+
+                # Choose safe division per dialect
+                if self.__class__.__name__ == "DatabricksNode":
+                    ratio_expr = f"try_divide({num_expr}, {denom_expr})"
+                elif self.__class__.__name__ == "SnowflakeNode":
+                    ratio_expr = f"DIV0({num_expr}, {denom_expr})"
+                else:
+                    ratio_expr = f"{num_expr} * 1.0 / NULLIF({denom_expr}, 0)"
+
+                agg_funcs.append(
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=f"{ratio_expr} AS {self.prefix}_{period1}dv{period2}_change",
                     )
-                    if self.__class__.__name__ == "DatabricksNode":
-                        agg_funcs.append(
-                                sqlop(
-                                    optype=SQLOpType.aggfunc,
-                                    opval=f"""
-                                    try_divide(
-                                    SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' THEN 1 ELSE 0 END),
-                                    SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt2)}' THEN 1 ELSE 0 END)
-                                    ) AS {self.prefix}_{self.ts_periods[ix]}dv{self.ts_periods[ix + 1]}_change""",
-                                    )
-                                )
-                    elif self.__class__.__name__ == "SnowflakeNode":
-                        agg_funcs.append(
-                                sqlop(
-                                    optype=SQLOpType.aggfunc,
-                                    opval=f"""
-                                    DIV0(
-                                    SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' THEN 1 ELSE 0 END),
-                                    SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt2)}' THEN 1 ELSE 0 END)
-                                    ) AS {self.prefix}_{self.ts_periods[ix]}dv{self.ts_periods[ix + 1]}_change""",
-                                    )
-                                )
-                    else:
-                        agg_funcs.append(
-                        sqlop(
-                            optype=SQLOpType.aggfunc,
-                            opval=f"""
-                                SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt)}' then 1 else 0 end)/SUM(CASE WHEN {self.colabbr(self.date_key)} >= '{str(delt2)}' then 1 else 0 end) as {self.prefix}_{self.ts_periods[ix]}dv{self.ts_periods[ix + 1]}_change""",
-                        )
-                    )
+                )
 
         if not len(agg_funcs):
             logger.info(f"No aggregations for {self}")
@@ -1273,15 +1358,76 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             return (self.label_period_val * 30.417) * 1440
 
     def prep_for_features(
-        self, allow_null: bool = False
+        self,
+        allow_null: bool = False,
     ) -> typing.Union[
         pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame, typing.List[sqlop]
     ]:
         """
         Prepare the dataset for feature aggregations / reduce
         """
+        # if hasattr(self, 'date_node') and self.date_node:
         if self.date_key:
+            # Date filters when we have a
+            # date key.
             if (
+                hasattr(self, "date_node")
+                and self.date_node
+                and self.compute_layer
+                in [
+                    ComputeLayerEnum.sqlite,
+                    ComputeLayerEnum.postgres,
+                    ComputeLayerEnum.snowflake,
+                    ComputeLayerEnum.redshift,
+                    ComputeLayerEnum.mysql,
+                    ComputeLayerEnum.athena,
+                    ComputeLayerEnum.databricks,
+                    ComputeLayerEnum.duckdb,
+                ]
+            ):
+                logger.info(f"Got date column of {self.date_node.date_key}")
+                date_col = self.colabbr(self.date_key)
+                cutoff_col = f"{self.date_node.prefix}_{self.date_node.date_key}"
+                days = (
+                    self.compute_period_val
+                )  # ← this is your lookback / compute period
+
+                # Dialect-specific date subtraction
+                if self.compute_layer in [
+                    ComputeLayerEnum.duckdb,
+                    ComputeLayerEnum.postgres,
+                    ComputeLayerEnum.redshift,
+                ]:
+                    lower_bound = f"{cutoff_col} - INTERVAL '{days} days'"
+
+                elif self.compute_layer in [
+                    ComputeLayerEnum.snowflake,
+                    ComputeLayerEnum.mysql,
+                ]:
+                    lower_bound = f"DATEADD(DAY, -{days}, {cutoff_col})"
+
+                elif self.compute_layer == ComputeLayerEnum.databricks:
+                    lower_bound = f"{cutoff_col} - INTERVAL {days} DAYS"  # no quotes around number
+
+                elif self.compute_layer == ComputeLayerEnum.athena:
+                    lower_bound = (
+                        f"{cutoff_col} - INTERVAL '{days}' DAY"  # singular "DAY"
+                    )
+
+                elif self.compute_layer == ComputeLayerEnum.sqlite:
+                    lower_bound = f"DATE({cutoff_col}, '-{days} days')"
+
+                else:
+                    raise NotImplementedError(
+                        f"Date subtraction not implemented for compute layer: {self.compute_layer}"
+                    )
+
+                return [
+                    sqlop(optype=SQLOpType.where, opval=f"{date_col} < {cutoff_col}"),
+                    sqlop(optype=SQLOpType.where, opval=f"{date_col} > {lower_bound}"),
+                ]
+
+            elif (
                 self.cut_date
                 and isinstance(self.cut_date, str)
                 or isinstance(self.cut_date, datetime.datetime)
@@ -1445,7 +1591,63 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         Prepare the dataset for labels
         """
         if self.date_key:
+            # Date filters when we have a
+            # date node
             if (
+                hasattr(self, "date_node")
+                and self.date_node
+                and self.compute_layer
+                in [
+                    ComputeLayerEnum.sqlite,
+                    ComputeLayerEnum.postgres,
+                    ComputeLayerEnum.snowflake,
+                    ComputeLayerEnum.redshift,
+                    ComputeLayerEnum.mysql,
+                    ComputeLayerEnum.athena,
+                    ComputeLayerEnum.databricks,
+                    ComputeLayerEnum.duckdb,
+                ]
+            ):
+                date_col = f"{self.colabbr(self.date_key)}"
+                cutoff_col = f"{self.date_node.prefix}_{self.date_node.date_key}"
+                days = self.label_period_val
+
+                if self.compute_layer in [
+                    ComputeLayerEnum.duckdb,
+                    ComputeLayerEnum.postgres,
+                    ComputeLayerEnum.redshift,
+                ]:
+                    upper_bound = f"{cutoff_col} + INTERVAL '{days} days'"
+
+                elif self.compute_layer in [
+                    ComputeLayerEnum.snowflake,
+                    ComputeLayerEnum.mysql,
+                ]:
+                    upper_bound = f"DATEADD(DAY, {days}, {cutoff_col})"
+
+                elif self.compute_layer == ComputeLayerEnum.databricks:
+                    upper_bound = f"{cutoff_col} + INTERVAL {days} DAYS"  # no quotes around number
+
+                elif self.compute_layer in [ComputeLayerEnum.athena]:
+                    upper_bound = (
+                        f"{cutoff_col} + INTERVAL '{days}' DAY"  # singular "DAY"
+                    )
+
+                elif self.compute_layer == ComputeLayerEnum.sqlite:
+                    upper_bound = f"DATE({cutoff_col}, '+{days} days')"
+
+                else:
+                    # fallback or raise error
+                    raise NotImplementedError(
+                        f"Date arithmetic not implemented for {self.compute_layer}"
+                    )
+
+                return [
+                    sqlop(optype=SQLOpType.where, opval=f"{date_col} > {cutoff_col}"),
+                    sqlop(optype=SQLOpType.where, opval=f"{date_col} < {upper_bound}"),
+                ]
+
+            elif (
                 self.cut_date
                 and isinstance(self.cut_date, str)
                 or isinstance(self.cut_date, datetime.datetime)
@@ -1808,15 +2010,27 @@ class SQLNode(GraphReduceNode):
         client: typing.Any = None,
         lazy_execution: bool = False,
         dry_run: bool = False,
+        # For loading the data in.
+        do_data_ops: typing.Optional[typing.List[sqlop]] = None,
+        # For widening the data in terms of columns.
         do_annotate_ops: typing.Optional[typing.List[sqlop]] = None,
+        # For shrinking the row count with filters.
         do_filters_ops: typing.Optional[typing.List[sqlop]] = None,
+        # For reduction / compression via aggregation.
         do_reduce_ops: typing.Optional[typing.List[sqlop]] = None,
+        # For computing machine learning labels.
         do_labels_ops: typing.Optional[typing.List[sqlop]] = None,
+        # For adding data to widen the data after a join.
         do_post_join_annotate_ops: typing.Optional[typing.List[sqlop]] = None,
+        # For applying filters after a join.
         do_post_join_filters_ops: typing.Optional[typing.List[sqlop]] = None,
+        # Specification of the nodes that need to be joined prior
+        # to executing `do_post_join_annotate`.
         do_post_join_annotate_requires: typing.Optional[
             typing.List[GraphReduceNode]
         ] = None,
+        # Specification of the nodes that need to be joined prior
+        # to executing `do_post_join_filters`.
         do_post_join_filters_requires: typing.Optional[
             typing.List[GraphReduceNode]
         ] = None,
@@ -1853,6 +2067,7 @@ class SQLNode(GraphReduceNode):
         # only ever store the current `_ref_sql`.
         self._ref_sql = None
 
+        self.do_data_ops = do_data_ops
         self.do_annotate_ops = do_annotate_ops
         self.do_filters_ops = do_filters_ops
         self.do_reduce_ops = do_reduce_ops
@@ -2184,7 +2399,8 @@ class SQLNode(GraphReduceNode):
         """
         Load the data.
         """
-
+        if self.do_data_ops:
+            return self.do_data_ops
         col_renames = [f"{col} as {self.colabbr(col)}" for col in self.columns]
         sel = sqlop(optype=SQLOpType.select, opval=f"{','.join(col_renames)}")
         return [sel]
