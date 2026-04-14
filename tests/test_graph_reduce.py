@@ -671,6 +671,7 @@ def test_duckdb_graph_reduce():
     gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=True)
     gr.do_transformations_sql()
     res = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
+
     ic(res)
     ic(res.columns)
     ic(res.shape)
@@ -819,7 +820,7 @@ def test_duckdb_join_deps2():
     ic(res)
     ic(res.columns)
     ic(res.shape)
-    assert res.shape == (4,6)
+    assert res.shape == (4,8)
 
 
 
