@@ -639,29 +639,35 @@ class GraphReduce(nx.DiGraph):
         relation_samp = relation_node.get_sample()
         logger.info(f"parent columns: {parent_samp.columns}")
         logger.info(f"relation columns: {relation_samp.columns}")
-        relation_fk = f"{relation_node.prefix}_{relation_fk}"
-        if relation_fk in parent_samp.columns or relation_fk.lower() in [
-            _x.lower() for _x in relation_samp.columns
-        ]:
-            logger.info(f"removing duplicate column {relation_fk} on join")
+        relation_fk_col = f"{relation_node.prefix}_{relation_fk}"
+        parent_cols_lower = {_x.lower() for _x in parent_samp.columns}
+        duplicate_relation_cols = [
+            c for c in relation_samp.columns if c.lower() in parent_cols_lower
+        ]
+        if duplicate_relation_cols:
+            logger.info(
+                "removing duplicate columns on join",
+                columns=duplicate_relation_cols,
+            )
             relation_cols = [
                 f"relation.{c}"
                 for c in relation_samp.columns
-                if c.lower() != relation_fk.lower()
+                if c.lower() not in parent_cols_lower
             ]
             sel = ",".join(relation_cols)
+            relation_select = f", {sel}" if sel else ""
             JOIN_SQL = f"""
-                SELECT parent.*, {sel}
+                SELECT parent.*{relation_select}
                 FROM {parent_table} parent
                 LEFT JOIN {relation_table} relation
-                ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_fk}
+                ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_fk_col}
             """
         else:
             JOIN_SQL = f"""
                 SELECT parent.*, relation.*
                 FROM {parent_table} parent
                 LEFT JOIN {relation_table} relation
-                ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_node.prefix}_{relation_fk}
+                ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_fk_col}
             """
         # Always overwrite the join reference.
         parent_node.create_ref(
