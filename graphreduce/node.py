@@ -2188,10 +2188,13 @@ class SQLNode(GraphReduceNode):
         if not self._temp_refs.get(fn) or overwrite:
             ref_name = self.get_ref_name(fn, schema=schema)
             self._all_refs.append(ref_name)
+            created_ref = ref_name
             if not dry:
-                self.create_temp_view(sql, ref_name, dry=dry)
-            self._temp_refs[fn] = ref_name
-            return ref_name
+                created_ref = self.create_temp_view(sql, ref_name, dry=dry)
+                if not created_ref:
+                    return None
+            self._temp_refs[fn] = created_ref
+            return created_ref
         # Reference for this method already created
         # so we will just retrieve.
         else:
@@ -2654,13 +2657,14 @@ class DatabricksNode(SQLNode):
                 view_name = view_name.split(".")[-1]
 
             sql = f"""
-            CREATE TEMPORARY VIEW {view_name} AS
+            CREATE OR REPLACE TEMPORARY VIEW {view_name} AS
             {qry}
             """
             self._ref_sql = sql
             if not dry:
                 self.execute_query(sql, ret_df=False)
             self._cur_data_ref = view_name
+            return view_name
         except Exception as e:
             logger.error(e)
             return None

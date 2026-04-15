@@ -14,6 +14,16 @@ Current implementation:
 
 * [`examples/relbench_trial_study_outcome.py`](../../examples/relbench_trial_study_outcome.py)
 
+## Latest Tested Result
+
+Latest local run from `tests/data/relbench/run_reports/relbench_results.json`:
+
+* in-time AUC: `0.5679`
+* holdout AUC: `0.6157`
+* feature count: `349`
+* rows: validation `960`, test `825`
+* runtime: `21.6s` (`2026-04-09T22:53:10Z`)
+
 ## Interactive Runner
 
 <div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_trial_study_outcome">

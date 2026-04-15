@@ -19,6 +19,16 @@ Current RelBench-aligned dates:
 * cut date: `2020-09-14`
 * lookback start: `2019-09-07`
 
+## Latest Tested Result
+
+Latest local run from `tests/data/relbench/run_reports/relbench_results.json`:
+
+* test ROC AUC: `0.6952`
+* test average precision: `0.9045`
+* feature count: `218`
+* rows: train `80948`, validation `76556`, test `74575`
+* runtime: `36.4s` (`2026-04-09T22:51:48Z`)
+
 ## Interactive Runner
 
 <div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_hm_user_churn">

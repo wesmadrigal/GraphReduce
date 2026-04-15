@@ -26,6 +26,16 @@ Current implementation:
 
 * [`examples/relbench_user_badges_local_runner.py`](../../examples/relbench_user_badges_local_runner.py)
 
+## Latest Tested Result
+
+Latest local run from `tests/data/relbench/run_reports/relbench_results.json`:
+
+* test ROC AUC: `0.8442`
+* test average precision: `0.2749`
+* feature count: `490`
+* rows: train `239926`, validation `247379`, test `255341`
+* runtime: `89.8s` (`2026-04-09T22:54:40Z`)
+
 ## Interactive Runner
 
 <div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_user_badges">

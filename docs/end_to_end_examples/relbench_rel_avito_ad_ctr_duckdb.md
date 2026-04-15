@@ -15,6 +15,16 @@ Current implementation:
 * [`examples/relbench_avito_ad_ctr.py`](../../examples/relbench_avito_ad_ctr.py)
 * [`examples/relbench_avito_common.py`](../../examples/relbench_avito_common.py)
 
+## Latest Tested Result
+
+Latest local run from `tests/data/relbench/run_reports/relbench_results.json`:
+
+* test MAE: `0.0313`
+* test RMSE: `0.0943`
+* feature count: `50`
+* rows: train `5100`, validation `1766`, test `1816`
+* runtime: `32.4s` (`2026-04-09T22:24:09Z`)
+
 ## Interactive Runner
 
 <div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_avito_ad_ctr">

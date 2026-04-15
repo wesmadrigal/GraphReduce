@@ -21,6 +21,16 @@ Current RelBench-aligned dates:
 * holdout cut date: `2016-01-01`
 * lookback start: `2008-01-01`
 
+## Latest Tested Result
+
+Latest local run from `tests/data/relbench/run_reports/relbench_results.json`:
+
+* test MAE: `42.7090`
+* test RMSE: `590.4271`
+* feature count: `31`
+* rows: train `2707679`, validation `166978`, test `178334`
+* runtime: `909.6s` (`2026-04-09T22:04:33Z`)
+
 ## Interactive Runner
 
 <div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_amazon_item_ltv">

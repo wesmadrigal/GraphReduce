@@ -15,6 +15,16 @@ Current implementation:
 * [`examples/relbench_avito_user_visits.py`](../../examples/relbench_avito_user_visits.py)
 * [`examples/relbench_avito_common.py`](../../examples/relbench_avito_common.py)
 
+## Latest Tested Result
+
+Latest local run from `tests/data/relbench/run_reports/relbench_results.json`:
+
+* test ROC AUC: `0.8299`
+* test average precision: `0.9655`
+* feature count: `281`
+* rows: train `86619`, validation `29979`, test `36129`
+* runtime: `25.3s` (`2026-04-09T22:25:04Z`)
+
 ## Interactive Runner
 
 <div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="relbench_avito_user_visits">
