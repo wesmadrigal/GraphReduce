@@ -1317,7 +1317,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         pass
 
     def colabbr(self, col: str) -> str:
-        return f"{self.prefix}_{col}"
+        prefix = f"{self.prefix}_"
+        if col.startswith(prefix):
+            return col
+        return f"{prefix}{col}"
 
     def compute_period_minutes(
         self,
@@ -2004,10 +2007,16 @@ class SQLNode(GraphReduceNode):
         "nunique": None,
     }
 
+    PICK_ONE_VALUE_FUNCTION = {
+        ComputeLayerEnum.snowflake: "any_value",
+        ComputeLayerEnum.redshift: "any_value",
+    }
+
     def __init__(
         self,
         *args,
         client: typing.Any = None,
+        table_name: typing.Optional[str] = None,
         lazy_execution: bool = False,
         dry_run: bool = False,
         # For loading the data in.
@@ -2054,6 +2063,7 @@ class SQLNode(GraphReduceNode):
                 do_post_join_filters_requires: list of `SQLNode` instances that this method requires be joined priot to executing
         """
         self._sql_client = client
+        self.table_name = table_name
         self.lazy_execution = lazy_execution
         self.dry_run = dry_run
 
@@ -2084,6 +2094,9 @@ class SQLNode(GraphReduceNode):
 
     def get_temp_refs(self):
         return self._temp_refs
+
+    def get_pick_one_value_agg(self) -> str:
+        return self.PICK_ONE_VALUE_FUNCTION.get(self.compute_layer, "first")
 
     def _clean_refs(self):
         """

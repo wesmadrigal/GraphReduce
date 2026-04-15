@@ -1,10 +1,12 @@
 import datetime
 import os
 import sqlite3
+from pathlib import Path
 
+import duckdb
 import pandas as pd
 
-from graphreduce.node import DynamicNode, SQLNode
+from graphreduce.node import DynamicNode, SQLNode, DuckdbNode
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.models import sqlop
@@ -238,3 +240,124 @@ def test_automated_fe_sql():
     out = cust.get_sample()
     assert "ord_id_label" in out.columns
     assert len(out) == 4
+
+
+def test_date_nodes():
+    cut_date = datetime.datetime(2023, 5, 1)
+    #data_dir = Path("tests/data/cust_data")
+    data_dir = Path("/usr/local/lake/cust_data")
+    con = duckdb.connect()
+    cust = DuckdbNode(
+        fpath=f"'{data_dir / 'cust.csv'}'",
+        prefix="cust",
+        pk="id",
+        date_key=None,
+        columns=['id','name'],
+        table_name="cust",
+        #do_filters_ops=[sqlop(optype=SQLOpType.where, opval=f"user_CreationDate <= '{cut_date.date()}'")],
+    )
+    order = DuckdbNode(
+            fpath=f"'{data_dir / 'orders.csv'}'",
+            prefix="ord",
+            pk="id",
+            date_key="ts",
+            columns=['id','cid','ts', 'order_type', 'total'],
+            table_name="ord",
+        )
+    notification = DuckdbNode(
+            fpath=f"'{data_dir / 'notifications.csv'}'",
+            prefix="notif",
+            pk="id",
+            date_key="ts",
+            columns=['id','ident_cust','ts'],
+            table_name="notif"
+        )
+
+    ni = DuckdbNode(
+            fpath=f"'{data_dir / 'notification_interactions.csv'}'",
+            prefix="ni",
+            pk="id",
+            date_key="ts",
+            columns=['id','notification_id','interaction_type_id','ts'],
+            table_name="notifation_interaction",
+        )
+
+    nit = DuckdbNode(
+            fpath=f"'{data_dir / 'notification_interaction_types.csv'}'",
+            prefix="nit",
+            pk="id",
+            date_key='ts',
+            columns=['id','name'],
+            table_name="nits",
+        )
+
+    op = DuckdbNode(
+            fpath=f"'{data_dir / 'order_products.csv'}'",
+            prefix="op",
+            pk="id",
+            date_key=None,
+            columns=['id','product_id', 'order_id'],
+            table_name="order_products",
+        )
+
+    date_node = DuckdbNode(
+            fpath=f"'{data_dir / 'orders.csv'}'",
+            prefix='cd',
+            date_key='first_order_date',
+            table_name="cut_date",
+            do_data_ops=sqlop(
+                    optype=SQLOpType.custom,
+                    opval="""
+                    SELECT cid as cd_cid, min(ts) as cd_first_order_date
+                    from '/usr/local/lake/cust_data/orders.csv'
+                    where order_type = 'subscription'
+                    group by cid
+                    """
+                ),
+            client=con
+    )
+
+    gr = GraphReduce(
+            name=f"rel-stack-badges-{cut_date.date()}",
+            parent_node=cust,
+            compute_layer=ComputeLayerEnum.duckdb,
+            sql_client=con,
+            cut_date=cut_date,
+            compute_period_val=730,
+            compute_period_unit=PeriodUnit.day,
+            auto_features=True,
+            auto_labels=True,
+            label_node=notification,
+            label_field="id",
+            label_operation="count",
+            label_period_val=180,
+            label_period_unit=PeriodUnit.day,
+            auto_feature_hops_back=4,
+            auto_feature_hops_front=0,
+            dry_run=False,
+            date_node=date_node
+    )
+
+    for node in [cust,order,op,notification,ni,nit]:
+        gr.add_node(node)
+
+
+    gr.add_entity_edge(parent_node=cust,relation_node=order,parent_key='id',relation_key='cid',reduce=True)
+    gr.add_entity_edge(parent_node=cust,relation_node=notification,parent_key='id',relation_key='ident_cust',reduce=True)
+
+    gr.add_entity_edge(parent_node=order,relation_node=op, parent_key='id',relation_key='order_id',reduce=True)
+    gr.add_entity_edge(parent_node=notification,relation_node=ni,parent_key='id',relation_key='notification_id',reduce=True)
+    gr.add_entity_edge(parent_node=ni,relation_node=nit,parent_key='interaction_type_id',relation_key='id',reduce=False)
+
+    # Date node relationships
+    gr.add_entity_edge(parent_node=cust, relation_node=date_node, parent_key='id', relation_key='cid')
+
+    gr.do_transformations_sql()
+
+    df = con.execute(f"select * from {gr.parent_node._cur_data_ref}").df()
+    print(df.head())
+
+    label = [c for c in df.columns if 'label' in c][0]
+    print(df[['cust_id',label]])
+
+    assert len(df) == 6

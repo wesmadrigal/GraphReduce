@@ -370,6 +370,32 @@ class GraphReduce(nx.DiGraph):
                 },
             )
 
+    def _resolve_prefixed_column(
+        self,
+        node: GraphReduceNode,
+        column: str,
+        columns: typing.Optional[typing.Iterable[typing.Any]] = None,
+    ) -> str:
+        """
+        Normalize a join key to the concrete column name used on a node.
+
+        Some callers pass raw keys like `UserID`, while others pass already-
+        prefixed keys like `cd_UserID`. SQL join generation should accept both.
+        """
+
+        prefixed = f"{node.prefix}_{column}"
+        if isinstance(column, str) and column.startswith(f"{node.prefix}_"):
+            return column
+
+        if columns is not None:
+            column_names = {str(col).lower() for col in columns}
+            if str(column).lower() in column_names:
+                return str(column)
+            if prefixed.lower() in column_names:
+                return prefixed
+
+        return prefixed
+
     def join_any(
         self,
         to_node: GraphReduceNode,
@@ -639,7 +665,12 @@ class GraphReduce(nx.DiGraph):
         relation_samp = relation_node.get_sample()
         logger.info(f"parent columns: {parent_samp.columns}")
         logger.info(f"relation columns: {relation_samp.columns}")
-        relation_fk_col = f"{relation_node.prefix}_{relation_fk}"
+        parent_pk_col = self._resolve_prefixed_column(
+            parent_node, parent_pk, parent_samp.columns
+        )
+        relation_fk_col = self._resolve_prefixed_column(
+            relation_node, relation_fk, relation_samp.columns
+        )
         parent_cols_lower = {_x.lower() for _x in parent_samp.columns}
         duplicate_relation_cols = [
             c for c in relation_samp.columns if c.lower() in parent_cols_lower
@@ -660,14 +691,14 @@ class GraphReduce(nx.DiGraph):
                 SELECT parent.*{relation_select}
                 FROM {parent_table} parent
                 LEFT JOIN {relation_table} relation
-                ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_fk_col}
+                ON parent.{parent_pk_col} = relation.{relation_fk_col}
             """
         else:
             JOIN_SQL = f"""
                 SELECT parent.*, relation.*
                 FROM {parent_table} parent
                 LEFT JOIN {relation_table} relation
-                ON parent.{parent_node.prefix}_{parent_pk} = relation.{relation_fk_col}
+                ON parent.{parent_pk_col} = relation.{relation_fk_col}
             """
         # Always overwrite the join reference.
         parent_node.create_ref(
@@ -841,6 +872,46 @@ class GraphReduce(nx.DiGraph):
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
 
+
+            logger.debug(f"do annotate: {node.build_query(node.do_annotate())}")
+            self.sql_ops.append(node.build_query(node.do_annotate()))
+            node.create_ref(
+                node.build_query(node.do_annotate()),
+                node.do_annotate,
+                schema=self._checkpoint_schema,
+                dry=self.dry_run,
+            )
+            if node._ref_sql:
+                self.sql_ops.append(node._ref_sql)
+                node._ref_sql = None
+
+            logger.debug(f"do annotate: {node.build_query(node.do_filters())}")
+            self.sql_ops.append(node.build_query(node.do_filters()))
+            node.create_ref(
+                node.build_query(node.do_filters()),
+                node.do_filters,
+                schema=self._checkpoint_schema,
+                dry=self.dry_run,
+            )
+            if node._ref_sql:
+                self.sql_ops.append(node._ref_sql)
+                node._ref_sql = None
+
+            self.sql_ops.append(node.build_query(node.do_normalize()))
+            node.create_ref(
+                node.build_query(node.do_normalize()),
+                node.do_normalize,
+                schema=self._checkpoint_schema,
+                dry=self.dry_run,
+            )
+            if node._ref_sql:
+                self.sql_ops.append(node._ref_sql)
+                node._ref_sql = None
+            #    node.create_ref(node.build_query(ops), node.do_data, schema=self._checkpoint_schema)
+            #    node.create_ref(node.build_query(node.do_annotate()), node.do_annotate, schema=self._checkpoint_schema)
+            #    node.create_ref(node.build_query(node.do_filters()), node.do_filters, schema=self._checkpoint_schema)
+            #    node.create_ref(node.build_query(node.do_normalize()), node.do_normalize, schema=self._checkpoint_schema)
+
             # If there is a `date_node` then we need
             # to push it down to all of the relationships.
             # For now we require that the `date_node` be
@@ -885,12 +956,21 @@ class GraphReduce(nx.DiGraph):
                     elif meta and meta["relation_type"] == "peer":
                         parent_pk = meta["parent_key"]
                         relation_fk = meta["relation_key"]
+                    date_prefix = f"{my_parent.date_node.prefix}_"
+                    date_key = my_parent.date_node.date_key
+                    date_agg_func = my_parent.get_pick_one_value_agg()
+                    if date_key.startswith(date_prefix):
+                        propagated_date_col = date_key
+                        propagated_date_key = date_key[len(date_prefix) :]
+                    else:
+                        propagated_date_col = f"{date_prefix}{date_key}"
+                        propagated_date_key = date_key
                     # Grab the date data from the parent and merge
                     # it.
                     dn = my_parent.__class__(
                         fpath=my_parent.date_node.prefix,
                         prefix=my_parent.date_node.prefix,
-                        date_key=my_parent.date_node.date_key,
+                        date_key=propagated_date_key,
                         table_name=my_parent.date_node.table_name,
                         # Use the parent table's primary key.
                         pk=my_parent.pk,
@@ -898,7 +978,7 @@ class GraphReduce(nx.DiGraph):
                             optype=SQLOpType.custom,
                             opval=f"""
                                 select {my_parent.prefix}_{my_parent.pk} as {my_parent.date_node.prefix}_{my_parent.pk},
-                                first({my_parent.date_node.prefix}_{my_parent.date_node.date_key}) as {my_parent.date_node.prefix}_{my_parent.date_node.date_key}
+                                {date_agg_func}({propagated_date_col}) as {propagated_date_col}
                                 from {my_parent._cur_data_ref}
                                 group by {my_parent.prefix}_{my_parent.pk}
                                 """,
@@ -921,45 +1001,6 @@ class GraphReduce(nx.DiGraph):
                     # to this node as a reference for
                     # future.
                     node.date_node = dn
-
-            logger.debug(f"do annotate: {node.build_query(node.do_annotate())}")
-            self.sql_ops.append(node.build_query(node.do_annotate()))
-            node.create_ref(
-                node.build_query(node.do_annotate()),
-                node.do_annotate,
-                schema=self._checkpoint_schema,
-                dry=self.dry_run,
-            )
-            if node._ref_sql:
-                self.sql_ops.append(node._ref_sql)
-                node._ref_sql = None
-
-            logger.debug(f"do annotate: {node.build_query(node.do_filters())}")
-            self.sql_ops.append(node.build_query(node.do_filters()))
-            node.create_ref(
-                node.build_query(node.do_filters()),
-                node.do_filters,
-                schema=self._checkpoint_schema,
-                dry=self.dry_run,
-            )
-            if node._ref_sql:
-                self.sql_ops.append(node._ref_sql)
-                node._ref_sql = None
-
-            self.sql_ops.append(node.build_query(node.do_normalize()))
-            node.create_ref(
-                node.build_query(node.do_normalize()),
-                node.do_normalize,
-                schema=self._checkpoint_schema,
-                dry=self.dry_run,
-            )
-            if node._ref_sql:
-                self.sql_ops.append(node._ref_sql)
-                node._ref_sql = None
-            #    node.create_ref(node.build_query(ops), node.do_data, schema=self._checkpoint_schema)
-            #    node.create_ref(node.build_query(node.do_annotate()), node.do_annotate, schema=self._checkpoint_schema)
-            #    node.create_ref(node.build_query(node.do_filters()), node.do_filters, schema=self._checkpoint_schema)
-            #    node.create_ref(node.build_query(node.do_normalize()), node.do_normalize, schema=self._checkpoint_schema)
 
         # Check for automatic feature engineering
         # for forward relationships.  These are
