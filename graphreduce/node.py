@@ -2705,7 +2705,8 @@ class RedshiftNode(SQLNode):
         self._cur_data_ref = view_name
         return view_name
 
-    def sql_auto_features(
+    # To be deprecated.
+    def _sql_auto_features(
         self,
         table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
         reduce_key: str,
