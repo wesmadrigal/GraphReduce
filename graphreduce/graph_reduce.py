@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 # std lib
+import copy
 import datetime
 import typing
 
@@ -128,6 +129,7 @@ class GraphReduce(nx.DiGraph):
         checkpoint_schema: str = None,
         date_filters_on_agg: bool = False,
         date_node: typing.Optional[GraphReduceNode] = None,
+        train: bool = True,
         *args,
         **kwargs,
     ):
@@ -156,6 +158,7 @@ class GraphReduce(nx.DiGraph):
             catalog_client: optional Unity or Polaris catalog client instance
             debug: bool whether to run debug logging
             date_filters_on_agg: bool whether or not to automatically filter by dates during custom defined aggregations
+            train: bool whether the graph is being built for training. If false, date-node joins are skipped.
         """
         super(GraphReduce, self).__init__(*args, **kwargs)
 
@@ -183,6 +186,7 @@ class GraphReduce(nx.DiGraph):
         self.feature_typefunc_map = feature_typefunc_map
         self.feature_stype_map = feature_stype_map
         self.date_filters_on_agg = date_filters_on_agg
+        self.train = train
 
         # SQL dialect parameters.
         self._lazy_execution = lazy_execution
@@ -201,6 +205,10 @@ class GraphReduce(nx.DiGraph):
         self.dry_run = dry_run
         # Keep track of all the SQL queries.
         self.sql_ops = []
+        # Structured execution log for SQL-backed runs.
+        self.executed_op_records = []
+        # Frozen execution plan replay queues keyed by node / method / edge.
+        self._execution_plan_queues = {}
 
         # If we have a date node.
         self.date_node = date_node
@@ -275,6 +283,7 @@ class GraphReduce(nx.DiGraph):
             "feature_typefunc_map": self.feature_typefunc_map,
             "feature_stype_map": self.feature_stype_map,
             "date_filters_on_agg": self.date_filters_on_agg,
+            "train": self.train,
             "debug": self.debug,
             "lazy_execution": self._lazy_execution,
             "date_node": self.date_node,
@@ -288,6 +297,302 @@ class GraphReduce(nx.DiGraph):
         Assign the parent-most node in the graph
         """
         self._parent_node = parent_node
+
+    def _normalize_sqlop_list(
+        self, ops: typing.Optional[typing.Union[sqlop, typing.List[sqlop]]]
+    ) -> typing.List[sqlop]:
+        """
+        Normalize a single sqlop or list of sqlops into a list.
+        """
+        if ops is None:
+            return []
+        if isinstance(ops, list):
+            return [_op for _op in ops if _op is not None]
+        return [ops]
+
+    def _ops_reference_labels(self, ops: typing.List[sqlop]) -> bool:
+        """
+        Check whether a list of sqlops references label-derived columns.
+        """
+        return any("_label" in getattr(op, "opval", "") for op in ops)
+
+    def _record_executed_ops(
+        self,
+        node: GraphReduceNode,
+        method_name: str,
+        ops: typing.Optional[typing.Union[sqlop, typing.List[sqlop]]] = None,
+        date_filter_ops: typing.Optional[typing.Union[sqlop, typing.List[sqlop]]] = None,
+        sql: typing.Optional[str] = None,
+        auto_generated: bool = False,
+        edge: typing.Optional[typing.Tuple[GraphReduceNode, GraphReduceNode]] = None,
+        reduce_key: typing.Optional[str] = None,
+    ) -> typing.Optional[typing.Dict[str, typing.Any]]:
+        """
+        Record structured sqlop execution metadata while preserving the raw sqlops.
+        """
+        base_ops = self._normalize_sqlop_list(ops)
+        extra_date_filter_ops = self._normalize_sqlop_list(date_filter_ops)
+        combined_ops = [*base_ops, *extra_date_filter_ops]
+        if not combined_ops:
+            return None
+
+        record = {
+            "node": node,
+            "node_prefix": getattr(node, "prefix", None),
+            "node_name": node.__class__.__name__,
+            "method_name": method_name,
+            "ops": combined_ops,
+            "method_ops": base_ops,
+            "date_filter_ops": extra_date_filter_ops,
+            "ops_excluding_date_filters": base_ops,
+            "sql": sql,
+            "auto_generated": auto_generated,
+            "edge": edge,
+            "reduce_key": reduce_key,
+        }
+        self.executed_op_records.append(record)
+        return record
+
+    def _serialize_edge(
+        self,
+        edge: typing.Optional[typing.Tuple[GraphReduceNode, GraphReduceNode]],
+    ) -> typing.Optional[typing.Tuple[typing.Optional[str], typing.Optional[str]]]:
+        """
+        Convert an edge into a stable prefix tuple for plan replay.
+        """
+        if not edge:
+            return None
+        return tuple(getattr(node, "prefix", None) for node in edge)
+
+    def _planned_queue_key(
+        self,
+        node: GraphReduceNode,
+        method_name: str,
+        edge: typing.Optional[typing.Tuple[GraphReduceNode, GraphReduceNode]] = None,
+    ) -> typing.Tuple[
+        typing.Optional[str],
+        str,
+        typing.Optional[typing.Tuple[typing.Optional[str], typing.Optional[str]]],
+    ]:
+        """
+        Build the lookup key for a frozen execution plan record.
+        """
+        return (
+            getattr(node, "prefix", None),
+            method_name,
+            self._serialize_edge(edge),
+        )
+
+    def _consume_planned_record(
+        self,
+        node: GraphReduceNode,
+        method_name: str,
+        edge: typing.Optional[typing.Tuple[GraphReduceNode, GraphReduceNode]] = None,
+    ) -> typing.Optional[typing.Dict[str, typing.Any]]:
+        """
+        Pop the next frozen execution record for a node / method / edge combination.
+        """
+        queue_key = self._planned_queue_key(node=node, method_name=method_name, edge=edge)
+        queue = self._execution_plan_queues.get(queue_key)
+        if queue:
+            return queue.pop(0)
+        return None
+
+    def get_executed_op_records(
+        self,
+        method_name: typing.Optional[str] = None,
+        exclude_date_filters: bool = False,
+        auto_generated: typing.Optional[bool] = None,
+    ) -> typing.List[typing.Dict[str, typing.Any]]:
+        """
+        Return execution records, optionally filtered by method and auto-generated state.
+        """
+        records = self.executed_op_records
+        if method_name is not None:
+            records = [record for record in records if record["method_name"] == method_name]
+        if auto_generated is not None:
+            records = [
+                record for record in records if record["auto_generated"] == auto_generated
+            ]
+        if not exclude_date_filters:
+            return list(records)
+
+        filtered_records = []
+        for record in records:
+            filtered_record = dict(record)
+            filtered_record["ops"] = list(record["ops_excluding_date_filters"])
+            filtered_records.append(filtered_record)
+        return filtered_records
+
+    def get_executed_sqlops_by_method(
+        self,
+        exclude_date_filters: bool = False,
+        auto_generated: typing.Optional[bool] = None,
+    ) -> typing.Dict[str, typing.List[sqlop]]:
+        """
+        Return the executed sqlops grouped by method name.
+        """
+        grouped = {}
+        for record in self.get_executed_op_records(
+            exclude_date_filters=exclude_date_filters,
+            auto_generated=auto_generated,
+        ):
+            grouped.setdefault(record["method_name"], []).extend(record["ops"])
+        return grouped
+
+    def _rebind_sqlop_dates_for_node(
+        self,
+        node: GraphReduceNode,
+        ops: typing.List[sqlop],
+        original_cut_date: typing.Optional[datetime.datetime],
+    ) -> typing.List[sqlop]:
+        """
+        Rebind date literals in frozen sqlops from the original cut date to this graph's cut date.
+        """
+        if not original_cut_date or not self.cut_date:
+            return copy.deepcopy(ops)
+
+        rebound_ops = copy.deepcopy(ops)
+        original_cut_date = (
+            original_cut_date
+            if isinstance(original_cut_date, datetime.datetime)
+            else datetime.datetime.fromisoformat(str(original_cut_date))
+        )
+        current_cut_date = (
+            self.cut_date
+            if isinstance(self.cut_date, datetime.datetime)
+            else datetime.datetime.fromisoformat(str(self.cut_date))
+        )
+
+        replacements = {
+            str(original_cut_date): str(current_cut_date),
+        }
+
+        if hasattr(node, "compute_period_minutes"):
+            try:
+                replacements[
+                    str(
+                        original_cut_date
+                        - datetime.timedelta(minutes=node.compute_period_minutes())
+                    )
+                ] = str(
+                    current_cut_date
+                    - datetime.timedelta(minutes=node.compute_period_minutes())
+                )
+            except Exception:
+                pass
+
+        if hasattr(node, "label_period_minutes") and getattr(
+            node, "label_period_val", None
+        ) is not None:
+            try:
+                replacements[
+                    str(
+                        original_cut_date
+                        + datetime.timedelta(minutes=node.label_period_minutes())
+                    )
+                ] = str(
+                    current_cut_date
+                    + datetime.timedelta(minutes=node.label_period_minutes())
+                )
+            except Exception:
+                pass
+
+        for period in getattr(node, "ts_periods", []) or []:
+            replacements[
+                str(original_cut_date - datetime.timedelta(days=period))
+            ] = str(current_cut_date - datetime.timedelta(days=period))
+
+        for op in rebound_ops:
+            for old_val, new_val in sorted(
+                replacements.items(), key=lambda item: len(item[0]), reverse=True
+            ):
+                op.opval = op.opval.replace(old_val, new_val)
+
+        return rebound_ops
+
+    def freeze_execution_plan(self) -> typing.Dict[str, typing.Any]:
+        """
+        Freeze the executed SQL plan so it can be replayed on a later graph instance.
+        """
+        grouped_by_method = {}
+        frozen_records = []
+
+        for record in self.executed_op_records:
+            method_ops = copy.deepcopy(record["ops"])
+            grouped_by_method.setdefault(record["method_name"], []).extend(
+                copy.deepcopy(record["ops"])
+            )
+            frozen_records.append(
+                {
+                    "node_prefix": record["node_prefix"],
+                    "method_name": record["method_name"],
+                    "ops": method_ops,
+                    "method_ops": copy.deepcopy(record["method_ops"]),
+                    "date_filter_ops": copy.deepcopy(record["date_filter_ops"]),
+                    "auto_generated": record["auto_generated"],
+                    "reduce_key": record["reduce_key"],
+                    "edge": self._serialize_edge(record["edge"]),
+                }
+            )
+
+        return {
+            "cut_date": self.cut_date,
+            "records": frozen_records,
+            "ops_by_method": grouped_by_method,
+        }
+
+    def apply_execution_plan(self, plan: typing.Dict[str, typing.Any]) -> None:
+        """
+        Apply a frozen execution plan by loading sqlop queues per node / method / edge.
+        """
+        original_cut_date = plan.get("cut_date")
+        node_lookup = {getattr(node, "prefix", None): node for node in self.nodes()}
+        replay_queues = {}
+
+        for record in plan.get("records", []):
+            if not self.train and record["method_name"] == "do_labels":
+                continue
+            node = node_lookup.get(record["node_prefix"])
+            if node is None:
+                continue
+            rebound_method_ops = self._rebind_sqlop_dates_for_node(
+                node=node,
+                ops=record.get("method_ops", record["ops"]),
+                original_cut_date=original_cut_date,
+            )
+            rebound_date_filter_ops = self._rebind_sqlop_dates_for_node(
+                node=node,
+                ops=record.get("date_filter_ops", []),
+                original_cut_date=original_cut_date,
+            )
+            rebound_ops = [*rebound_method_ops, *rebound_date_filter_ops]
+            if (
+                not self.train
+                and record["method_name"]
+                in ["do_post_join_annotate", "do_post_join_filters"]
+                and self._ops_reference_labels(rebound_ops)
+            ):
+                continue
+            queue_key = (
+                record["node_prefix"],
+                record["method_name"],
+                tuple(record["edge"]) if record.get("edge") else None,
+            )
+            replay_queues.setdefault(queue_key, []).append(
+                {
+                    "node_prefix": record["node_prefix"],
+                    "method_name": record["method_name"],
+                    "ops": rebound_ops,
+                    "method_ops": rebound_method_ops,
+                    "date_filter_ops": rebound_date_filter_ops,
+                    "auto_generated": record["auto_generated"],
+                    "reduce_key": record.get("reduce_key"),
+                    "edge": tuple(record["edge"]) if record.get("edge") else None,
+                }
+            )
+
+        self._execution_plan_queues = replay_queues
 
     def hydrate_graph_attrs(
         self,
@@ -843,6 +1148,7 @@ class GraphReduce(nx.DiGraph):
         """
         logger.info("hydrating graph attributes")
         self.hydrate_graph_attrs()
+        self.executed_op_records = []
 
         logger.info("checking for prefix uniqueness")
         self.prefix_uniqueness()
@@ -853,16 +1159,30 @@ class GraphReduce(nx.DiGraph):
                 continue
             # for node in self.nodes():
             # `self.do_data` must always return some `sqlop`
-            ops = node.do_data()
+            planned_data = self._consume_planned_record(node, "do_data")
+            ops = (
+                list(planned_data["ops"])
+                if planned_data
+                else self._normalize_sqlop_list(node.do_data())
+            )
             if not ops:
                 raise Exception(
                     f"{node.__class__.__name__}.do_data must be implemented"
                 )
+            data_sql = node.build_query(ops)
+            self._record_executed_ops(
+                node=node,
+                method_name="do_data",
+                ops=planned_data["method_ops"] if planned_data else ops,
+                date_filter_ops=planned_data["date_filter_ops"] if planned_data else None,
+                sql=data_sql,
+                auto_generated=planned_data["auto_generated"] if planned_data else False,
+            )
 
-            logger.debug(f"do data: {node.build_query(ops)}")
-            self.sql_ops.append(node.build_query(ops))
+            logger.debug(f"do data: {data_sql}")
+            self.sql_ops.append(data_sql)
             node.create_ref(
-                node.build_query(ops),
+                data_sql,
                 node.do_data,
                 schema=self._checkpoint_schema,
                 dry=self.dry_run,
@@ -872,11 +1192,27 @@ class GraphReduce(nx.DiGraph):
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
 
-
-            logger.debug(f"do annotate: {node.build_query(node.do_annotate())}")
-            self.sql_ops.append(node.build_query(node.do_annotate()))
+            planned_annotate = self._consume_planned_record(node, "do_annotate")
+            annotate_ops = (
+                list(planned_annotate["ops"])
+                if planned_annotate
+                else self._normalize_sqlop_list(node.do_annotate())
+            )
+            annotate_sql = node.build_query(annotate_ops)
+            self._record_executed_ops(
+                node=node,
+                method_name="do_annotate",
+                ops=planned_annotate["method_ops"] if planned_annotate else annotate_ops,
+                date_filter_ops=(
+                    planned_annotate["date_filter_ops"] if planned_annotate else None
+                ),
+                sql=annotate_sql,
+                auto_generated=planned_annotate["auto_generated"] if planned_annotate else False,
+            )
+            logger.debug(f"do annotate: {annotate_sql}")
+            self.sql_ops.append(annotate_sql)
             node.create_ref(
-                node.build_query(node.do_annotate()),
+                annotate_sql,
                 node.do_annotate,
                 schema=self._checkpoint_schema,
                 dry=self.dry_run,
@@ -885,10 +1221,25 @@ class GraphReduce(nx.DiGraph):
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
 
-            logger.debug(f"do annotate: {node.build_query(node.do_filters())}")
-            self.sql_ops.append(node.build_query(node.do_filters()))
+            planned_filters = self._consume_planned_record(node, "do_filters")
+            filter_ops = (
+                list(planned_filters["ops"])
+                if planned_filters
+                else self._normalize_sqlop_list(node.do_filters())
+            )
+            filter_sql = node.build_query(filter_ops)
+            self._record_executed_ops(
+                node=node,
+                method_name="do_filters",
+                ops=planned_filters["method_ops"] if planned_filters else filter_ops,
+                date_filter_ops=planned_filters["date_filter_ops"] if planned_filters else None,
+                sql=filter_sql,
+                auto_generated=planned_filters["auto_generated"] if planned_filters else False,
+            )
+            logger.debug(f"do filters: {filter_sql}")
+            self.sql_ops.append(filter_sql)
             node.create_ref(
-                node.build_query(node.do_filters()),
+                filter_sql,
                 node.do_filters,
                 schema=self._checkpoint_schema,
                 dry=self.dry_run,
@@ -897,9 +1248,26 @@ class GraphReduce(nx.DiGraph):
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
 
-            self.sql_ops.append(node.build_query(node.do_normalize()))
+            planned_normalize = self._consume_planned_record(node, "do_normalize")
+            normalize_ops = (
+                list(planned_normalize["ops"])
+                if planned_normalize
+                else self._normalize_sqlop_list(node.do_normalize())
+            )
+            normalize_sql = node.build_query(normalize_ops)
+            self._record_executed_ops(
+                node=node,
+                method_name="do_normalize",
+                ops=planned_normalize["method_ops"] if planned_normalize else normalize_ops,
+                date_filter_ops=(
+                    planned_normalize["date_filter_ops"] if planned_normalize else None
+                ),
+                sql=normalize_sql,
+                auto_generated=planned_normalize["auto_generated"] if planned_normalize else False,
+            )
+            self.sql_ops.append(normalize_sql)
             node.create_ref(
-                node.build_query(node.do_normalize()),
+                normalize_sql,
                 node.do_normalize,
                 schema=self._checkpoint_schema,
                 dry=self.dry_run,
@@ -919,7 +1287,7 @@ class GraphReduce(nx.DiGraph):
             # to it.
             # The first iteration of this will always be
             # the `parent_node`.
-            if self.date_node:
+            if self.date_node and self.train:
                 logger.info(f"Found date node {self.date_node}")
                 if node == self.parent_node:
                     # Load the data into the date node.
@@ -1001,6 +1369,10 @@ class GraphReduce(nx.DiGraph):
                     # to this node as a reference for
                     # future.
                     node.date_node = dn
+            elif self.date_node and not self.train:
+                logger.info(
+                    "Skipping date node joins because GraphReduce was initialized with train=False"
+                )
 
         # Check for automatic feature engineering
         # for forward relationships.  These are
@@ -1025,31 +1397,89 @@ class GraphReduce(nx.DiGraph):
             if edge_data.get("keys"):
                 edge_data = edge_data["keys"]
 
+            if relation_node.is_date_node:
+                if self.train:
+                    logger.info(
+                        f"Skipping date-node edge {relation_node} during depth-first traversal because it was handled earlier"
+                    )
+                else:
+                    logger.info(
+                        f"Skipping date-node edge {relation_node} because GraphReduce was initialized with train=False"
+                    )
+                continue
+
+            planned_reduce = None
+            reduce_method_ops = None
+            if edge_data["reduce"] and not relation_node.is_date_node:
+                planned_reduce = self._consume_planned_record(
+                    relation_node,
+                    "do_reduce",
+                    edge=edge,
+                )
+                reduce_method_ops = (
+                    planned_reduce["method_ops"]
+                    if planned_reduce
+                    else relation_node.do_reduce(edge_data["relation_key"])
+                )
+
             if edge_data["reduce"] and not relation_node.is_date_node:
                 logger.info(f"reducing relation {relation_node}")
 
                 # Check for automatic feature engineering.
-                if self.auto_features and not relation_node.do_reduce(
-                    edge_data["relation_key"]
-                ):
+                if planned_reduce:
+                    reduce_sql = relation_node.build_query(planned_reduce["ops"])
+                    self._record_executed_ops(
+                        node=relation_node,
+                        method_name="do_reduce",
+                        ops=planned_reduce["method_ops"],
+                        date_filter_ops=planned_reduce["date_filter_ops"],
+                        sql=reduce_sql,
+                        auto_generated=planned_reduce["auto_generated"],
+                        edge=edge,
+                        reduce_key=edge_data["relation_key"],
+                    )
+                    self.sql_ops.append(reduce_sql)
+                    logger.info(f"{reduce_sql}")
+                    relation_node.create_ref(
+                        reduce_sql,
+                        relation_node.do_reduce,
+                        schema=self._checkpoint_schema,
+                        dry=self.dry_run,
+                    )
+                    if relation_node._ref_sql:
+                        self.sql_ops.append(relation_node._ref_sql)
+                        relation_node._ref_sql = None
+
+                elif self.auto_features and not reduce_method_ops:
                     logger.info(f"performing auto_features on node {relation_node}")
-                    sql_ops = relation_node.auto_features(
+                    auto_feature_ops = self._normalize_sqlop_list(
+                        relation_node.auto_features(
                         reduce_key=edge_data["relation_key"],
                         # type_func_map=self.feature_typefunc_map,
                         type_func_map=self.feature_stype_map,
                         compute_layer=self.compute_layer,
+                    ))
+                    auto_feature_date_filters = [
+                        op for op in auto_feature_ops if op.optype == SQLOpType.where
+                    ]
+                    auto_feature_base_ops = [
+                        op for op in auto_feature_ops if op.optype != SQLOpType.where
+                    ]
+                    auto_feature_sql = relation_node.build_query(auto_feature_ops)
+                    self._record_executed_ops(
+                        node=relation_node,
+                        method_name="do_reduce",
+                        ops=auto_feature_base_ops,
+                        date_filter_ops=auto_feature_date_filters,
+                        sql=auto_feature_sql,
+                        auto_generated=True,
+                        edge=edge,
+                        reduce_key=edge_data["relation_key"],
                     )
-                    self.sql_ops.append(relation_node.build_query(sql_ops))
-                    logger.info(f"{relation_node.build_query(sql_ops)}")
+                    self.sql_ops.append(auto_feature_sql)
+                    logger.info(f"{auto_feature_sql}")
                     relation_node.create_ref(
-                        relation_node.build_query(
-                            relation_node.auto_features(
-                                reduce_key=edge_data["relation_key"],
-                                # type_func_map=self.feature_typefunc_map,
-                                type_func_map=self.feature_stype_map,
-                                compute_layer=self.compute_layer,
-                            )
-                        ),
+                        auto_feature_sql,
                         relation_node.do_reduce,
                         schema=self._checkpoint_schema,
                         dry=self.dry_run,
@@ -1066,14 +1496,28 @@ class GraphReduce(nx.DiGraph):
                         if relation_node.prep_for_features()
                         else []
                     )
+                    tfilt = self._normalize_sqlop_list(tfilt)
                     # NOTE: we do not automatically do date filtering
                     # here so maybe that should be a top-level parameter
                     # for when we have a custom reduce implementation?
-                    reduce_ops = relation_node.do_reduce(edge_data["relation_key"])
+                    reduce_base_ops = self._normalize_sqlop_list(
+                        reduce_method_ops
+                    )
+                    reduce_ops = list(reduce_base_ops)
                     if self.date_filters_on_agg:
                         reduce_ops = reduce_ops + tfilt
                         logger.info(f"Added in date filtering ops: {tfilt}")
                     reduce_sql = relation_node.build_query(reduce_ops)
+                    self._record_executed_ops(
+                        node=relation_node,
+                        method_name="do_reduce",
+                        ops=reduce_base_ops,
+                        date_filter_ops=tfilt if self.date_filters_on_agg else None,
+                        sql=reduce_sql,
+                        auto_generated=False,
+                        edge=edge,
+                        reduce_key=edge_data["relation_key"],
+                    )
                     logger.info(f"reduce SQL: {reduce_sql}")
                     self.sql_ops.append(reduce_sql)
                     reduce_ref = relation_node.create_ref(
@@ -1097,14 +1541,32 @@ class GraphReduce(nx.DiGraph):
                 relation_node,
             )
 
+            planned_label = None
+            label_method_ops = None
+            if self.train:
+                planned_label = self._consume_planned_record(
+                    relation_node,
+                    "do_labels",
+                    edge=edge,
+                )
+                label_method_ops = (
+                    planned_label["method_ops"]
+                    if planned_label
+                    else relation_node.do_labels(edge_data["relation_key"])
+                )
             # Target variables.
             if (
-                self.label_node
+                self.train
                 and (
-                    self.label_node == relation_node
-                    or relation_node.label_field is not None
+                    (
+                        self.label_node
+                        and (
+                            self.label_node == relation_node
+                            or relation_node.label_field is not None
+                        )
+                    )
+                    or label_method_ops is not None
                 )
-                or relation_node.do_labels(edge_data["relation_key"]) is not None
             ):
                 logger.info(f"Had label node {self.label_node}")
 
@@ -1122,29 +1584,57 @@ class GraphReduce(nx.DiGraph):
                     )
 
                 # TODO: don't need to reduce if it's 1:1 cardinality.
-                if self.auto_features and not relation_node.do_labels(
-                    edge_data["relation_key"]
-                ):
-                    self.sql_ops.append(
-                        relation_node.build_query(
-                            relation_node.default_label(
-                                op=self.label_operation,
-                                field=self.label_field,
-                                reduce_key=edge_data["relation_key"],
-                            ),
-                            data_ref=data_ref,
-                        )
+                if planned_label:
+                    label_sql = relation_node.build_query(
+                        planned_label["ops"],
+                        data_ref=data_ref,
                     )
+                    self._record_executed_ops(
+                        node=relation_node,
+                        method_name="do_labels",
+                        ops=planned_label["method_ops"],
+                        date_filter_ops=planned_label["date_filter_ops"],
+                        sql=label_sql,
+                        auto_generated=planned_label["auto_generated"],
+                        edge=edge,
+                        reduce_key=edge_data["relation_key"],
+                    )
+                    self.sql_ops.append(label_sql)
                     logger.info(f"SQL Ops: {self.sql_ops[-1]}")
                     label_ref = relation_node.create_ref(
-                        relation_node.build_query(
-                            relation_node.default_label(
-                                op=self.label_operation,
-                                field=self.label_field,
-                                reduce_key=edge_data["relation_key"],
-                            ),
-                            data_ref=data_ref,
-                        ),
+                        label_sql,
+                        relation_node.do_labels,
+                        schema=self._checkpoint_schema,
+                        dry=self.dry_run,
+                    )
+                    if relation_node._ref_sql:
+                        self.sql_ops.append(relation_node._ref_sql)
+                        relation_node._ref_sql = None
+                elif self.auto_features and not label_method_ops:
+                    label_ops = self._normalize_sqlop_list(
+                        relation_node.default_label(
+                            op=self.label_operation,
+                            field=self.label_field,
+                            reduce_key=edge_data["relation_key"],
+                        )
+                    )
+                    label_sql = relation_node.build_query(
+                        label_ops,
+                        data_ref=data_ref,
+                    )
+                    self._record_executed_ops(
+                        node=relation_node,
+                        method_name="do_labels",
+                        ops=label_ops,
+                        sql=label_sql,
+                        auto_generated=True,
+                        edge=edge,
+                        reduce_key=edge_data["relation_key"],
+                    )
+                    self.sql_ops.append(label_sql)
+                    logger.info(f"SQL Ops: {self.sql_ops[-1]}")
+                    label_ref = relation_node.create_ref(
+                        label_sql,
                         relation_node.do_labels,
                         schema=self._checkpoint_schema,
                         dry=self.dry_run,
@@ -1159,23 +1649,30 @@ class GraphReduce(nx.DiGraph):
                         tfilt = relation_node.prep_for_labels()
                     else:
                         tfilt = None
+                    tfilt = self._normalize_sqlop_list(tfilt)
 
-                    ops = relation_node.do_labels(edge_data["relation_key"])
+                    label_base_ops = self._normalize_sqlop_list(
+                        label_method_ops
+                    )
+                    ops = list(label_base_ops)
                     if tfilt:
                         ops = ops + tfilt
 
-                    self.sql_ops.append(
-                        relation_node.build_query(
-                            ops,
-                            data_ref=data_ref,
-                        )
+                    label_sql = relation_node.build_query(ops, data_ref=data_ref)
+                    self._record_executed_ops(
+                        node=relation_node,
+                        method_name="do_labels",
+                        ops=label_base_ops,
+                        date_filter_ops=tfilt if self.date_filters_on_agg else None,
+                        sql=label_sql,
+                        auto_generated=False,
+                        edge=edge,
+                        reduce_key=edge_data["relation_key"],
                     )
+                    self.sql_ops.append(label_sql)
                     logger.info(f"SQL Ops: {self.sql_ops[-1]}")
                     label_ref = relation_node.create_ref(
-                        relation_node.build_query(
-                            ops,
-                            data_ref=data_ref,
-                        ),
+                        label_sql,
                         relation_node.do_labels,
                         schema=self._checkpoint_schema,
                     )
@@ -1205,7 +1702,38 @@ class GraphReduce(nx.DiGraph):
                 )
 
             # post-join annotations (if any)
-            pja_sql = parent_node.build_query(parent_node.do_post_join_annotate())
+            planned_post_join_annotate = self._consume_planned_record(
+                parent_node,
+                "do_post_join_annotate",
+                edge=edge,
+            )
+            post_join_annotate_ops = (
+                list(planned_post_join_annotate["ops"])
+                if planned_post_join_annotate
+                else self._normalize_sqlop_list(parent_node.do_post_join_annotate())
+            )
+            pja_sql = parent_node.build_query(post_join_annotate_ops)
+            self._record_executed_ops(
+                node=parent_node,
+                method_name="do_post_join_annotate",
+                ops=(
+                    planned_post_join_annotate["method_ops"]
+                    if planned_post_join_annotate
+                    else post_join_annotate_ops
+                ),
+                date_filter_ops=(
+                    planned_post_join_annotate["date_filter_ops"]
+                    if planned_post_join_annotate
+                    else None
+                ),
+                sql=pja_sql,
+                auto_generated=(
+                    planned_post_join_annotate["auto_generated"]
+                    if planned_post_join_annotate
+                    else False
+                ),
+                edge=edge,
+            )
             logger.info("Running do_post_join_annotate")
             logger.info(f"{pja_sql}")
             self.sql_ops.append(pja_sql)
@@ -1222,7 +1750,38 @@ class GraphReduce(nx.DiGraph):
             )
             # post-join filters (if any)
             if hasattr(parent_node, "do_post_join_filters"):
-                pjf_sql = parent_node.build_query(parent_node.do_post_join_filters())
+                planned_post_join_filters = self._consume_planned_record(
+                    parent_node,
+                    "do_post_join_filters",
+                    edge=edge,
+                )
+                post_join_filter_ops = (
+                    list(planned_post_join_filters["ops"])
+                    if planned_post_join_filters
+                    else self._normalize_sqlop_list(parent_node.do_post_join_filters())
+                )
+                pjf_sql = parent_node.build_query(post_join_filter_ops)
+                self._record_executed_ops(
+                    node=parent_node,
+                    method_name="do_post_join_filters",
+                    ops=(
+                        planned_post_join_filters["method_ops"]
+                        if planned_post_join_filters
+                        else post_join_filter_ops
+                    ),
+                    date_filter_ops=(
+                        planned_post_join_filters["date_filter_ops"]
+                        if planned_post_join_filters
+                        else None
+                    ),
+                    sql=pjf_sql,
+                    auto_generated=(
+                        planned_post_join_filters["auto_generated"]
+                        if planned_post_join_filters
+                        else False
+                    ),
+                    edge=edge,
+                )
                 self.sql_ops.append(pjf_sql)
                 pjf_ref = parent_node.create_ref(
                     pjf_sql,
@@ -1366,7 +1925,7 @@ class GraphReduce(nx.DiGraph):
             parent_node.df = joined_df
 
             # Target variables.
-            if self.label_node and (
+            if self.train and self.label_node and (
                 self.label_node == relation_node
                 or relation_node.label_field is not None
             ):
