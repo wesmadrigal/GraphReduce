@@ -782,6 +782,7 @@ class GraphReduce(nx.DiGraph):
             ComputeLayerEnum.redshift,
             ComputeLayerEnum.postgres,
             ComputeLayerEnum.sqlite,
+            ComputeLayerEnum.trino,
         ]:
             pass
 

@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     setuptools.setup(
         name="graphreduce",
-        version = "1.9.11",
+        version = "1.9.12",
         url="https://github.com/wesmadrigal/graphreduce",
         #packages=["graphreduce"],
         packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
@@ -36,6 +36,9 @@ if __name__ == "__main__":
             "duckdb": [
                 "duckdb==1.2.2",
             ],
+            "trino": [
+                "trino>=0.336.0",
+            ],
             "spark": [
                 "pyspark>=3.2.0",
             ],
@@ -52,6 +55,7 @@ if __name__ == "__main__":
             ],
             "all": [
                 "duckdb==1.2.2",
+                "trino>=0.336.0",
                 "pyspark>=3.2.0",
                 "daft[deltalake,unity]==0.6.14",
                 "deltalake==0.20.1",

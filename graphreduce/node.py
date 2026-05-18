@@ -36,6 +36,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     duckdb = None
 
+try:
+    import trino
+except Exception:  # pragma: no cover - optional dependency
+    trino = None
+
 
 # internal
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
@@ -291,19 +296,20 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 ComputeLayerEnum.databricks,
                 ComputeLayerEnum.athena,
                 ComputeLayerEnum.redshift,
+                ComputeLayerEnum.trino,
                 ComputeLayerEnum.duckdb,
             ]:
                 # run a group by and get the value.
                 grp_qry = f"""
                 select count(*) as grouped_rows
                 from (
-                    select {reduce_key}, count({self.pk})
-                    FROM {self.fpath}
-                    group by {reduce_key}
-                ) t;
+                    select {self.prefix}_{reduce_key}, count({self.prefix}_{self.pk})
+                    FROM {self._cur_data_ref}
+                    group by {self.prefix}_{reduce_key}
+                ) t
                 """
                 row_qry = f"""
-                select count(*) as row_count from {self.fpath}
+                select count(*) as row_count from {self._cur_data_ref}
                 """
                 grp_df = self.execute_query(grp_qry, ret_df=True)
                 grp_df.columns = [c.lower() for c in grp_df.columns]
@@ -441,6 +447,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         elif self.compute_layer.value == "redshift":
             pass
 
+        elif self.compute_layer.value == "trino":
+            pass
+
     @abc.abstractmethod
     def do_filters(self):
         """
@@ -515,6 +524,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             ComputeLayerEnum.postgres,
             ComputeLayerEnum.redshift,
             ComputeLayerEnum.databricks,
+            ComputeLayerEnum.trino,
             ComputeLayerEnum.duckdb,
         ]:
             # Assumes `SQLNode.get_sample` is implemented to get
@@ -1093,6 +1103,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     opval=f"TIMESTAMPDIFF(SECOND, {max_col}, {ref_col}) AS {self.prefix}_seconds_since_last",
                 )
 
+            elif self.__class__.__name__ == "TrinoNode":
+                aggfunc = sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=f"date_diff('second', TRY_CAST({max_col} AS TIMESTAMP), {ref_col}) AS {self.prefix}_seconds_since_last"
+                        )
+
             else:
                 raise NotImplementedError(
                     f"seconds_since_last not implemented for {self.__class__.__name__}"
@@ -1157,7 +1173,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 agg_funcs.append(
                     sqlop(
                         optype=SQLOpType.aggfunc,
-                        opval=f"{ratio_expr} AS {self.prefix}_{period1}dv{period2}_change",
+                        opval=f"{ratio_expr} AS {self.prefix}_d{period1}v{period2}_change",
                     )
                 )
 
@@ -1385,6 +1401,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     ComputeLayerEnum.mysql,
                     ComputeLayerEnum.athena,
                     ComputeLayerEnum.databricks,
+                    ComputeLayerEnum.trino,
                     ComputeLayerEnum.duckdb,
                 ]
             ):
@@ -1417,6 +1434,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         f"{cutoff_col} - INTERVAL '{days}' DAY"  # singular "DAY"
                     )
 
+                elif self.compute_layer == ComputeLayerEnum.trino:
+                    lower_bound = f"{cutoff_col} - INTERVAL '{days}' DAY"
+
                 elif self.compute_layer == ComputeLayerEnum.sqlite:
                     lower_bound = f"DATE({cutoff_col}, '-{days} days')"
 
@@ -1444,6 +1464,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     ComputeLayerEnum.mysql,
                     ComputeLayerEnum.athena,
                     ComputeLayerEnum.databricks,
+                    ComputeLayerEnum.trino,
                     ComputeLayerEnum.duckdb,
                 ]:
                     return [
@@ -1608,6 +1629,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     ComputeLayerEnum.mysql,
                     ComputeLayerEnum.athena,
                     ComputeLayerEnum.databricks,
+                    ComputeLayerEnum.trino,
                     ComputeLayerEnum.duckdb,
                 ]
             ):
@@ -1635,6 +1657,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     upper_bound = (
                         f"{cutoff_col} + INTERVAL '{days}' DAY"  # singular "DAY"
                     )
+
+                elif self.compute_layer == ComputeLayerEnum.trino:
+                    upper_bound = f"{cutoff_col} + INTERVAL '{days}' DAY"
 
                 elif self.compute_layer == ComputeLayerEnum.sqlite:
                     upper_bound = f"DATE({cutoff_col}, '+{days} days')"
@@ -1664,6 +1689,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     ComputeLayerEnum.mysql,
                     ComputeLayerEnum.athena,
                     ComputeLayerEnum.databricks,
+                    ComputeLayerEnum.trino,
                     ComputeLayerEnum.duckdb,
                 ]:
                     return [
@@ -1726,6 +1752,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     ComputeLayerEnum.mysql,
                     ComputeLayerEnum.athena,
                     ComputeLayerEnum.databricks,
+                    ComputeLayerEnum.trino,
                     ComputeLayerEnum.duckdb,
                 ]:
                     return [
@@ -1885,6 +1912,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             ComputeLayerEnum.redshift,
             ComputeLayerEnum.athena,
             ComputeLayerEnum.databricks,
+            ComputeLayerEnum.trino,
             ComputeLayerEnum.duckdb,
         ]:
             if self.reduce:
@@ -2952,6 +2980,36 @@ class SnowflakeNode(SQLNode):
             AS {qry}
             """
             logger.info(f"Creating temp table with {sql}")
+            self._ref_sql = sql
+            if not dry:
+                self.execute_query(sql, ret_df=False)
+            self._cur_data_ref = view_name
+            return view_name
+        except Exception as e:
+            logger.error(e)
+            return None
+
+
+class TrinoNode(SQLNode):
+    def __init__(self, *args, **kwargs):
+        """
+        Constructor.
+        """
+        _require_backend(trino, "trino", "trino")
+        super().__init__(*args, **kwargs)
+
+    def _create_temp_view(
+        self,
+        qry: str,
+        view_name: str,
+        dry: bool = False,
+        ) -> str:
+        try:
+            sql = f"""
+            CREATE OR REPLACE TEMPORARY VIEW {view_name}
+            as {qry}
+            """
+            logger.info(f"Creating temp view with {sql}")
             self._ref_sql = sql
             if not dry:
                 self.execute_query(sql, ret_df=False)

@@ -25,6 +25,7 @@ class ComputeLayerEnum(enum.Enum):
     postgres = 'postgres'
     mysql = 'mysql'
     sqlite = 'sqlite'
+    trino = 'trino'
     databricks = 'databricks'
     daft = 'daft'
     duckdb = 'duckdb'
