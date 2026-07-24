@@ -4,13 +4,14 @@ import os
 import typing
 import sqlite3
 import datetime
+from decimal import Decimal
 
 import pytest
 import pandas as pd
 from icecream import ic
 import duckdb
 
-from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode, DuckdbNode
+from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode, DuckdbNode, AthenaNode, RedshiftNode
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, StorageFormatEnum, ProviderEnum, SQLOpType
 from graphreduce.models import sqlop
@@ -18,6 +19,49 @@ from graphreduce.models import sqlop
 
 data_path = '/'.join(os.path.abspath(__file__).split('/')[0:-1]) + '/data/cust_data'
 print(data_path)
+
+
+def test_sql_auto_features_skips_numeric_aggs_for_string_backed_numerical_stype(monkeypatch):
+    sample = pd.DataFrame(
+        {
+            "tran_order_id": [1, 1, 2],
+            "tran_id": [10, 11, 12],
+            "tran_amount": [Decimal("10.50"), Decimal("2.25"), Decimal("4.00")],
+            "tran_source_name": [
+                "subscription_contract_checkout_one",
+                "web",
+                "pos",
+            ],
+        }
+    )
+    monkeypatch.setattr(
+        "graphreduce.node.infer_df_stype",
+        lambda _df: {
+            "tran_order_id": "categorical",
+            "tran_id": "categorical",
+            "tran_amount": "numerical",
+            "tran_source_name": "numerical",
+        },
+    )
+    node = SQLNode(
+        fpath="transaction",
+        pk="id",
+        prefix="tran",
+        compute_layer=ComputeLayerEnum.redshift,
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="order_id",
+        type_func_map={
+            "numerical": ["median", "mean", "sum", "min", "max"],
+            "categorical": ["count"],
+        },
+    )
+    agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+
+    assert "sum(tran_amount) as tran_amount_sum" in agg_sql
+    assert not any("tran_source_name" in op for op in agg_sql)
 
 
 
@@ -454,7 +498,7 @@ def test_sql_graph_auto_fe():
                    prefix='ord',
                    client=conn,
                    compute_layer=ComputeLayerEnum.sqlite,
-                   columns=['id','customer_id','ts','amount'],
+                   columns=['id','customer_id','ts','amount','type','is_online','is_store'],
                     date_key='ts')
 
     gr = GraphReduce(
@@ -766,6 +810,55 @@ def test_train_false_skips_custom_labels_sql():
     assert not any("label" in col for col in score_df.columns)
 
     _teardown_sqlite(conn)
+
+
+def test_athena_execute_query_raises_on_failed_state():
+    class FailedAthenaClient:
+        def start_query_execution(self, QueryString, ResultConfiguration):
+            return {"QueryExecutionId": "bad-query-id"}
+
+        def get_query_execution(self, QueryExecutionId):
+            return {
+                "QueryExecution": {
+                    "Status": {
+                        "State": "FAILED",
+                        "StateChangeReason": "missing column",
+                    }
+                }
+            }
+
+    node = AthenaNode(
+        fpath="some_table",
+        prefix="ath",
+        pk="id",
+        client=FailedAthenaClient(),
+        s3_output_location="s3://bucket/results/",
+        columns=["id"],
+    )
+
+    with pytest.raises(Exception, match="Query select missing_column FAILED: missing column"):
+        node.execute_query("select missing_column")
+
+
+def test_redshift_execute_query_raises_cursor_errors():
+    class FailedCursor:
+        def execute(self, qry):
+            raise RuntimeError("redshift syntax error")
+
+    class FailedRedshiftClient:
+        def cursor(self):
+            return FailedCursor()
+
+    node = RedshiftNode(
+        fpath="some_table",
+        prefix="rs",
+        pk="id",
+        client=FailedRedshiftClient(),
+        columns=["id"],
+    )
+
+    with pytest.raises(RuntimeError, match="redshift syntax error"):
+        node.execute_query("select missing_column", ret_df=False, commit=True)
 
 
 def test_apply_frozen_execution_plan():
@@ -1154,6 +1247,182 @@ def test_duckdb_graph_reduce():
     ic(res.shape)
     assert res.shape[0] == 4
     con.close()
+
+
+def test_date_node_propagates_through_undated_intermediate_sql_node():
+    con = duckdb.connect()
+    cut_date = datetime.datetime(2023, 5, 1)
+
+    cust = DuckdbNode(
+        fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+        prefix="cust",
+        pk="id",
+        columns=["id", "name"],
+        table_name="customer",
+    )
+    notification = DuckdbNode(
+        fpath=f"'{os.path.join(data_path, 'notifications.csv')}'",
+        prefix="notif",
+        pk="id",
+        date_key=None,
+        columns=["id", "customer_id", "ts"],
+        table_name="notifications",
+    )
+    interaction = DuckdbNode(
+        fpath=f"'{os.path.join(data_path, 'notification_interactions.csv')}'",
+        prefix="ni",
+        pk="id",
+        date_key="ts",
+        columns=["id", "notification_id", "interaction_type_id", "ts"],
+        table_name="notification_interactions",
+    )
+    date_node = DuckdbNode(
+        fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+        prefix="cd",
+        pk="customer_id",
+        date_key="first_order_date",
+        table_name="customer_cut_date",
+        do_data_ops=sqlop(
+            optype=SQLOpType.custom,
+            opval=f"""
+                SELECT
+                    customer_id AS cd_customer_id,
+                    min(ts) AS cd_first_order_date
+                FROM '{os.path.join(data_path, 'orders.csv')}'
+                GROUP BY customer_id
+            """,
+        ),
+        client=con,
+    )
+
+    gr = GraphReduce(
+        name="date_node_undated_intermediate",
+        parent_node=cust,
+        compute_period_val=365,
+        compute_period_unit=PeriodUnit.day,
+        cut_date=cut_date,
+        auto_features=True,
+        auto_labels=False,
+        label_node=None,
+        label_field=None,
+        compute_layer=ComputeLayerEnum.duckdb,
+        sql_client=con,
+        date_node=date_node,
+    )
+    gr.add_node(cust)
+    gr.add_node(notification)
+    gr.add_node(interaction)
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=notification,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
+    gr.add_entity_edge(
+        parent_node=notification,
+        relation_node=interaction,
+        parent_key="id",
+        relation_key="notification_id",
+        reduce=True,
+    )
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=date_node,
+        parent_key="id",
+        relation_key="customer_id",
+    )
+
+    gr.do_transformations_sql()
+
+    assert getattr(notification, "date_node", None) is not None
+    assert getattr(interaction, "date_node", None) is not None
+    assert any("cd_first_order_date" in sql for sql in gr.sql_ops if sql)
+    con.close()
+
+
+def test_duckdb_graph_raises_on_erroneous_sqlop():
+    con = duckdb.connect()
+    cust = DuckdbNode(
+            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+            prefix='cust',
+            pk='id',
+            columns=['id','name'],
+            table_name='customer',
+            do_annotate_ops=[
+                sqlop(optype=SQLOpType.select, opval="*"),
+                sqlop(optype=SQLOpType.select, opval="missing_column as bad_col"),
+                ]
+            )
+    orders = DuckdbNode(
+            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+            prefix='ord',
+            pk='id',
+            date_key='ts',
+            columns=['id','customer_id','ts', 'amount'],
+            table_name='orders'
+            )
+    gr = GraphReduce(
+        name='duckdb bad sqlop test',
+        parent_node=cust,
+        compute_period_val=365,
+        compute_period_unit=PeriodUnit.day,
+        cut_date=datetime.datetime(2023, 5, 1),
+        auto_features=True,
+        auto_labels=True,
+        label_node=orders,
+        label_field='id',
+        label_operation='count',
+        label_period_val=90,
+        label_period_unit=PeriodUnit.day,
+        compute_layer=ComputeLayerEnum.duckdb,
+        sql_client=con
+        )
+    gr.add_node(cust)
+    gr.add_node(orders)
+    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=True)
+
+    try:
+        with pytest.raises(Exception, match="missing_column"):
+            gr.do_transformations_sql()
+    finally:
+        con.close()
+
+
+def test_duckdb_inference_sample_prefers_and_backfills_populated_rows():
+    con = duckdb.connect()
+    try:
+        con.sql("""
+            CREATE TABLE sparse_features (
+                id INTEGER,
+                feature_a VARCHAR,
+                feature_b INTEGER
+            )
+            """)
+        con.sql("""
+            INSERT INTO sparse_features VALUES
+                (1, NULL, NULL),
+                (2, 'populated', NULL),
+                (3, NULL, 10)
+            """)
+        node = DuckdbNode(
+            fpath="sparse_features",
+            prefix="sp",
+            pk="id",
+            compute_layer=ComputeLayerEnum.duckdb,
+            client=con,
+            columns=["id", "feature_a", "feature_b"],
+        )
+
+        naive_sample = node.get_sample(n=1)
+        inference_sample = node.get_inference_sample(n=1, backfill_per_column=1)
+
+        assert naive_sample["feature_a"].notna().sum() == 0
+        assert naive_sample["feature_b"].notna().sum() == 0
+        assert inference_sample["feature_a"].notna().sum() > 0
+        assert inference_sample["feature_b"].notna().sum() > 0
+    finally:
+        con.close()
 
 
 def test_duckdb_join_deps():

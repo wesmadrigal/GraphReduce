@@ -16,13 +16,13 @@ import pyvis
 try:
     import pyspark
     from pyspark.sql import functions as F
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     pyspark = None
     F = None
 
 try:
     import daft
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     daft = None
 
 # internal
@@ -469,34 +469,28 @@ class GraphReduce(nx.DiGraph):
         }
 
         if hasattr(node, "compute_period_minutes"):
-            try:
-                replacements[
-                    str(
-                        original_cut_date
-                        - datetime.timedelta(minutes=node.compute_period_minutes())
-                    )
-                ] = str(
-                    current_cut_date
+            replacements[
+                str(
+                    original_cut_date
                     - datetime.timedelta(minutes=node.compute_period_minutes())
                 )
-            except Exception:
-                pass
+            ] = str(
+                current_cut_date
+                - datetime.timedelta(minutes=node.compute_period_minutes())
+            )
 
         if hasattr(node, "label_period_minutes") and getattr(
             node, "label_period_val", None
         ) is not None:
-            try:
-                replacements[
-                    str(
-                        original_cut_date
-                        + datetime.timedelta(minutes=node.label_period_minutes())
-                    )
-                ] = str(
-                    current_cut_date
+            replacements[
+                str(
+                    original_cut_date
                     + datetime.timedelta(minutes=node.label_period_minutes())
                 )
-            except Exception:
-                pass
+            ] = str(
+                current_cut_date
+                + datetime.timedelta(minutes=node.label_period_minutes())
+            )
 
         for period in getattr(node, "ts_periods", []) or []:
             replacements[
@@ -674,6 +668,33 @@ class GraphReduce(nx.DiGraph):
                     "reduce_after_join": reduce_after_join,
                 },
             )
+
+    def _node_needs_date_node_propagation(self, node: GraphReduceNode) -> bool:
+        """
+        Return whether a node needs the dynamic date reference joined into it.
+
+        Nodes with no date key still need the reference when dated descendants
+        depend on them as the next propagation hop.
+        """
+        if node.date_key:
+            return True
+        return any(
+            descendant.date_key and not descendant.is_date_node
+            for descendant in nx.descendants(self, node)
+        )
+
+    def _date_node_propagation_edge(
+        self, node: GraphReduceNode
+    ) -> typing.Optional[typing.Tuple[GraphReduceNode, GraphReduceNode]]:
+        """
+        Find an inbound edge whose parent already has a propagated date node.
+        """
+        for parent, child in self.in_edges(node):
+            if parent.is_date_node:
+                continue
+            if getattr(parent, "date_node", None):
+                return parent, child
+        return None
 
     def _resolve_prefixed_column(
         self,
@@ -1309,13 +1330,18 @@ class GraphReduce(nx.DiGraph):
                     )
                     node.date_node = self.date_node
                 # Needs a date key
-                elif node.date_key:
+                elif self._node_needs_date_node_propagation(node):
                     # For all other nodes we need to leverage
                     # leverage the existing relationship paths
                     # to push the date_node down through the graph.
                     # Parent:pk -> DateNode:pk = Child:fk -> DateNode:pk
-                    parent_edge = [e for e in self.edges() if e[1] == node][0]
+                    parent_edge = self._date_node_propagation_edge(node)
+                    if parent_edge is None:
+                        raise ValueError(
+                            f"Could not propagate date_node to {node}: no inbound parent has a propagated date_node"
+                        )
                     my_parent = parent_edge[0]
+                    parent_date_node = my_parent.date_node
                     meta = self.get_edge_data(parent_edge[0], parent_edge[1])
                     if meta.get("keys"):
                         meta = meta["keys"]
@@ -1325,8 +1351,8 @@ class GraphReduce(nx.DiGraph):
                     elif meta and meta["relation_type"] == "peer":
                         parent_pk = meta["parent_key"]
                         relation_fk = meta["relation_key"]
-                    date_prefix = f"{my_parent.date_node.prefix}_"
-                    date_key = my_parent.date_node.date_key
+                    date_prefix = f"{parent_date_node.prefix}_"
+                    date_key = parent_date_node.date_key
                     date_agg_func = my_parent.get_pick_one_value_agg()
                     if date_key.startswith(date_prefix):
                         propagated_date_col = date_key
@@ -1334,22 +1360,25 @@ class GraphReduce(nx.DiGraph):
                     else:
                         propagated_date_col = f"{date_prefix}{date_key}"
                         propagated_date_key = date_key
+                    propagated_parent_key_col = self._resolve_prefixed_column(
+                        my_parent, parent_pk
+                    )
                     # Grab the date data from the parent and merge
                     # it.
                     dn = my_parent.__class__(
-                        fpath=my_parent.date_node.prefix,
-                        prefix=my_parent.date_node.prefix,
+                        fpath=parent_date_node.prefix,
+                        prefix=parent_date_node.prefix,
                         date_key=propagated_date_key,
-                        table_name=my_parent.date_node.table_name,
-                        # Use the parent table's primary key.
-                        pk=my_parent.pk,
+                        table_name=parent_date_node.table_name,
+                        # Use the key from the edge being propagated.
+                        pk=parent_pk,
                         do_data_ops=sqlop(
                             optype=SQLOpType.custom,
                             opval=f"""
-                                select {my_parent.prefix}_{my_parent.pk} as {my_parent.date_node.prefix}_{my_parent.pk},
+                                select {propagated_parent_key_col} as {parent_date_node.prefix}_{parent_pk},
                                 {date_agg_func}({propagated_date_col}) as {propagated_date_col}
                                 from {my_parent._cur_data_ref}
-                                group by {my_parent.prefix}_{my_parent.pk}
+                                group by {propagated_parent_key_col}
                                 """,
                         ),
                         client=self._sql_client,

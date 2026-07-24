@@ -4,6 +4,7 @@ from __future__ import annotations
 # std lib
 import abc
 import datetime
+import numbers
 import typing
 import time
 
@@ -15,31 +16,36 @@ from structlog import get_logger
 try:
     import pyspark
     from pyspark.sql import functions as F, types as T
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     pyspark = None
     F = None
     T = None
 
 try:
     import daft
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     daft = None
 
 # from daft.unity_catalog import UnityCatalog
 try:
     from pyiceberg.catalog.rest import RestCatalog
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     RestCatalog = None
 
 try:
     import duckdb
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     duckdb = None
 
 try:
     import trino
-except Exception:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover - optional dependency
     trino = None
+
+try:
+    import numpy as np
+except ImportError:  # pragma: no cover - optional dependency
+    np = None
 
 
 # internal
@@ -54,6 +60,31 @@ from graphreduce.stypes import infer_df_stype
 
 
 logger = get_logger("Node")
+
+NUMERIC_VALUE_AUTO_AGGS = {"avg", "max", "mean", "median", "min", "sum"}
+
+
+def _sample_is_numeric_object_series(series: pd.Series) -> bool:
+    """
+    Pandas represents Decimal-backed SQL numerics as object dtype. Treat those
+    as numeric, but do not trust varchar/string samples for SQL numeric aggs.
+    """
+    non_null = series.dropna().head(100)
+    if len(non_null) == 0:
+        return False
+    return all(isinstance(value, numbers.Number) for value in non_null)
+
+
+def _should_skip_numeric_sql_agg(
+    series: pd.Series,
+    semantic_type: str,
+    func: str,
+) -> bool:
+    if semantic_type != "numerical" or func not in NUMERIC_VALUE_AUTO_AGGS:
+        return False
+    if pd.api.types.is_numeric_dtype(series):
+        return False
+    return not _sample_is_numeric_object_series(series)
 
 
 SPARK_DF_TYPES = tuple()
@@ -527,30 +558,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             ComputeLayerEnum.trino,
             ComputeLayerEnum.duckdb,
         ]:
-            # Assumes `SQLNode.get_sample` is implemented to get
-            # a sample of the data in pandas dataframe form.
-            # We need to check what percentage of columns are null
-            # so we can determine how many rows to get.
-            n = 100
-            keep_growing = True
-            while keep_growing and n < 100_000:
-                small_samp = self.get_sample(n=100)
-                avg_nulls = 0
-                for c in small_samp.columns:
-                    avg_nulls += small_samp[c].isna().mean()
-                if avg_nulls > 0:
-                    avg_nulls = avg_nulls / len(small_samp.columns)
-                    if avg_nulls > 0.5:
-                        n = n * 10
-                        logger.info(f"Growing sample to {n}")
-                        sample_df = self.get_sample(n=n)
-                    else:
-                        sample_df = small_samp
-                        keep_growing = False
-                else:
-                    sample_df = small_samp
-                    keep_growing = False
-
+            sample_df = self.get_inference_sample()
             return self.sql_auto_features(
                 sample_df, reduce_key=reduce_key, type_func_map=type_func_map
             )
@@ -674,8 +682,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             )
 
             # Number of events in last strata of time
-            days = [30, 60, 90, 365, 730]
-            for d in days:
+            for d in self.ts_periods:
                 if d > self.compute_period_val:
                     continue
                 feat_prepped = self.prep_for_features()
@@ -834,8 +841,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 self.df = self.df.crossJoin(spark_datetime)
 
             # Number of events in last strata of time
-            days = [30, 60, 90, 365, 730]
-            for d in days:
+            for d in self.ts_periods:
                 if d > self.compute_period_val:
                     continue
                 feat_prepped = self.prep_for_features()
@@ -976,13 +982,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     # but for now this will do.  SQL engines typically
                     # don't have 'median' and 'mean'.  'mean' is typically
                     # just called 'avg'.
-                    if (
-                        (_type == "numerical" or "timestamp")
-                        and dict(table_df_sample)[col].__str__() == "object"
-                        and func in ["min", "max", "mean", "median"]
-                    ):
+                    if _should_skip_numeric_sql_agg(table_df_sample[col], _type, func):
                         logger.info(
-                            f"skipped aggregation on {col} because semantic numerical but physical object"
+                            f"skipped numeric aggregation {func} on {col} because "
+                            "semantic numerical but physical values are not numeric"
                         )
                         continue
                     elif func in self.FUNCTION_MAPPING:
@@ -991,16 +994,28 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     elif not func or func == "nunique":
                         continue
 
-                    # If it's a categorical with only 2 values
+                    # If it's a categorical with only 2 scalar values
                     # and it's a digit type then sum it.
                     non_null_vals = table_df_sample[~table_df_sample[col].isnull()][col]
+                    sample_vals = non_null_vals.head(20)
+                    collection_types = (list, dict, tuple)
+                    if np is not None:
+                        collection_types = collection_types + (np.ndarray,)
+                    is_collection_col = sample_vals.map(
+                        lambda v: isinstance(v, collection_types)
+                    ).any()
+
+                    # digit categoricals that are actually
+                    # booleans
                     if (
                         _type == "categorical"
+                        and not is_collection_col
                         and len(non_null_vals.unique()) <= 2
                         and len(non_null_vals) > 0
-                        and str(non_null_vals.head().values[0]).isdigit()
+                        and str(sample_vals.values[0]).isdigit()
                     ):
                         func = "sum"
+
 
                     if func:
                         if func == "count" and counted:
@@ -2132,13 +2147,10 @@ class SQLNode(GraphReduceNode):
         """
         for k, v in self._all_refs:
             if v not in self._removed_refs:
-                try:
-                    sql = f"DROP VIEW {v}"
-                    self.execute_query(sql)
-                    self._removed_refs.append(v)
-                    logger.info(f"dropped {v}")
-                except Exception:
-                    continue
+                sql = f"DROP VIEW {v}"
+                self.execute_query(sql)
+                self._removed_refs.append(v)
+                logger.info(f"dropped {v}")
 
     def get_ref_name(
         self,
@@ -2270,29 +2282,25 @@ class SQLNode(GraphReduceNode):
         Create a view with the results of
         the query.
         """
-        try:
-            self.execute_query(
-                f"""
-            DROP VIEW IF EXISTS {view_name}
-            """,
-                ret_df=False,
-            )
+        self.execute_query(
+            f"""
+        DROP VIEW IF EXISTS {view_name}
+        """,
+            ret_df=False,
+        )
 
-            sql = f"""
-            CREATE VIEW {view_name} AS
-            {qry}
-            """
-            self._ref_sql = sql
-            logger.info(sql)
-            # Only execute when it is not a dry run
-            # but always append the SQL.
-            if not dry:
-                self.execute_query(sql, ret_df=False)
-            self._cur_data_ref = view_name
-            return view_name
-        except Exception as e:
-            logger.error(e)
-            return None
+        sql = f"""
+        CREATE VIEW {view_name} AS
+        {qry}
+        """
+        self._ref_sql = sql
+        logger.info(sql)
+        # Only execute when it is not a dry run
+        # but always append the SQL.
+        if not dry:
+            self.execute_query(sql, ret_df=False)
+        self._cur_data_ref = view_name
+        return view_name
 
     # TODO(wes): optimize by storing previously
     # fetch samples.
@@ -2321,6 +2329,97 @@ class SQLNode(GraphReduceNode):
         if not self._stypes:
             self._stypes = infer_df_stype(samp)
         return samp
+
+    def _sample_identifier(self, identifier: str) -> str:
+        """
+        Format an identifier for SQL sampling queries.
+
+        Subclasses can override this if a backend requires dialect-specific
+        quoting for generated sampling expressions.
+        """
+        return identifier
+
+    def _sample_table(self, table: str = None) -> str:
+        return table if table else self.get_current_ref()
+
+    def get_most_populated_sample(
+        self,
+        n: int = 1000,
+        table: str = None,
+        columns: typing.Optional[typing.List[str]] = None,
+    ) -> pd.DataFrame:
+        """
+        Sample rows that have the most non-null values for semantic type inference.
+        """
+        table = self._sample_table(table)
+        if columns is None:
+            preview = self.get_sample(n=1, table=table)
+            columns = list(preview.columns)
+        if not columns:
+            return self.get_sample(n=n, table=table)
+
+        score = " + ".join(
+            [
+                f"CASE WHEN {self._sample_identifier(col)} IS NOT NULL THEN 1 ELSE 0 END"
+                for col in columns
+            ]
+        )
+        qry = f"""
+            SELECT *
+            FROM {table}
+            ORDER BY ({score}) DESC
+            LIMIT {n}
+            """
+        return self.execute_query(qry)
+
+    def get_non_null_sample(
+        self,
+        column: str,
+        n: int = 20,
+        table: str = None,
+    ) -> pd.DataFrame:
+        """
+        Sample rows where a specific column is populated.
+        """
+        table = self._sample_table(table)
+        col = self._sample_identifier(column)
+        qry = f"""
+            SELECT *
+            FROM {table}
+            WHERE {col} IS NOT NULL
+            LIMIT {n}
+            """
+        return self.execute_query(qry)
+
+    def get_inference_sample(
+        self,
+        n: int = 1000,
+        backfill_per_column: int = 20,
+        table: str = None,
+    ) -> pd.DataFrame:
+        """
+        Build a sample for semantic type inference with non-null examples.
+
+        The base sample prefers rows with the most populated values. Any column
+        still entirely null in that sample gets a small targeted backfill query.
+        """
+        table = self._sample_table(table)
+        sample = self.get_most_populated_sample(n=n, table=table)
+        missing_cols = [
+            col for col in sample.columns if sample[col].notna().sum() == 0
+        ]
+        if not missing_cols:
+            return sample
+
+        backfills = [
+            self.get_non_null_sample(col, n=backfill_per_column, table=table)
+            for col in missing_cols
+        ]
+        populated_backfills = [df for df in backfills if df is not None and not df.empty]
+        if not populated_backfills:
+            return sample
+
+        return pd.concat([sample, *populated_backfills], ignore_index=True)
 
     def build_query(
         self,
@@ -2621,7 +2720,10 @@ class AthenaNode(SQLNode):
 
         qry_status = client.get_query_execution(QueryExecutionId=qry_id)
         if qry_status["QueryExecution"]["Status"]["State"] == "FAILED":
-            raise Exception(f"Query {qry} FAILED")
+            reason = qry_status["QueryExecution"]["Status"].get(
+                "StateChangeReason", "unknown reason"
+            )
+            raise Exception(f"Query {qry} FAILED: {reason}")
 
         else:
             while qry_status["QueryExecution"]["Status"]["State"] not in [
@@ -2633,8 +2735,10 @@ class AthenaNode(SQLNode):
                 qry_status = client.get_query_execution(QueryExecutionId=qry_id)
 
         if qry_status["QueryExecution"]["Status"]["State"] == "FAILED":
-            logger.error("query FAILED")
-            return None
+            reason = qry_status["QueryExecution"]["Status"].get(
+                "StateChangeReason", "unknown reason"
+            )
+            raise Exception(f"Query {qry} FAILED: {reason}")
 
         results = client.get_query_results(QueryExecutionId=qry_id)
         colinfo = results["ResultSet"]["ResultSetMetadata"]["ColumnInfo"]
@@ -2680,22 +2784,18 @@ class DatabricksNode(SQLNode):
         Create a view with the results
         of the query.
         """
-        try:
-            if len(view_name.split(".")) > 1:
-                view_name = view_name.split(".")[-1]
+        if len(view_name.split(".")) > 1:
+            view_name = view_name.split(".")[-1]
 
-            sql = f"""
-            CREATE OR REPLACE TEMPORARY VIEW {view_name} AS
-            {qry}
-            """
-            self._ref_sql = sql
-            if not dry:
-                self.execute_query(sql, ret_df=False)
-            self._cur_data_ref = view_name
-            return view_name
-        except Exception as e:
-            logger.error(e)
-            return None
+        sql = f"""
+        CREATE OR REPLACE TEMPORARY VIEW {view_name} AS
+        {qry}
+        """
+        self._ref_sql = sql
+        if not dry:
+            self.execute_query(sql, ret_df=False)
+        self._cur_data_ref = view_name
+        return view_name
 
 
 class RedshiftNode(SQLNode):
@@ -2804,13 +2904,10 @@ class RedshiftNode(SQLNode):
                     # but for now this will do.  SQL engines typically
                     # don't have 'median' and 'mean'.  'mean' is typically
                     # just called 'avg'.
-                    if (
-                        (_type == "numerical" or "timestamp")
-                        and dict(table_df_sample)[col].__str__() == "object"
-                        and func in ["min", "max", "mean", "median"]
-                    ):
+                    if _should_skip_numeric_sql_agg(table_df_sample[col], _type, func):
                         logger.info(
-                            f"skipped aggregation on {col} because semantic numerical but physical object"
+                            f"skipped numeric aggregation {func} on {col} because "
+                            "semantic numerical but physical values are not numeric"
                         )
                         continue
                     elif func in self.FUNCTION_MAPPING:
@@ -2823,14 +2920,22 @@ class RedshiftNode(SQLNode):
                     elif func == "first":
                         func = "any_value"
 
-                    # For categorical types check if it is
+                    # For categorical scalar types check if it is
                     # a 0, 1 category and, if so, do a sum.
                     non_null_vals = table_df_sample[~table_df_sample[col].isnull()][col]
+                    sample_vals = non_null_vals.head(20)
+                    collection_types = (list, dict, tuple)
+                    if np is not None:
+                        collection_types = collection_types + (np.ndarray,)
+                    is_collection_col = sample_vals.map(
+                        lambda v: isinstance(v, collection_types)
+                    ).any()
                     if (
                         _type == "categorical"
+                        and not is_collection_col
                         and len(non_null_vals.unique()) <= 2
                         and len(non_null_vals) > 0
-                        and str(non_null_vals.head().values[0]).isdigit()
+                        and str(sample_vals.values[0]).isdigit()
                     ):
                         func = "sum"
 
@@ -2957,11 +3062,8 @@ class SnowflakeNode(SQLNode):
         self,
         db: str,
     ) -> bool:
-        try:
-            res = self.execute_query(f"use database {db}")
-            return True
-        except Exception:
-            return False
+        self.execute_query(f"use database {db}")
+        return True
 
     def create_temp_view(
         self,
@@ -2973,21 +3075,16 @@ class SnowflakeNode(SQLNode):
         Create a view with the results
         of the query.
         """
-        try:
-            sql = f"""
-            CREATE OR REPLACE TRANSIENT TABLE {view_name}
-            data_retention_time_in_days = 0
-            AS {qry}
-            """
-            logger.info(f"Creating temp table with {sql}")
-            self._ref_sql = sql
-            if not dry:
-                self.execute_query(sql, ret_df=False)
-            self._cur_data_ref = view_name
-            return view_name
-        except Exception as e:
-            logger.error(e)
-            return None
+        sql = f"""
+        CREATE OR REPLACE TEMPORARY TABLE {view_name}
+        AS {qry}
+        """
+        logger.info(f"Creating temp table with {sql}")
+        self._ref_sql = sql
+        if not dry:
+            self.execute_query(sql, ret_df=False)
+        self._cur_data_ref = view_name
+        return view_name
 
 
 class TrinoNode(SQLNode):
@@ -3003,21 +3100,17 @@ class TrinoNode(SQLNode):
         qry: str,
         view_name: str,
         dry: bool = False,
-        ) -> str:
-        try:
-            sql = f"""
-            CREATE OR REPLACE TEMPORARY VIEW {view_name}
-            as {qry}
-            """
-            logger.info(f"Creating temp view with {sql}")
-            self._ref_sql = sql
-            if not dry:
-                self.execute_query(sql, ret_df=False)
-            self._cur_data_ref = view_name
-            return view_name
-        except Exception as e:
-            logger.error(e)
-            return None
+    ) -> str:
+        sql = f"""
+        CREATE OR REPLACE TEMPORARY VIEW {view_name}
+        as {qry}
+        """
+        logger.info(f"Creating temp view with {sql}")
+        self._ref_sql = sql
+        if not dry:
+            self.execute_query(sql, ret_df=False)
+        self._cur_data_ref = view_name
+        return view_name
 
 
 class DuckdbNode(SQLNode):
