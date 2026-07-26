@@ -18,7 +18,7 @@ from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
-from relbench_dataset_utils import materialize_relbench_dataset
+from relbench_dataset_utils import get_relbench_dataset_db, register_relbench_db_views
 
 TABLE_NAME_TO_FILENAME = {
     "customer": "customer.parquet",
@@ -35,11 +35,7 @@ LABEL_PERIOD_DAYS = 90
 
 
 def materialize_rel_amazon_data(data_dir: Path) -> list[str]:
-    return materialize_relbench_dataset("rel-amazon", data_dir, TABLE_NAME_TO_FILENAME)
-
-
-def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
-    con.sql(f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM read_parquet('{parquet_path}')")
+    return []
 
 
 def _infer_columns(con: duckdb.DuckDBPyConnection, view_name: str) -> list[str]:
@@ -117,12 +113,20 @@ def _train_regression(df: pd.DataFrame, target: str) -> tuple[float | None, int]
     return catboost_mae, len(feature_cols)
 
 
-def _build_frame(data_dir: Path, mode: str, cut_date: datetime.datetime) -> pd.DataFrame:
+def _build_frame(mode: str, cut_date: datetime.datetime) -> pd.DataFrame:
+    _, db = get_relbench_dataset_db("rel-amazon", download=True, upto_test_timestamp=False)
     con = duckdb.connect()
     try:
-        _prepare_view(con, "customer_src_raw", data_dir / "customer.parquet")
-        _prepare_view(con, "product_src_raw", data_dir / "product.parquet")
-        _prepare_view(con, "review_src_raw", data_dir / "review.parquet")
+        register_relbench_db_views(
+            con,
+            db,
+            {
+                "customer": "customer_src_raw",
+                "product": "product_src_raw",
+                "review": "review_src_raw",
+            },
+            {"review": "review_id"},
+        )
 
         customer_cols = _infer_columns(con, "customer_src_raw")
         product_cols = _infer_columns(con, "product_src_raw")
@@ -302,10 +306,9 @@ def run_amazon_task(
     data_dir: Path | None = None,
     cut_date: datetime.datetime | None = None,
 ) -> tuple[pd.DataFrame, float | None, int, list[str], str]:
-    use_dir = data_dir or Path("tests/data/relbench/rel-amazon")
     use_cut_date = cut_date or CUT_DATE
-    materialized = materialize_rel_amazon_data(use_dir)
-    df = _build_frame(use_dir, mode=mode, cut_date=use_cut_date)
+    materialized: list[str] = []
+    df = _build_frame(mode=mode, cut_date=use_cut_date)
 
     if mode == "user_churn":
         target = "user_churn_90d"
@@ -335,10 +338,9 @@ def run_amazon_temporal_regression_task(
     if mode not in {"user_ltv", "item_ltv"}:
         raise ValueError("mode must be user_ltv or item_ltv")
 
-    use_dir = data_dir or Path("tests/data/relbench/rel-amazon")
-    materialized = materialize_rel_amazon_data(use_dir)
-    df_validation = _build_frame(use_dir, mode=mode, cut_date=validation_cut_date)
-    df_holdout = _build_frame(use_dir, mode=mode, cut_date=holdout_cut_date)
+    materialized: list[str] = []
+    df_validation = _build_frame(mode=mode, cut_date=validation_cut_date)
+    df_holdout = _build_frame(mode=mode, cut_date=holdout_cut_date)
 
     if mode == "user_ltv":
         target = "user_ltv_90d_usd"

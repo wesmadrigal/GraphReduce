@@ -3,23 +3,26 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
-from relbench.datasets import get_dataset
 from relbench.metrics import accuracy, average_precision, f1, roc_auc
+from relbench_dataset_utils import (
+    RelBenchFrameStore,
+    get_relbench_dataset_db,
+    get_relbench_split_timestamps,
+    get_relbench_task,
+    register_relbench_db_views,
+)
+from relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES, fit_tuned_classifier_incremental, set_feature_families
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.node import DuckdbNode
 
 DATASET_NAME = "rel-f1"
-REL_CACHE_DIR = Path("tests/data/relbench_cache").resolve()
-DATA_DIR = Path("tests/data/relbench/rel-f1")
 TABLES = [
     "circuits",
     "constructors",
@@ -41,29 +44,20 @@ TARGET_COLUMN = "did_not_finish"
 
 def run_rel_f1_driver_dnf(
     data_dir: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
-    os.environ.setdefault("RELBENCH_CACHE_DIR", str(REL_CACHE_DIR))
-    use_dir = (data_dir or DATA_DIR).resolve()
-    use_dir.mkdir(parents=True, exist_ok=True)
-
+) -> tuple[RelBenchFrameStore, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
+    _, db = get_relbench_dataset_db(DATASET_NAME, download=True, upto_test_timestamp=False)
+    official_task = get_relbench_task(DATASET_NAME, "driver-dnf", download=True)
     materialized: list[str] = []
-    if not all((use_dir / f"{table_name}.parquet").exists() for table_name in TABLES):
-        dataset = get_dataset(DATASET_NAME, download=True)
-        db = dataset.get_db(upto_test_timestamp=False)
-        for table_name in TABLES:
-            out_path = use_dir / f"{table_name}.parquet"
-            db.table_dict[table_name].df.to_parquet(out_path, index=False)
-            materialized.append(out_path.name)
 
     con = duckdb.connect()
-    split_frames: dict[str, pd.DataFrame] = {}
+    split_frames: dict[str, RelBenchFrameStore] = {}
 
     try:
-        for table_name in TABLES:
-            con.sql(
-                f"CREATE OR REPLACE VIEW {table_name}_src AS "
-                f"SELECT * FROM read_parquet('{use_dir / f'{table_name}.parquet'}')"
-            )
+        register_relbench_db_views(
+            con,
+            db,
+            {table_name: f"{table_name}_src" for table_name in TABLES},
+        )
 
         dataset_bounds = con.sql(
             """
@@ -88,27 +82,13 @@ def run_rel_f1_driver_dnf(
         lookback_start = pd.Timestamp(dataset_bounds.loc[0, "min_timestamp"])
         dataset_max_timestamp = pd.Timestamp(dataset_bounds.loc[0, "max_timestamp"])
 
-        train_cut_dates = pd.date_range(
-            start=VALIDATION_CUT_DATE - LABEL_TIMEDELTA,
-            end=lookback_start,
-            freq=-LABEL_TIMEDELTA,
-        ).to_pydatetime().tolist()
-        val_cut_dates = pd.date_range(
-            start=VALIDATION_CUT_DATE,
-            end=min(
-                VALIDATION_CUT_DATE + LABEL_TIMEDELTA * (NUM_EVAL_TIMESTAMPS - 1),
-                TEST_CUT_DATE - LABEL_TIMEDELTA,
-            ),
-            freq=LABEL_TIMEDELTA,
-        ).to_pydatetime().tolist()
-        test_cut_dates = pd.date_range(
-            start=TEST_CUT_DATE,
-            end=min(
-                TEST_CUT_DATE + LABEL_TIMEDELTA * (NUM_EVAL_TIMESTAMPS - 1),
-                dataset_max_timestamp - LABEL_TIMEDELTA,
-            ),
-            freq=LABEL_TIMEDELTA,
-        ).to_pydatetime().tolist()
+        split_cut_dates = {
+            split_name: [
+                timestamp.to_pydatetime()
+                for timestamp in get_relbench_split_timestamps(official_task, split_name, db)
+            ]
+            for split_name in ("train", "val", "test")
+        }
 
         driver_columns = con.sql("SELECT * FROM drivers_src LIMIT 0").to_df().columns.tolist()
         result_columns = con.sql("SELECT * FROM results_src LIMIT 0").to_df().columns.tolist()
@@ -133,12 +113,10 @@ def run_rel_f1_driver_dnf(
         circuit_id_col = {column.lower(): column for column in circuit_columns}["circuitid"]
         constructor_id_col = {column.lower(): column for column in constructor_columns}["constructorid"]
 
-        for split_name, cut_dates in {
-            "train": train_cut_dates,
-            "val": val_cut_dates,
-            "test": test_cut_dates,
-        }.items():
-            frames_for_split: list[pd.DataFrame] = []
+        for split_name, cut_dates in split_cut_dates.items():
+            frame_store = RelBenchFrameStore(
+                f"rel-f1-driver-dnf-{split_name}", persist_each_frame=True
+            )
 
             for cut_date in cut_dates:
                 feature_cut_date = pd.Timestamp(cut_date) + pd.Timedelta(seconds=1)
@@ -156,6 +134,12 @@ def run_rel_f1_driver_dnf(
                     pk=result_id_col,
                     date_key=result_date_col,
                     columns=result_columns,
+                    feature_family_max_columns=4,
+                    categorical_top_k=5,
+                    context_keys=(result_race_col, result_constructor_col),
+                    annotation_expressions={
+                        "did_not_finish": f"{{{result_status_col}}} != 1",
+                    },
                 )
                 standing_node = DuckdbNode(
                     fpath="standings_src",
@@ -202,7 +186,9 @@ def run_rel_f1_driver_dnf(
                     use_temp_tables=True,
                 )
 
-                for node in [driver_node, result_node, standing_node, race_node, circuit_node, constructor_node]:
+                nodes = [driver_node, result_node, standing_node, race_node, circuit_node, constructor_node]
+                set_feature_families([result_node], TEMPORAL_FEATURE_FAMILIES)
+                for node in nodes:
                     graph.add_node(node)
 
                 graph.add_entity_edge(driver_node, result_node, parent_key=driver_id_col, relation_key=result_driver_col, reduce=True)
@@ -213,6 +199,7 @@ def run_rel_f1_driver_dnf(
 
                 graph.do_transformations_sql()
                 features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+                graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
                 labels = con.sql(
@@ -244,40 +231,43 @@ def run_rel_f1_driver_dnf(
                     how="inner",
                 ).drop(columns=["driverId"])
                 frame[TARGET_COLUMN] = frame[TARGET_COLUMN].astype("int8")
-                frames_for_split.append(frame)
+                frame_store.append(frame)
 
-            split_frames[split_name] = pd.concat(frames_for_split, ignore_index=True)
+            split_frames[split_name] = frame_store
     finally:
         con.close()
 
-    df_train = split_frames["train"]
-    df_val = split_frames["val"]
-    df_test = split_frames["test"]
+    train_store = split_frames["train"]
+    df_val = split_frames["val"].to_dataframe()
+    df_test = split_frames["test"].to_dataframe()
+    split_frames["val"].close()
+    split_frames["test"].close()
 
-    common_columns = set(df_train.columns) & set(df_val.columns) & set(df_test.columns)
+    train_sample = train_store.sample_frame()
+    common_columns = set(train_sample.columns) & set(df_val.columns) & set(df_test.columns)
     feature_columns = [
         column
-        for column in df_train.select_dtypes(include=[np.number, "bool"]).columns
+        for column in train_sample.select_dtypes(include=[np.number, "bool"]).columns
         if column != TARGET_COLUMN
         and "label" not in column.lower()
         and not column.lower().endswith("_id")
         and "driverid" not in column.lower()
         and column in common_columns
     ]
-    if not feature_columns or df_train[TARGET_COLUMN].nunique() < 2:
-        return df_train, df_val, df_test, None, None, len(feature_columns), materialized, TARGET_COLUMN
+    if not feature_columns or train_store.target_nunique(TARGET_COLUMN) < 2:
+        return train_store, df_val, df_test, None, None, len(feature_columns), materialized, TARGET_COLUMN
 
-    model = CatBoostClassifier(
-        iterations=500,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="Logloss",
-        eval_metric="AUC",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
+    model, best_config, best_val_auc = fit_tuned_classifier_incremental(
+        lambda: train_store.iter_batches(),
+        feature_columns,
+        TARGET_COLUMN,
+        df_val[feature_columns].fillna(0),
+        df_val[TARGET_COLUMN],
+        batch_count=len(train_store.part_paths),
     )
-    model.fit(df_train[feature_columns].fillna(0), df_train[TARGET_COLUMN])
+    print("catboost_config:", best_config, flush=True)
+    print("catboost_validation_auc:", best_val_auc, flush=True)
+    print("catboost_best_iteration:", model.get_best_iteration(), flush=True)
 
     val_predictions = np.asarray(model.predict_proba(df_val[feature_columns].fillna(0))[:, 1], dtype="float64")
     test_predictions = np.asarray(model.predict_proba(df_test[feature_columns].fillna(0))[:, 1], dtype="float64")
@@ -297,7 +287,7 @@ def run_rel_f1_driver_dnf(
         "roc_auc": float(roc_auc(test_target, test_predictions)),
     }
 
-    return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, TARGET_COLUMN
+    return train_store, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, TARGET_COLUMN
 
 
 def main() -> None:
@@ -308,16 +298,17 @@ def main() -> None:
     print("label_timedelta_days:", int(LABEL_TIMEDELTA / pd.Timedelta(days=1)), flush=True)
     print("num_eval_timestamps:", NUM_EVAL_TIMESTAMPS, flush=True)
     print("target:", target, flush=True)
-    print("train_rows:", len(df_train), flush=True)
+    print("train_rows:", df_train.row_count, flush=True)
     print("validation_rows:", len(df_val), flush=True)
     print("test_rows:", len(df_test), flush=True)
-    print("train_timestamps:", df_train["timestamp"].nunique(), flush=True)
+    print("train_timestamps:", df_train.column_nunique("timestamp"), flush=True)
     print("validation_timestamps:", df_val["timestamp"].nunique(), flush=True)
     print("test_timestamps:", df_test["timestamp"].nunique(), flush=True)
     print("columns:", len(df_train.columns), flush=True)
     print("feature_count:", n_features, flush=True)
     print("validation_metrics:", val_metrics if val_metrics is not None else "skipped", flush=True)
     print("test_metrics:", test_metrics if test_metrics is not None else "skipped", flush=True)
+    df_train.close()
 
 
 if __name__ == "__main__":

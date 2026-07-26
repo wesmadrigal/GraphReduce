@@ -21,6 +21,31 @@ data_path = '/'.join(os.path.abspath(__file__).split('/')[0:-1]) + '/data/cust_d
 print(data_path)
 
 
+def test_is_ts_data_returns_false_for_empty_sql_relation():
+    con = duckdb.connect()
+    con.sql(
+        """
+        CREATE TABLE empty_events (
+            evt_id INTEGER,
+            evt_parent_id INTEGER,
+            evt_created_at TIMESTAMP
+        )
+        """
+    )
+    node = DuckdbNode(
+        fpath="empty_events",
+        prefix="evt",
+        pk="id",
+        date_key="created_at",
+        compute_layer=ComputeLayerEnum.duckdb,
+        client=con,
+        columns=["id", "parent_id", "created_at"],
+    )
+    node._cur_data_ref = "empty_events"
+
+    assert node.is_ts_data("parent_id") is False
+
+
 def test_sql_auto_features_skips_numeric_aggs_for_string_backed_numerical_stype(monkeypatch):
     sample = pd.DataFrame(
         {
@@ -63,6 +88,500 @@ def test_sql_auto_features_skips_numeric_aggs_for_string_backed_numerical_stype(
     assert "sum(tran_amount) as tran_amount_sum" in agg_sql
     assert not any("tran_source_name" in op for op in agg_sql)
 
+
+def test_sql_auto_features_treats_zip_like_numerical_stype_as_categorical(monkeypatch):
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1, 1, 2, 2],
+            "evt_zip": [94110, 90015, 94110, 85281],
+            "evt_lat": [37.7, 34.0, 37.8, 33.4],
+        }
+    )
+    monkeypatch.setattr(
+        "graphreduce.node.infer_df_stype",
+        lambda _df: {
+            "evt_user_id": "categorical",
+            "evt_zip": "numerical",
+            "evt_lat": "numerical",
+        },
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="user_id",
+        type_func_map={
+            "numerical": ["mean", "sum", "min", "max"],
+            "categorical": ["count", "nunique"],
+        },
+    )
+    agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+
+    assert "COUNT(DISTINCT evt_zip) as evt_zip_nunique" in agg_sql
+    assert any("evt_zip_94110_count" in op for op in agg_sql)
+    assert any("evt_zip_94110_share" in op for op in agg_sql)
+    assert not any("sum(evt_zip)" in op for op in agg_sql)
+    assert not any("avg(evt_zip)" in op for op in agg_sql)
+    assert "sum(evt_lat) as evt_lat_sum" in agg_sql
+
+
+def test_sql_auto_features_generates_propagating_categorical_and_text_ops():
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1, 1, 2, 2],
+            "evt_status": ["paid", "failed", "paid", "pending"],
+            "evt_comment_text": [
+                "Customer paid online and asked for a receipt.",
+                "Payment failed at https://example.com/order/1!",
+                "Customer asked whether order 42 shipped?",
+                "",
+            ],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+
+    assert "COUNT(DISTINCT evt_status) as evt_status_nunique" in agg_sql
+    assert any("evt_status_paid_count" in op for op in agg_sql)
+    assert any("evt_status_paid_share" in op for op in agg_sql)
+    assert any("evt_status_paid_any" in op for op in agg_sql)
+    assert any("evt_comment_text_length_avg" in op for op in agg_sql)
+    assert any("evt_comment_text_empty_share" in op for op in agg_sql)
+    assert any("evt_comment_text_url_count" in op for op in agg_sql)
+    assert any("evt_comment_text_number_share" in op for op in agg_sql)
+
+
+def test_sql_auto_features_categorical_text_sql_executes_on_sqlite():
+    conn = sqlite3.connect(":memory:")
+    rows = pd.DataFrame(
+        {
+            "evt_user_id": [1, 1, 2, 2],
+            "evt_status": ["paid", "failed", "paid", "pending"],
+            "evt_comment_text": [
+                "Customer paid online and asked for a receipt.",
+                "Payment failed at https://example.com/order/1!",
+                "Customer asked whether order 42 shipped?",
+                "",
+            ],
+        }
+    )
+    rows.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=rows,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    result = pd.read_sql_query(node.build_query(ops), conn)
+
+    user_1 = result[result["evt_user_id"] == 1].iloc[0]
+    assert user_1["evt_status_paid_count"] == 1
+    assert user_1["evt_status_paid_any"] == 1
+    assert user_1["evt_comment_text_url_count"] == 1
+    assert user_1["evt_comment_text_number_count"] == 1
+    assert result["evt_comment_text_length_avg"].notna().all()
+    conn.close()
+
+
+def test_sql_auto_annotate_creates_generic_categorical_text_and_gated_numeric_ops():
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1, 1, 2, 2],
+            "evt_status": ["yes", "invited", "yes", "ignored"],
+            "evt_outcome_type": ["Primary", "Secondary", "Primary", "Secondary"],
+            "evt_count": [3, 2, 5, 7],
+            "evt_p_value": [0.04, 0.2, 0.8, 0.1],
+            "evt_notes": [
+                "Primary outcome improved by 42 percent.",
+                "Invitation sent by email.",
+                "See https://example.com/result",
+                "",
+            ],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        auto_annotate_features=True,
+    )
+
+    ops = node.sql_auto_annotate(sample)
+    select_sql = [op.opval for op in ops if op.optype == SQLOpType.select]
+
+    assert (
+        "CASE WHEN evt_status = 'yes' THEN 1 ELSE 0 END as evt_status__gr_is_yes"
+        in select_sql
+    )
+    assert (
+        "CASE WHEN evt_outcome_type = 'Primary' THEN 1 ELSE 0 END as evt_outcome_type__gr_is_primary"
+        in select_sql
+    )
+    assert (
+        "CASE WHEN evt_outcome_type = 'Primary' THEN evt_p_value END as evt_p_value__gr_when_evt_outcome_type_primary"
+        in select_sql
+    )
+    assert "LENGTH(COALESCE(evt_notes, '')) as evt_notes__gr_length" in select_sql
+    assert any("evt_notes__gr_has_url" in op for op in select_sql)
+
+
+def test_sql_auto_annotate_outputs_feed_existing_sql_auto_features():
+    conn = sqlite3.connect(":memory:")
+    rows = pd.DataFrame(
+        {
+            "evt_user_id": [1, 1, 2, 2],
+            "evt_status": ["yes", "invited", "yes", "ignored"],
+            "evt_outcome_type": ["Primary", "Secondary", "Primary", "Secondary"],
+            "evt_count": [3, 2, 5, 7],
+            "evt_p_value": [0.04, 0.2, 0.8, 0.1],
+            "evt_notes": [
+                "Primary outcome improved by 42 percent.",
+                "Invitation sent by email.",
+                "See https://example.com/result",
+                "",
+            ],
+        }
+    )
+    rows.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        auto_annotate_features=True,
+    )
+
+    annotate_ops = node.sql_auto_annotate(rows)
+    annotated = pd.read_sql_query(node.build_query(annotate_ops), conn)
+    annotated.to_sql("annotated_events", conn, index=False)
+    feature_ops = node.sql_auto_features(
+        annotated,
+        reduce_key="user_id",
+        type_func_map={
+            "numerical": ["mean", "sum", "min", "max"],
+            "categorical": ["count", "nunique"],
+        },
+    )
+    feature_sql = [op.opval for op in feature_ops if op.optype == SQLOpType.aggfunc]
+
+    assert "sum(evt_status__gr_is_yes) as evt_status__gr_is_yes_sum" in feature_sql
+    assert "avg(evt_status__gr_is_yes) as evt_status__gr_is_yes_avg" in feature_sql
+    assert (
+        "min(evt_p_value__gr_when_evt_outcome_type_primary) as evt_p_value__gr_when_evt_outcome_type_primary_min"
+        in feature_sql
+    )
+    assert "sum(evt_notes__gr_has_url) as evt_notes__gr_has_url_sum" in feature_sql
+
+    result = pd.read_sql_query(
+        node.build_query(feature_ops, data_ref="annotated_events"), conn
+    )
+    user_1 = result[result["evt_user_id"] == 1].iloc[0]
+    assert user_1["evt_status__gr_is_yes_sum"] == 1
+    assert user_1["evt_outcome_type__gr_is_primary_sum"] == 1
+    assert user_1["evt_p_value__gr_when_evt_outcome_type_primary_min"] == 0.04
+    conn.close()
+
+
+def test_sql_auto_feature_families_generate_temporal_conditionals_and_episodes():
+    conn = sqlite3.connect(":memory:")
+    rows = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3, 4],
+            "evt_user_id": [1, 1, 1, 2],
+            "evt_status": ["invited", "yes", "invited", "no"],
+            "evt_revision_guid": [
+                "revision-1",
+                "revision-2",
+                "revision-3",
+                "revision-4",
+            ],
+            "evt_notes": [
+                "A sufficiently long note that should be handled as text.",
+                "Another sufficiently long note that should remain text.",
+                "A third sufficiently long note that should remain text.",
+                "A fourth sufficiently long note that should remain text.",
+            ],
+            "evt_value": [1.0, 2.0, 3.0, 4.0],
+            "evt_ts": [
+                "2024-01-01",
+                "2024-01-05",
+                "2024-01-09",
+                "2024-01-08",
+            ],
+        }
+    )
+    rows.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("base", "conditional", "temporal", "episode"),
+        annotation_expressions={"is_invited": "{status} = 'invited'"},
+        auto_annotate_features=True,
+        annotation_expressions_only=True,
+        ts_periods=[1, 7, 30],
+    )
+    node._cur_data_ref = "events"
+
+    annotated = pd.read_sql_query(
+        node.build_query(node.sql_auto_annotate(rows)), conn
+    )
+    annotated.to_sql("annotated_events", conn, index=False)
+    feature_ops = node.sql_auto_features(
+        annotated,
+        reduce_key="user_id",
+        type_func_map={
+            "categorical": ["count", "nunique"],
+            "numerical": ["sum", "mean", "min", "max"],
+        },
+    )
+    feature_sql = [op.opval for op in feature_ops if op.optype == SQLOpType.aggfunc]
+
+    assert any("evt_gr_is_invited_count_7d" in op for op in feature_sql)
+    assert any("evt_gr_is_invited_share_7d" in op for op in feature_sql)
+    assert any("evt_num_episodes_7d" in op for op in feature_sql)
+    assert any("evt_num_unique_episodes_7d" in op for op in feature_sql)
+    assert not any("revision_guid" in op for op in feature_sql)
+    assert not any("notes_" in op and "_count_7d" in op for op in feature_sql)
+
+    result = pd.read_sql_query(
+        node.build_query(feature_ops, data_ref="annotated_events"), conn
+    )
+    user_1 = result[result["evt_user_id"] == 1].iloc[0]
+    assert user_1["evt_gr_is_invited_count_7d"] == 1
+    assert user_1["evt_gr_is_invited_share_7d"] == 0.5
+    assert user_1["evt_num_episodes_7d"] == 2
+    conn.close()
+
+
+def test_sql_auto_annotate_can_run_semantic_expressions_only():
+    sample = pd.DataFrame(
+        {
+            "res_statusId": [1, 11],
+            "res_position": [1, 12],
+        }
+    )
+    node = SQLNode(
+        fpath="results",
+        pk="id",
+        prefix="res",
+        compute_layer=ComputeLayerEnum.sqlite,
+        auto_annotate_features=True,
+        annotation_expressions={
+            "did_not_finish": "{statusId} <> 1",
+            "is_top3": "{position} <= 3",
+        },
+        annotation_expressions_only=True,
+    )
+
+    select_sql = [op.opval for op in node.sql_auto_annotate(sample) if op.optype == SQLOpType.select]
+    assert "CASE WHEN res_statusId <> 1 THEN 1 ELSE 0 END as res__gr_did_not_finish" in select_sql
+    assert "CASE WHEN res_position <= 3 THEN 1 ELSE 0 END as res__gr_is_top3" in select_sql
+    assert not any("res_statusId__gr_is_" in op for op in select_sql)
+
+
+def test_sql_auto_feature_families_keep_value_annotations_out_of_predicates():
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2],
+            "evt_user_id": [1, 1],
+            "evt_status": ["serious", "other"],
+            "evt_subjects_affected": [4, 7],
+            "evt_date": ["2024-01-01", "2024-01-02"],
+        }
+    )
+    conn = sqlite3.connect(":memory:")
+    sample.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="date",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 3),
+        feature_families=("conditional", "temporal"),
+        annotation_expressions={
+            "is_serious": "{status} = 'serious'",
+            "serious_subjects_affected": (
+                "value",
+                "CASE WHEN {status} = 'serious' THEN {subjects_affected} ELSE 0 END",
+            ),
+        },
+        auto_annotate_features=True,
+        annotation_expressions_only=True,
+        ts_periods=[7],
+    )
+    annotated = pd.read_sql_query(
+        node.build_query(node.sql_auto_annotate(sample), data_ref="events"),
+        conn,
+    )
+    annotated.to_sql("annotated_events", conn, index=False)
+    node._cur_data_ref = "annotated_events"
+    # The assertion below is planner-level: value annotations are temporal
+    # inputs, while only predicate annotations receive conditional features.
+    ops = node.sql_auto_features(
+        annotated,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["sum"]},
+    )
+    feature_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+    assert any(
+        "evt_gr_value_serious_subjects_affected_sum_7d" in op
+        for op in feature_sql
+    )
+    assert not any(
+        "value_serious_subjects_affected_count_7d" in op for op in feature_sql
+    )
+    conn.close()
+
+
+def test_sql_auto_semantic_family_compiles_configured_annotations():
+    sample = pd.DataFrame(
+        {
+            "res_resultId": [1, 2, 3],
+            "res_position": [1, 4, 2],
+        }
+    )
+    node = SQLNode(
+        fpath="results",
+        pk="resultId",
+        prefix="res",
+        date_key="date",
+        compute_layer=ComputeLayerEnum.sqlite,
+        feature_families=("semantic",),
+        annotation_expressions={"is_top3": "{position} <= 3"},
+    )
+
+    select_sql = [
+        op.opval for op in node.sql_auto_annotate(sample) if op.optype == SQLOpType.select
+    ]
+
+    assert "CASE WHEN res_position <= 3 THEN 1 ELSE 0 END as res__gr_is_top3" in select_sql
+    assert not any("res_position_top3" in op for op in select_sql)
+
+
+def test_sql_auto_sequence_family_generates_rates_and_activity_span():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3],
+            "evt_user_id": [1, 1, 1],
+            "evt_ts": pd.to_datetime(["2024-01-01", "2024-01-05", "2024-01-09"]),
+            "evt_value": [1.0, 2.0, 3.0],
+        }
+    )
+    sample.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("sequence",),
+        ts_periods=[1, 7, 30],
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["sum", "mean", "min", "max"]},
+    )
+    feature_sql = [op.opval for op in feature_ops if op.optype == SQLOpType.aggfunc]
+    assert any("evt_activity_rate_7d" in op for op in feature_sql)
+    assert any("evt_activity_share_7d" in op for op in feature_sql)
+    assert any("evt_activity_burst_1v7" in op for op in feature_sql)
+    assert any("evt_active_span_seconds" in op for op in feature_sql)
+
+    result = pd.read_sql_query(node.build_query(feature_ops), conn)
+    assert result.loc[0, "evt_activity_rate_7d"] > 0
+    assert result.loc[0, "evt_active_span_seconds"] > 0
+    conn.close()
+
+
+def test_sql_auto_context_family_preserves_peer_relative_numeric_signal():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "res_resultId": [1, 2, 3, 4],
+            "res_driverId": [10, 10, 11, 11],
+            "res_raceId": [100, 100, 100, 101],
+            "res_position": [1, 4, 2, 8],
+            "res_date": pd.to_datetime(
+                ["2024-01-01", "2024-01-01", "2024-01-01", "2024-01-05"]
+            ),
+        }
+    )
+    sample.to_sql("results", conn, index=False)
+    node = SQLNode(
+        fpath="results",
+        pk="resultId",
+        prefix="res",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        feature_families=("context",),
+        context_keys=("raceId",),
+    )
+
+    annotated = pd.read_sql_query(
+        node.build_query(node.sql_auto_annotate(sample), data_ref="results"), conn
+    )
+    assert "res_raceId__gr_context_size" in annotated.columns
+    assert "res_position__gr_context_res_raceid_delta" in annotated.columns
+    assert annotated.loc[0, "res_raceId__gr_context_size"] == 3
+    assert annotated.loc[0, "res_position__gr_context_res_raceid_delta"] == pytest.approx(-4 / 3)
+    conn.close()
+
+
+def test_sql_auto_context_family_does_not_infer_peer_keys():
+    sample = pd.DataFrame(
+        {
+            "res_id": [1, 2],
+            "res_group_id": [10, 10],
+            "res_value": [1.0, 3.0],
+        }
+    )
+    node = SQLNode(
+        fpath="results",
+        pk="id",
+        prefix="res",
+        compute_layer=ComputeLayerEnum.sqlite,
+        feature_families=("context",),
+    )
+
+    assert node.sql_auto_annotate(sample) == []
 
 
 def test_custom_node_definition():

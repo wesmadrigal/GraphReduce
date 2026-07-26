@@ -361,3 +361,87 @@ def test_date_nodes():
     print(df[['cust_id',label]])
 
     assert len(df) == 6
+
+
+def test_date_node_not_joined_when_train_false():
+    cut_date = datetime.datetime(2023, 5, 1)
+    data_dir = Path(base).resolve()
+    con = duckdb.connect()
+
+    cust = DuckdbNode(
+        fpath=f"'{data_dir / 'cust.csv'}'",
+        prefix="cust",
+        pk="id",
+        date_key=None,
+        columns=["id", "name"],
+        table_name="cust",
+        client=con,
+    )
+    order = DuckdbNode(
+        fpath=f"'{data_dir / 'orders.csv'}'",
+        prefix="ord",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts", "amount"],
+        table_name="ord",
+        client=con,
+    )
+    date_node = DuckdbNode(
+        fpath=f"'{data_dir / 'orders.csv'}'",
+        prefix="cd",
+        pk="customer_id",
+        date_key="first_order_date",
+        table_name="cut_date",
+        do_data_ops=sqlop(
+            optype=SQLOpType.custom,
+            opval=f"""
+                SELECT
+                    customer_id AS cd_customer_id,
+                    min(ts) AS cd_first_order_date
+                FROM '{data_dir / 'orders.csv'}'
+                GROUP BY customer_id
+            """,
+        ),
+        client=con,
+    )
+
+    gr = GraphReduce(
+        name="customers_no_date_join_on_score",
+        parent_node=cust,
+        compute_layer=ComputeLayerEnum.duckdb,
+        sql_client=con,
+        cut_date=cut_date,
+        compute_period_val=365,
+        compute_period_unit=PeriodUnit.day,
+        auto_features=False,
+        label_node=None,
+        label_period_val=None,
+        label_period_unit=None,
+        date_node=date_node,
+        train=False,
+    )
+
+    for node in [cust, order]:
+        gr.add_node(node)
+
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=order,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=date_node,
+        parent_key="id",
+        relation_key="customer_id",
+    )
+
+    gr.do_transformations_sql()
+
+    df = con.execute(f"select * from {gr.parent_node._cur_data_ref}").df()
+    assert "cd_first_order_date" not in df.columns
+    assert not any(col.startswith("cd_") for col in df.columns)
+    assert len(df) > 0
+    con.close()

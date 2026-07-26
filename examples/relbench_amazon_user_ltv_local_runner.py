@@ -33,6 +33,8 @@ def main() -> None:
     print("test_rows:", len(df_test), flush=True)
     print("columns:", len(df_train.columns), flush=True)
     print("feature_count:", n_features, flush=True)
+    print("validation_nmae:", val_metrics["nmae"] if val_metrics is not None else "skipped", flush=True)
+    print("test_nmae:", test_metrics["nmae"] if test_metrics is not None else "skipped", flush=True)
     print("validation_metrics:", val_metrics if val_metrics is not None else "skipped", flush=True)
     print("test_metrics:", test_metrics if test_metrics is not None else "skipped", flush=True)
     if _is_interactive_mode():

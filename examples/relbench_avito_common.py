@@ -17,7 +17,7 @@ from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
-from relbench_dataset_utils import materialize_relbench_dataset
+from relbench_dataset_utils import get_relbench_dataset_db, register_relbench_db_views
 
 TABLE_NAME_TO_FILENAME = {
     "AdsInfo": "AdsInfo.parquet",
@@ -37,11 +37,7 @@ LABEL_PERIOD_DAYS = 5  # 4-day task window with GraphReduce's strict-less-than b
 
 
 def materialize_rel_avito_data(data_dir: Path) -> list[str]:
-    return materialize_relbench_dataset("rel-avito", data_dir, TABLE_NAME_TO_FILENAME)
-
-
-def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
-    con.sql(f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM read_parquet('{parquet_path}')")
+    return []
 
 
 def _infer_columns(con: duckdb.DuckDBPyConnection, view_name: str) -> list[str]:
@@ -104,13 +100,20 @@ def _build_visits_click_annotate(
     )
 
 
-def _build_frame(data_dir: Path, mode: str) -> pd.DataFrame:
+def _build_frame(mode: str) -> pd.DataFrame:
+    _, db = get_relbench_dataset_db("rel-avito", download=True, upto_test_timestamp=False)
     con = duckdb.connect()
     try:
-        _prepare_view(con, "ads_src", data_dir / "AdsInfo.parquet")
-        _prepare_view(con, "search_src", data_dir / "SearchInfo.parquet")
-        _prepare_view(con, "user_src", data_dir / "UserInfo.parquet")
-        _prepare_view(con, "visits_src", data_dir / "VisitsStream.parquet")
+        register_relbench_db_views(
+            con,
+            db,
+            {
+                "AdsInfo": "ads_src",
+                "SearchInfo": "search_src",
+                "UserInfo": "user_src",
+                "VisitStream": "visits_src",
+            },
+        )
 
         ads_cols = _infer_columns(con, "ads_src")
         user_cols = _infer_columns(con, "user_src")
@@ -307,9 +310,8 @@ def run_avito_task(
     if mode not in {"user_clicks", "user_visits"}:
         raise ValueError("mode must be 'user_clicks' or 'user_visits'")
 
-    use_dir = data_dir or Path("tests/data/relbench/rel-avito")
-    materialized = materialize_rel_avito_data(use_dir)
-    df = _build_frame(use_dir, mode=mode)
+    materialized: list[str] = []
+    df = _build_frame(mode=mode)
 
     if mode == "user_clicks":
         target = "user_clicked_next_4d"

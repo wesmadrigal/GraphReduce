@@ -3,119 +3,83 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
-from relbench.datasets import get_dataset
-from relbench.tasks import get_task
 from relbench.metrics import accuracy, average_precision, f1, roc_auc
+from relbench_dataset_utils import (
+    RelBenchFrameStore,
+    get_relbench_dataset_db,
+    get_relbench_split_task_table,
+    register_relbench_db_views,
+)
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.node import DuckdbNode
+from relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES, fit_tuned_classifier_incremental, set_feature_families
 
 DATASET_NAME = "rel-event"
-REL_CACHE_DIR = Path("tests/data/relbench_cache").resolve()
-RAW_DATA_DIR = Path("tests/data/relbench/rel-event")
-RELBENCH_EVENT_SOURCE_DIR = Path("data/rel-event")
-DATA_DIR = Path("tests/data/relbench/rel-event")
 TABLES = ["users", "events", "event_attendees", "event_interest", "user_friends"]
+TABLE_TO_VIEW = {
+    "users": "users_src",
+    "events": "events_src",
+    "event_attendees": "event_attendees_src",
+    "event_interest": "event_interest_src",
+    "user_friends": "user_friends_src",
+}
+ROW_NUMBER_IDS = {
+    "event_attendees": "attendee_id",
+    "event_interest": "interest_id",
+    "user_friends": "friendship_id",
+}
+DROP_COLUMNS = {
+    "event_attendees": ["Unnamed: 0"],
+    "user_friends": ["Unnamed: 0"],
+}
 VALIDATION_CUT_DATE = pd.Timestamp("2012-11-21")
 TEST_CUT_DATE = pd.Timestamp("2012-11-29")
 LABEL_TIMEDELTA = pd.Timedelta(days=7)
 TARGET_COLUMN = "target"
 
 
-def _find_raw_data_dir() -> Path | None:
-    required_names = {
-        "event-recommendation-engine-challenge.zip",
-        "users.csv",
-        "events.csv",
-        "train.csv",
-        "event_attendees.csv",
-        "user_friends.csv",
-    }
-    if RAW_DATA_DIR.exists() and any((RAW_DATA_DIR / name).exists() for name in required_names):
-        return RAW_DATA_DIR
-    return None
+def _catboost_inputs(
+    frame: pd.DataFrame,
+    feature_columns: list[str],
+) -> tuple[pd.DataFrame, list[int]]:
+    """Keep user categoricals instead of silently dropping them before CatBoost."""
 
-
-def _prepare_relbench_event_source(raw_data_dir: Path) -> None:
-    RELBENCH_EVENT_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
-    for name in [
-        "event-recommendation-engine-challenge.zip",
-        "users.csv",
-        "events.csv",
-        "train.csv",
-        "event_attendees.csv",
-        "user_friends.csv",
-        "user_friends.csv.gz",
-        "events.csv.gz",
-        "event_attendees.csv.gz",
-    ]:
-        source = raw_data_dir / name
-        target = RELBENCH_EVENT_SOURCE_DIR / name
-        if source.exists() and not target.exists():
-            try:
-                target.symlink_to(source.resolve())
-            except OSError:
-                shutil.copy2(source, target)
+    inputs = frame[feature_columns].copy()
+    categorical_indices: list[int] = []
+    for index, column in enumerate(feature_columns):
+        series = inputs[column]
+        if (
+            pd.api.types.is_object_dtype(series)
+            or pd.api.types.is_string_dtype(series)
+            or pd.api.types.is_categorical_dtype(series)
+        ):
+            inputs[column] = series.fillna("__missing__").astype(str)
+            categorical_indices.append(index)
+        else:
+            inputs[column] = pd.to_numeric(series, errors="coerce").fillna(0)
+    return inputs, categorical_indices
 
 
 def run_rel_event_user_ignore(
     data_dir: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
-    raw_data_dir = _find_raw_data_dir()
-    if raw_data_dir is None:
-        raise RuntimeError(
-            "RelBench rel-event requires the Kaggle Event Recommendation Engine Challenge files. "
-            "Place them under 'tests/data/relbench/rel-event'."
-        )
-
-    os.environ.setdefault("RELBENCH_CACHE_DIR", str(REL_CACHE_DIR))
-    _prepare_relbench_event_source(raw_data_dir)
-    use_dir = (data_dir or DATA_DIR).resolve()
-    use_dir.mkdir(parents=True, exist_ok=True)
-
-    dataset = get_dataset(DATASET_NAME, download=False)
-    db = dataset.get_db(upto_test_timestamp=False)
-    official_task = get_task(DATASET_NAME, "user-ignore", download=False)
+) -> tuple[RelBenchFrameStore, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
+    _, db = get_relbench_dataset_db(
+        DATASET_NAME, download=True, upto_test_timestamp=False
+    )
     materialized: list[str] = []
-    for table_name in TABLES:
-        out_path = use_dir / f"{table_name}.parquet"
-        if not out_path.exists():
-            db.table_dict[table_name].df.to_parquet(out_path, index=False)
-            materialized.append(out_path.name)
 
     con = duckdb.connect()
-    split_frames: dict[str, pd.DataFrame] = {}
+    split_frames: dict[str, RelBenchFrameStore] = {}
 
     try:
-        con.sql(f"CREATE OR REPLACE VIEW users_src AS SELECT * FROM read_parquet('{use_dir / 'users.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW events_src AS SELECT * FROM read_parquet('{use_dir / 'events.parquet'}')")
-        con.sql(
-            f"""
-            CREATE OR REPLACE VIEW event_attendees_src AS
-            SELECT row_number() OVER () AS attendee_id, * FROM read_parquet('{use_dir / 'event_attendees.parquet'}')
-            """
-        )
-        con.sql(
-            f"""
-            CREATE OR REPLACE VIEW event_interest_src AS
-            SELECT row_number() OVER () AS interest_id, * FROM read_parquet('{use_dir / 'event_interest.parquet'}')
-            """
-        )
-        con.sql(
-            f"""
-            CREATE OR REPLACE VIEW user_friends_src AS
-            SELECT row_number() OVER () AS friendship_id, * FROM read_parquet('{use_dir / 'user_friends.parquet'}')
-            """
-        )
+        register_relbench_db_views(con, db, TABLE_TO_VIEW, ROW_NUMBER_IDS, DROP_COLUMNS)
 
         bounds = con.sql(
             """
@@ -133,6 +97,10 @@ def run_rel_event_user_ignore(
         lookback_start = pd.Timestamp(bounds.loc[0, "min_timestamp"])
         user_columns = con.sql("SELECT * FROM users_src LIMIT 0").to_df().columns.tolist()
         event_columns = con.sql("SELECT * FROM events_src LIMIT 0").to_df().columns.tolist()
+        # RelBench stores ZIP codes as strings. GraphReduce 1.9.1 can infer
+        # numeric-looking strings as aggregate inputs and then emit SUM(zip),
+        # which DuckDB rejects for this VARCHAR column.
+        event_columns = [column for column in event_columns if column.lower() != "zip"]
         attendee_columns = con.sql("SELECT * FROM event_attendees_src LIMIT 0").to_df().columns.tolist()
         interest_columns = con.sql("SELECT * FROM event_interest_src LIMIT 0").to_df().columns.tolist()
         friend_columns = con.sql("SELECT * FROM user_friends_src LIMIT 0").to_df().columns.tolist()
@@ -154,22 +122,25 @@ def run_rel_event_user_ignore(
         friend_id_col = {column.lower(): column for column in friend_columns}["friendship_id"]
         friend_user_col = {column.lower(): column for column in friend_columns}["user"]
 
-        official_tables = {
-            "train": official_task.get_table("train", mask_input_cols=False).df.copy(),
-            "val": official_task.get_table("val", mask_input_cols=False).df.copy(),
-            "test": official_task.get_table("test", mask_input_cols=False).df.copy(),
-        }
-
-        split_cut_dates = {
-            split_name: sorted(pd.to_datetime(table["timestamp"]).drop_duplicates().tolist())
-            for split_name, table in official_tables.items()
-        }
+        official_tables = {}
+        split_cut_dates = {}
+        for split_name in ("train", "val", "test"):
+            _, task_table, cut_timestamps = get_relbench_split_task_table(
+                DATASET_NAME, "user-ignore", split_name, download=True, db=db
+            )
+            official_tables[split_name] = task_table.df.copy()
+            split_cut_dates[split_name] = cut_timestamps
 
         for split_name, cut_dates in split_cut_dates.items():
-            split_list: list[pd.DataFrame] = []
+            frame_store = RelBenchFrameStore(
+                f"rel-event-user-ignore-{split_name}", persist_each_frame=True
+            )
 
             for cut_date in cut_dates:
                 feature_cut_date = pd.Timestamp(cut_date) + pd.Timedelta(seconds=1)
+                feature_cut_timestamp = feature_cut_date.strftime(
+                    "%Y-%m-%d %H:%M:%S.%f"
+                )
 
                 users_node = DuckdbNode(
                     fpath="users_src",
@@ -191,6 +162,13 @@ def run_rel_event_user_ignore(
                     pk=attendee_id_col,
                     date_key=attendee_date_col,
                     columns=attendee_columns,
+                    feature_family_max_columns=4,
+                    categorical_top_k=5,
+                    context_keys=(attendee_event_col,),
+                    annotation_expressions={
+                        "is_attending": f"{{{attendee_status_col}}} IN ('yes', 'maybe')",
+                        "is_declined": f"{{{attendee_status_col}}} = 'no'",
+                    },
                 )
                 interest_node = DuckdbNode(
                     fpath="event_interest_src",
@@ -198,6 +176,9 @@ def run_rel_event_user_ignore(
                     pk=interest_id_col,
                     date_key=interest_date_col,
                     columns=interest_columns,
+                    feature_family_max_columns=4,
+                    categorical_top_k=5,
+                    context_keys=(interest_event_col,),
                 )
                 friends_node = DuckdbNode(
                     fpath="user_friends_src",
@@ -223,7 +204,11 @@ def run_rel_event_user_ignore(
                     use_temp_tables=True,
                 )
 
-                for node in [users_node, events_node, attendees_node, interest_node, friends_node]:
+                nodes = [users_node, events_node, attendees_node, interest_node, friends_node]
+                set_feature_families(
+                    [attendees_node, interest_node], TEMPORAL_FEATURE_FAMILIES
+                )
+                for node in nodes:
                     graph.add_node(node)
 
                 graph.add_entity_edge(users_node, attendees_node, user_id_col, attendee_user_col, reduce=True)
@@ -235,6 +220,7 @@ def run_rel_event_user_ignore(
 
                 graph.do_transformations_sql()
                 features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+                graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
                 labels = official_tables[split_name].copy()
@@ -249,38 +235,64 @@ def run_rel_event_user_ignore(
                     how="inner",
                 ).drop(columns=["user"])
                 frame[TARGET_COLUMN] = frame[TARGET_COLUMN].astype("int8")
-                split_list.append(frame)
+                frame_store.append(frame)
 
-            split_frames[split_name] = pd.concat(split_list, ignore_index=True)
+            split_frames[split_name] = frame_store
     finally:
         con.close()
 
-    df_train = split_frames["train"]
-    df_val = split_frames["val"]
-    df_test = split_frames["test"]
-    common_columns = set(df_train.columns) & set(df_val.columns) & set(df_test.columns)
+    train_store = split_frames["train"]
+    df_val = split_frames["val"].to_dataframe()
+    df_test = split_frames["test"].to_dataframe()
+    split_frames["val"].close()
+    split_frames["test"].close()
+    train_sample = train_store.sample_frame()
+    common_columns = set(train_sample.columns) & set(df_val.columns) & set(df_test.columns)
     feature_columns = [
         column
-        for column in df_train.select_dtypes(include=[np.number, "bool"]).columns
-        if column != TARGET_COLUMN and "label" not in column.lower() and "user_id" not in column.lower() and column in common_columns
+        for column in train_sample.columns
+        if column in common_columns
+        and column != TARGET_COLUMN
+        and "label" not in column.lower()
+        and "user_id" not in column.lower()
+        and not pd.api.types.is_datetime64_any_dtype(train_sample[column])
+        and (
+            pd.api.types.is_numeric_dtype(train_sample[column])
+            or pd.api.types.is_bool_dtype(train_sample[column])
+            or pd.api.types.is_object_dtype(train_sample[column])
+            or pd.api.types.is_string_dtype(train_sample[column])
+            or pd.api.types.is_categorical_dtype(train_sample[column])
+        )
     ]
-    if not feature_columns or df_train[TARGET_COLUMN].nunique() < 2:
-        return df_train, df_val, df_test, None, None, len(feature_columns), materialized, TARGET_COLUMN
+    if not feature_columns or train_store.target_nunique(TARGET_COLUMN) < 2:
+        return train_store, df_val, df_test, None, None, len(feature_columns), materialized, TARGET_COLUMN
 
-    model = CatBoostClassifier(
-        iterations=5000,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="Logloss",
-        eval_metric="AUC",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
+    _, categorical_indices = _catboost_inputs(train_sample, feature_columns)
+    val_inputs, _ = _catboost_inputs(df_val, feature_columns)
+    test_inputs, _ = _catboost_inputs(df_test, feature_columns)
+
+    def train_batches():
+        for batch in train_store.iter_batches():
+            inputs, _ = _catboost_inputs(batch, feature_columns)
+            inputs[TARGET_COLUMN] = batch[TARGET_COLUMN].to_numpy()
+            yield inputs
+
+    model, best_config, best_val_auc = fit_tuned_classifier_incremental(
+        train_batches,
+        feature_columns,
+        TARGET_COLUMN,
+        val_inputs,
+        df_val[TARGET_COLUMN],
+        batch_count=len(train_store.part_paths),
+        cat_features=categorical_indices,
+        auto_class_weights="Balanced",
     )
-    model.fit(df_train[feature_columns].fillna(0), df_train[TARGET_COLUMN])
+    print("catboost_config:", best_config, flush=True)
+    print("catboost_validation_auc:", best_val_auc, flush=True)
+    print("catboost_best_iteration:", model.get_best_iteration(), flush=True)
 
-    val_predictions = np.asarray(model.predict_proba(df_val[feature_columns].fillna(0))[:, 1], dtype="float64")
-    test_predictions = np.asarray(model.predict_proba(df_test[feature_columns].fillna(0))[:, 1], dtype="float64")
+    val_predictions = np.asarray(model.predict_proba(val_inputs)[:, 1], dtype="float64")
+    test_predictions = np.asarray(model.predict_proba(test_inputs)[:, 1], dtype="float64")
     val_target = df_val[TARGET_COLUMN].to_numpy(dtype="float64")
     test_target = df_test[TARGET_COLUMN].to_numpy(dtype="float64")
     val_metrics = {
@@ -295,7 +307,7 @@ def run_rel_event_user_ignore(
         "f1": float(f1(test_target, test_predictions)),
         "roc_auc": float(roc_auc(test_target, test_predictions)),
     }
-    return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, TARGET_COLUMN
+    return train_store, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, TARGET_COLUMN
 
 
 def main() -> None:
@@ -304,12 +316,13 @@ def main() -> None:
     print("validation_timestamp:", VALIDATION_CUT_DATE.date(), flush=True)
     print("test_timestamp:", TEST_CUT_DATE.date(), flush=True)
     print("target:", target, flush=True)
-    print("train_rows:", len(df_train), flush=True)
+    print("train_rows:", df_train.row_count, flush=True)
     print("validation_rows:", len(df_val), flush=True)
     print("test_rows:", len(df_test), flush=True)
     print("feature_count:", n_features, flush=True)
     print("validation_metrics:", val_metrics if val_metrics is not None else "skipped", flush=True)
     print("test_metrics:", test_metrics if test_metrics is not None else "skipped", flush=True)
+    df_train.close()
 
 
 if __name__ == "__main__":

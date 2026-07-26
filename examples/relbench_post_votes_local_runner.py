@@ -1,274 +1,141 @@
 #!/usr/bin/env python
-"""Run rel-stack post-votes example as a script (no pytest)."""
+"""Run rel-stack post-votes with RelBench task tables."""
 
 from __future__ import annotations
 
-import datetime
-from pathlib import Path
-
 import duckdb
-import numpy as np
-from catboost import CatBoostRegressor
-from relbench.datasets import get_dataset
-from sklearn.metrics import mean_absolute_error
-from sklearn.model_selection import KFold, train_test_split
 
-from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
-from graphreduce.graph_reduce import GraphReduce
-from graphreduce.models import sqlop
-from graphreduce.node import DuckdbNode
-from graphreduce.stypes import infer_df_stype
-
-TABLE_NAME_TO_CSV = {
-    "users": "Users.csv",
-    "posts": "Posts.csv",
-    "badges": "Badges.csv",
-    "postHistory": "PostHistory.csv",
-    "postLinks": "PostLinks.csv",
-    "votes": "Votes.csv",
-    "comments": "Comments.csv",
-}
+from relbench_stack_task_utils import (
+    build_post_votes_features,
+    build_task_split_frame,
+    materialize_rel_stack,
+    prepare_stack_views,
+    select_shared_numeric_features,
+    target_table_from_frame,
+)
+from relbench_regression_metrics import add_nmae
+from relbench_catboost_utils import fit_incremental_regressor
 
 
 def _print_steps_summary(materialized_files: list[str], result_text: str) -> None:
     print("\nSteps completed:", flush=True)
-    print(f"1. Materialized relbench CSVs to disk: {len(materialized_files)} file(s).", flush=True)
-    print("2. Prepared and aggregated two GraphReduce datasets (2020 train/eval, 2021 out-of-time).", flush=True)
-    print("3. Trained CatBoost model on the 2020 dataset.", flush=True)
-    print("4. Predicted and scored on 2020 holdout and 2021 out-of-time datasets.", flush=True)
+    print(
+        f"1. Loaded official RelBench DB views: {len(materialized_files)} materialized file(s).",
+        flush=True,
+    )
+    print("2. Built train/validation/test GraphReduce frames at task timestamps.", flush=True)
+    print("3. Joined RelBench task-table labels to each feature frame.", flush=True)
+    print("4. Trained CatBoost and evaluated with the RelBench task metrics.", flush=True)
     print(f"5. Achieved the following result: {result_text}", flush=True)
 
 
-def _materialize_relbench_stack_csvs(data_dir: Path) -> list[str]:
-    dataset = get_dataset("rel-stack", download=True)
-    db = dataset.get_db(upto_test_timestamp=False)
-    materialized_files: list[str] = []
-
-    for table_name, csv_name in TABLE_NAME_TO_CSV.items():
-        out_path = data_dir / csv_name
-        db.table_dict[table_name].df.to_csv(out_path, index=False)
-        materialized_files.append(csv_name)
-
-    return materialized_files
-
-
-def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, csv_path: Path) -> None:
-    con.sql(
-        f"""
-        CREATE OR REPLACE VIEW {view_name} AS
-        SELECT *
-        FROM read_csv_auto(
-            '{csv_path}',
-            header=true,
-            strict_mode=false,
-            ignore_errors=true
-        );
-        """
-    )
-
-
-def _build_post_votes_frame(
-    con: duckdb.DuckDBPyConnection,
-    cut_date: datetime.datetime,
-) -> tuple[object, str]:
-    post = DuckdbNode(
-        fpath="posts_src",
-        prefix="post",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "OwnerUserId", "PostTypeId", "ParentId", "Title", "Tags", "Body", "CreationDate"],
-        do_filters_ops=[
-            sqlop(optype=SQLOpType.where, opval=f"post_CreationDate <= '{cut_date.date()}'"),
-            sqlop(optype=SQLOpType.where, opval="post_PostTypeId = 1"),
-            sqlop(optype=SQLOpType.where, opval="post_OwnerUserId is not null"),
-            sqlop(optype=SQLOpType.where, opval="post_OwnerUserId != -1"),
-        ],
-    )
-    vote = DuckdbNode(
-        fpath="votes_src",
-        prefix="vote",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "PostId", "VoteTypeId", "UserId", "CreationDate"],
-        do_labels_ops=[
-            sqlop(
-                optype=SQLOpType.aggfunc,
-                opval="sum(case when vote_VoteTypeId = 2 then 1 else 0 end) as vote_positive_votes_label",
-            ),
-            sqlop(optype=SQLOpType.agg, opval="vote_PostId"),
-        ],
-    )
-    comment = DuckdbNode(
-        fpath="comments_src",
-        prefix="comm",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "PostId", "Text", "CreationDate", "UserId", "ContentLicense"],
-    )
-    post_history = DuckdbNode(
-        fpath="post_history_src",
-        prefix="ph",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "PostHistoryTypeId", "PostId", "RevisionGUID", "CreationDate", "UserId", "Text", "Comment", "ContentLicense"],
-    )
-    post_links = DuckdbNode(
-        fpath="post_links_src",
-        prefix="plink",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "CreationDate", "PostId", "RelatedPostId", "LinkTypeId"],
-    )
-    user = DuckdbNode(
-        fpath="users_src",
-        prefix="user",
-        pk="Id",
-        date_key="CreationDate",
-        columns=["Id", "DisplayName", "Location", "ProfileImageUrl", "WebsiteUrl", "AboutMe", "CreationDate"],
-    )
-    badge = DuckdbNode(
-        fpath="badges_src",
-        prefix="bad",
-        pk="Id",
-        date_key="Date",
-        columns=["Id", "UserId", "Class", "Name", "Date"],
-    )
-
-    gr = GraphReduce(
-        name=f"relbench-post-votes-local-{cut_date.date()}",
-        parent_node=post,
-        compute_layer=ComputeLayerEnum.duckdb,
-        sql_client=con,
-        cut_date=cut_date,
-        compute_period_val=3650,
-        compute_period_unit=PeriodUnit.day,
-        date_filters_on_agg=True,
-        auto_features=True,
-        label_node=vote,
-        label_period_val=90,
-        label_period_unit=PeriodUnit.day,
-        auto_feature_hops_back=4,
-        auto_feature_hops_front=0,
-    )
-
-    for node in [post, vote, comment, post_history, post_links, user, badge]:
-        gr.add_node(node)
-
-    gr.add_entity_edge(post, vote, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, comment, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, post_history, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, post_links, parent_key="Id", relation_key="PostId", reduce=True)
-    gr.add_entity_edge(post, user, parent_key="OwnerUserId", relation_key="Id", reduce=True)
-    gr.add_entity_edge(user, badge, parent_key="Id", relation_key="UserId", reduce=True)
-
-    gr.do_transformations_sql()
-    df = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df().copy()
-    label_cols = [c for c in df.columns if c.startswith("vote_") and "label" in c.lower()]
-    if not label_cols:
-        raise ValueError("No vote label columns found.")
-    target = label_cols[0]
-    df[target] = df[target].fillna(0).astype("float64")
-    return df, target
-
-
 def main() -> None:
-    data_dir = Path("tests/data/relbench/rel-stack")
-    data_dir.mkdir(parents=True, exist_ok=True)
-    materialized_files = _materialize_relbench_stack_csvs(data_dir)
+    materialized_files = materialize_rel_stack()
 
-    train_cut_date = datetime.datetime(2020, 1, 1)
-    future_cut_date = datetime.datetime(2021, 1, 1)
     con = duckdb.connect()
-    _prepare_view(con, "users_src", data_dir / "Users.csv")
-    _prepare_view(con, "posts_src", data_dir / "Posts.csv")
-    _prepare_view(con, "badges_src", data_dir / "Badges.csv")
-    _prepare_view(con, "post_history_src", data_dir / "PostHistory.csv")
-    _prepare_view(con, "post_links_src", data_dir / "PostLinks.csv")
-    _prepare_view(con, "votes_src", data_dir / "Votes.csv")
-    _prepare_view(con, "comments_src", data_dir / "Comments.csv")
+    prepare_stack_views(con)
+    print("Starting rel-stack post-votes pipeline...", flush=True)
 
-    print("Starting rel-stack post votes pipeline...", flush=True)
-    print("Building 2020 training/eval graph...", flush=True)
-    df_train, target = _build_post_votes_frame(con, train_cut_date)
-    print("Building 2021 out-of-time graph...", flush=True)
-    df_future, target_future = _build_post_votes_frame(con, future_cut_date)
-    if target != target_future:
-        raise ValueError(f"Target mismatch between train ({target}) and future ({target_future})")
+    task, _, train_store, train_cut_date = build_task_split_frame(
+        con,
+        task_name="post-votes",
+        split="train",
+        feature_builder=build_post_votes_features,
+        feature_entity_col="post_Id",
+        use_all_timestamps=True,
+    )
+    _, _, val_store, val_cut_date = build_task_split_frame(
+        con,
+        task_name="post-votes",
+        split="val",
+        feature_builder=build_post_votes_features,
+        feature_entity_col="post_Id",
+    )
+    _, _, test_store, test_cut_date = build_task_split_frame(
+        con,
+        task_name="post-votes",
+        split="test",
+        feature_builder=build_post_votes_features,
+        feature_entity_col="post_Id",
+    )
 
-    stypes = infer_df_stype(df_train)
-    features = [
-        k for k, v in stypes.items()
-        if str(v) == "numerical" and k not in ["post_Id", "post_OwnerUserId"] and "label" not in k and "had_engagement" not in k
-    ]
-    features = [c for c in features if c in df_train.columns and c in df_future.columns]
+    df_val = val_store.to_dataframe()
+    df_test = test_store.to_dataframe()
+    val_store.close()
+    test_store.close()
+    train_sample = train_store.sample_frame()
+    target = task.target_col
+    features = select_shared_numeric_features(
+        train_sample,
+        df_val,
+        df_test,
+        target_col=target,
+        excluded_cols={"post_Id", "post_OwnerUserId", task.entity_col},
+    )
 
-    print(f"train rows: {len(df_train)}", flush=True)
-    print(f"train columns: {len(df_train.columns)}", flush=True)
-    print("train shape:", df_train.shape, flush=True)
-    print(f"future rows: {len(df_future)}", flush=True)
-    print(f"future columns: {len(df_future.columns)}", flush=True)
-    print("future shape:", df_future.shape, flush=True)
-    print(f"target: {target}", flush=True)
-    print(f"num_features: {len(features)}", flush=True)
+    print("train_cut_date:", train_cut_date.date(), flush=True)
+    print("validation_cut_date:", val_cut_date.date(), flush=True)
+    print("test_cut_date:", test_cut_date.date(), flush=True)
+    print("train_timestamps:", train_store.column_nunique(task.time_col), flush=True)
+    print("validation_timestamps:", df_val[task.time_col].nunique(), flush=True)
+    print("test_timestamps:", df_test[task.time_col].nunique(), flush=True)
+    print("train_rows:", train_store.row_count, flush=True)
+    print("validation_rows:", len(df_val), flush=True)
+    print("test_rows:", len(df_test), flush=True)
+    print("target:", target, flush=True)
+    print("num_features:", len(features), flush=True)
 
-    if len(features) == 0:
+    if not features:
         print("no numerical features; skipping model fit", flush=True)
-        _print_steps_summary(materialized_files, "model fit skipped due to no numerical features")
+        _print_steps_summary(
+            materialized_files, "model fit skipped due to no numerical features"
+        )
+        con.close()
         return
 
-    X_train_full, X_test, y_train_full, y_test = train_test_split(
-        df_train[features], df_train[target], test_size=0.2, random_state=42
+    model, _ = fit_incremental_regressor(
+        lambda: train_store.iter_batches(),
+        features,
+        target,
+        df_val[features].fillna(0),
+        df_val[target],
+        batch_count=len(train_store.part_paths),
+        config={
+            "iterations": 1000,
+            "learning_rate": 0.05,
+            "depth": 6,
+            "l2_leaf_reg": 3.0,
+        },
     )
-    kf = KFold(n_splits=2, shuffle=True, random_state=42)
-    fold_maes: list[float] = []
-    test_preds = np.zeros(len(X_test))
 
-    for fold, (idx_tr, idx_va) in enumerate(kf.split(X_train_full), 1):
-        if fold > 1:
-            break
-        print(f"\n=== Fold {fold} ===", flush=True)
-        X_tr, X_va = X_train_full.iloc[idx_tr], X_train_full.iloc[idx_va]
-        y_tr, y_va = y_train_full.iloc[idx_tr], y_train_full.iloc[idx_va]
-        mdl = CatBoostRegressor(
-            loss_function="MAE",
-            eval_metric="MAE",
-            iterations=1000,
-            learning_rate=0.05,
-            depth=6,
-            verbose=200,
-        )
-        mdl.fit(X_tr, y_tr, eval_set=(X_va, y_va), use_best_model=True, verbose=200)
-        val_pred = mdl.predict(X_va)
-        val_mae = mean_absolute_error(y_va, val_pred)
-        fold_maes.append(val_mae)
-        print(f"Fold {fold} validation MAE : {val_mae:.4f}", flush=True)
-        test_preds += mdl.predict(X_test)
-
-    print("\n=== CV Summary ===", flush=True)
-    print(f"Mean CV MAE : {np.mean(fold_maes):.4f} ± {np.std(fold_maes):.4f}", flush=True)
-    print(f"Folds MAE   : {[f'{a:.4f}' for a in fold_maes]}", flush=True)
-    holdout_mae = mean_absolute_error(y_test, test_preds)
-    print(f"in_time_holdout_mae_2020: {holdout_mae:.4f}", flush=True)
-
-    final_mdl = CatBoostRegressor(
-        loss_function="MAE",
-        eval_metric="MAE",
-        iterations=int(mdl.best_iteration_ * 1.1),
-        learning_rate=0.05,
-        depth=6,
-        verbose=200,
+    val_pred = model.predict(df_val[features].fillna(0))
+    test_pred = model.predict(df_test[features].fillna(0))
+    val_metrics = add_nmae(
+        task.evaluate(val_pred, target_table_from_frame(task, df_val)),
+        df_val[target],
+        val_pred,
+        train_store.target_std(target),
     )
-    final_mdl.fit(df_train[features], df_train[target], verbose=200)
-    future_preds = final_mdl.predict(df_future[features])
-    future_mae = mean_absolute_error(df_future[target], future_preds)
-    print(f"out_of_time_mae_2021: {future_mae:.4f}", flush=True)
+    test_metrics = add_nmae(
+        task.evaluate(test_pred, target_table_from_frame(task, df_test)),
+        df_test[target],
+        test_pred,
+        train_store.target_std(target),
+    )
+
+    print("validation_nmae:", val_metrics["nmae"], flush=True)
+    print("test_nmae:", test_metrics["nmae"], flush=True)
+    print("validation_metrics:", val_metrics, flush=True)
+    print("test_metrics:", test_metrics, flush=True)
     _print_steps_summary(
         materialized_files,
         (
-            f"CatBoost in-time holdout MAE (2020 cut date) = {holdout_mae:.4f}; "
-            f"CatBoost out-of-time MAE (2021 cut date) = {future_mae:.4f}"
+            f"CatBoost validation metrics = {val_metrics}; "
+            f"CatBoost test metrics = {test_metrics}"
         ),
     )
+    train_store.close()
+    con.close()
 
 
 if __name__ == "__main__":
