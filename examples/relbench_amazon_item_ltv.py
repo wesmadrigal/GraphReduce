@@ -285,7 +285,7 @@ def run_rel_amazon_item_ltv(
         "learning_rate": 0.05,
         "l2_leaf_reg": 3.0,
     }
-    model, best_val_mae = fit_tuned_regressor_incremental(
+    model, best_config, best_val_mae = fit_tuned_regressor_incremental(
         lambda: train_store.iter_batches(),
         feature_columns,
         target,
@@ -294,6 +294,7 @@ def run_rel_amazon_item_ltv(
         batch_count=len(train_store.part_paths),
         configs=(config,),
     )
+    print("catboost_config:", best_config, flush=True)
     print("catboost_validation_mae:", best_val_mae, flush=True)
 
     val_predictions = model.predict(df_val[feature_columns].fillna(0))
