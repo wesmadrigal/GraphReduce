@@ -25,7 +25,7 @@ if __name__ == "__main__":
             "httpx==0.27.0",
             "icecream",
             "networkx>=2.6.3",
-            "numpy>=1.15,<2",
+            "numpy>=1.16,<2",
             "pandas>=1.3.4",
             "pyvis>=0.3.1",
             "setuptools>=65.5.1",
@@ -50,6 +50,12 @@ if __name__ == "__main__":
             "ml": [
                 "pytorch_frame",
             ],
+            "relbench": [
+                "relbench==2.1.1",
+                "catboost==1.2.10",
+                "pyarrow==23.0.1",
+                "scikit-learn==1.6.0",
+            ],
             "dev": [
                 "pytest>=8.0.2",
             ],
@@ -61,6 +67,10 @@ if __name__ == "__main__":
                 "deltalake==0.20.1",
                 "pyiceberg==0.8.1",
                 "pytorch_frame",
+                "relbench==2.1.1",
+                "catboost==1.2.10",
+                "pyarrow==23.0.1",
+                "scikit-learn==1.6.0",
                 "pytest>=8.0.2",
             ],
         },
