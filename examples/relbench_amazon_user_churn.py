@@ -105,7 +105,6 @@ def run_rel_amazon_user_churn(
                     pk=review_id,
                     date_key=review_time,
                     columns=review_feature_columns,
-                    ts_periods=(),
                     auto_text_features=False,
                 )
                 review_node.feature_family_max_columns = 4

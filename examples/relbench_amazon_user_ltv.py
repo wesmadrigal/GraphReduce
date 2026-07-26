@@ -146,7 +146,6 @@ def _build_feature_frames(
             pk=review_id,
             date_key=review_time,
             columns=review_columns,
-            ts_periods=(),
             auto_text_features=False,
         )
 
