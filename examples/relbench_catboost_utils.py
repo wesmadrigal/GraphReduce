@@ -281,18 +281,27 @@ def fit_incremental_regressor(
     params = _incremental_model_params(config, "MAE", iterations)
     model: CatBoostRegressor | None = None
     for batch in train_batch_factory():
+        target = batch[target_column]
+        # CatBoost cannot fit a regression batch whose target has no
+        # variation. Sparse early cutoff frames can legitimately have this
+        # shape; skip them and continue the incremental model on the next
+        # informative frame.
+        if target.nunique(dropna=True) < 2:
+            continue
         inputs = batch.reindex(columns=list(feature_columns), fill_value=0).fillna(0)
         next_model = CatBoostRegressor(**params)
         next_model.fit(
             inputs,
-            batch[target_column].astype("float64"),
+            target.astype("float64"),
             init_model=model,
             use_best_model=False,
         )
         model = next_model
 
     if model is None:
-        raise RuntimeError("Incremental regressor received no training batches")
+        raise RuntimeError(
+            "Incremental regressor received no batch with varying targets"
+        )
     predictions = np.asarray(model.predict(val_inputs), dtype="float64")
     return model, float(mean_absolute_error(val_target.to_numpy(dtype="float64"), predictions))
 
