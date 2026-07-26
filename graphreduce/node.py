@@ -775,6 +775,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         feature_family_max_columns: int = 16,
         is_date_node: bool = False,
         context_keys: typing.Optional[typing.Sequence[str]] = None,
+        execution_namespace: typing.Optional[str] = None,
     ):
         """
         Constructor
@@ -812,6 +813,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # Lazy execution for the SQL nodes.
         self._lazy_execution = lazy_execution
         self._storage_client = storage_client
+        self.execution_namespace = execution_namespace
         # List of merged neighbor classes.
         self._merged = []
         # List of checkpoints.
@@ -3153,10 +3155,15 @@ class SQLNode(GraphReduceNode):
         else:
             fpath = self.fpath
 
+        namespace = self.execution_namespace
+        namespace_suffix = f"_{namespace}" if namespace else ""
         if schema:
-            ref_name = f"{schema}.{fpath}_{self.prefix}_{func_name}_grtemp"
+            ref_name = (
+                f"{schema}.{fpath}_{self.prefix}_{func_name}"
+                f"{namespace_suffix}_grtemp"
+            )
         else:
-            ref_name = f"{fpath}_{self.prefix}_{func_name}_grtemp"
+            ref_name = f"{fpath}_{self.prefix}_{func_name}{namespace_suffix}_grtemp"
         if self._temp_refs.get(func_name):
             if lookup:
                 return self._temp_refs[func_name]
