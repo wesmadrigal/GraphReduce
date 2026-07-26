@@ -136,6 +136,13 @@ def parse_training_frame_workers(value: str) -> int:
     return workers
 
 
+def default_training_frame_workers() -> int:
+    configured = os.environ.get("RELBench_TRAINING_FRAME_WORKERS")
+    if configured is None:
+        return 1
+    return parse_training_frame_workers(configured)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -180,7 +187,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--training-frame-workers",
         type=parse_training_frame_workers,
-        default=1,
+        default=default_training_frame_workers(),
         metavar="N",
         help=(
             "Build training cutoff frames with N concurrent workers. "

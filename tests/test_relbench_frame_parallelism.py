@@ -61,3 +61,12 @@ def test_run_all_exposes_training_frame_workers(monkeypatch):
     args = run_all_relbench_tasks.parse_args()
 
     assert args.training_frame_workers == 0
+
+
+def test_run_all_inherits_training_frame_workers_from_environment(monkeypatch):
+    monkeypatch.setenv("RELBench_TRAINING_FRAME_WORKERS", "all")
+    monkeypatch.setattr(sys, "argv", ["run_all"])
+
+    args = run_all_relbench_tasks.parse_args()
+
+    assert args.training_frame_workers == 0
