@@ -119,6 +119,23 @@ class TaskResult:
     error_excerpt: list[str]
 
 
+def parse_training_frame_workers(value: str) -> int:
+    lowered = value.strip().lower()
+    if lowered in {"all", "max"}:
+        return 0
+    try:
+        workers = int(lowered)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "training frame workers must be a non-negative integer or 'all'"
+        ) from exc
+    if workers < 0:
+        raise argparse.ArgumentTypeError(
+            "training frame workers must be a non-negative integer or 'all'"
+        )
+    return workers
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -159,6 +176,16 @@ def parse_args() -> argparse.Namespace:
         "--stop-on-error",
         action="store_true",
         help="Stop after the first failed task.",
+    )
+    parser.add_argument(
+        "--training-frame-workers",
+        type=parse_training_frame_workers,
+        default=1,
+        metavar="N",
+        help=(
+            "Build training cutoff frames with N concurrent workers. "
+            "Use 1 for sequential execution or 0/all to start one worker per frame."
+        ),
     )
     parser.add_argument(
         "--dry-run",
@@ -270,7 +297,13 @@ def format_summary(result: TaskResult) -> str:
     return " | ".join(parts)
 
 
-def run_task(task_path: Path, python_executable: str, output_dir: Path, stream_output: bool) -> TaskResult:
+def run_task(
+    task_path: Path,
+    python_executable: str,
+    output_dir: Path,
+    stream_output: bool,
+    training_frame_workers: int = 1,
+) -> TaskResult:
     logs_dir = output_dir / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     log_path = logs_dir / f"{task_path.stem}.log"
@@ -280,6 +313,9 @@ def run_task(task_path: Path, python_executable: str, output_dir: Path, stream_o
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
+    if training_frame_workers < 0:
+        raise ValueError("training_frame_workers must be non-negative")
+    env["RELBench_TRAINING_FRAME_WORKERS"] = str(training_frame_workers)
     existing_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
         str(REPO_ROOT)
@@ -406,11 +442,22 @@ def main() -> int:
         f"Running {len(tasks)} relbench {args.task_type} task(s) from {REPO_ROOT} using {args.python}",
         flush=True,
     )
+    print(
+        "Training frame workers: "
+        f"{'all frames' if args.training_frame_workers == 0 else args.training_frame_workers}",
+        flush=True,
+    )
     print(f"Logs and reports will be written under {args.output_dir.relative_to(REPO_ROOT)}", flush=True)
 
     for index, task in enumerate(tasks, start=1):
         print(f"\n[{index}/{len(tasks)}] starting {task.stem}", flush=True)
-        result = run_task(task, args.python, args.output_dir, args.stream_output)
+        result = run_task(
+            task,
+            args.python,
+            args.output_dir,
+            args.stream_output,
+            args.training_frame_workers,
+        )
         results.append(result)
         print(f"[{index}/{len(tasks)}] finished {task.stem} | {format_summary(result)}", flush=True)
         if args.stop_on_error and result.status == "failed":
@@ -425,6 +472,7 @@ def main() -> int:
         "finished_at_utc": run_finished.isoformat(),
         "task_count": len(results),
         "task_type": args.task_type,
+        "training_frame_workers": args.training_frame_workers,
         "passed_count": sum(result.status == "passed" for result in results),
         "failed_count": sum(result.status == "failed" for result in results),
         "results": [asdict(result) for result in results],

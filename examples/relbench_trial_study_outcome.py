@@ -18,6 +18,7 @@ from relbench_dataset_utils import (
     get_relbench_dataset_db,
     get_relbench_split_timestamps,
     get_relbench_task,
+    iter_training_frames,
     register_relbench_db_views,
 )
 from sklearn.metrics import roc_auc_score
@@ -94,7 +95,9 @@ def run_rel_trial_study_outcome(
         for table_name in TABLE_NAME_TO_FILENAME:
             table_columns[table_name] = con.sql(f"SELECT * FROM {table_name}_src LIMIT 0").to_df().columns.tolist()
 
-        for frame_name, cut_date in cut_dates:
+        def build_frame(frame_con, frame_info):
+            con = frame_con
+            frame_name, cut_date = frame_info
             feature_cut_date = cut_date + datetime.timedelta(days=1)
             studies_cols = _select_columns(
                 table_columns["studies"],
@@ -583,6 +586,9 @@ def run_rel_trial_study_outcome(
             frame["timestamp"] = pd.Timestamp(cut_date)
             target = "outcome"
             frame[target] = frame[target].astype("int8")
+            return frame_name, frame, target
+
+        for frame_name, frame, target in iter_training_frames(con, cut_dates, build_frame):
             frames_by_name[frame_name] = frame
             target_by_name[frame_name] = target
     finally:

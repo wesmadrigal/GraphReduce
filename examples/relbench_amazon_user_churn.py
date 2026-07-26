@@ -19,6 +19,7 @@ from relbench_dataset_utils import (
     get_relbench_dataset_db,
     get_relbench_split_timestamps,
     get_relbench_task,
+    iter_training_frames,
     register_relbench_db_views,
 )
 from relbench_catboost_utils import fit_incremental_classifier, set_feature_families
@@ -81,51 +82,51 @@ def run_rel_amazon_user_churn(
             frame_store = RelBenchFrameStore(
                 f"rel-amazon-user-churn-{split_name}", persist_each_frame=True
             )
-            for cut_date in cut_dates:
+            def build_frame(frame_con: duckdb.DuckDBPyConnection, cut_date: datetime.datetime) -> pd.DataFrame:
                 feature_cut_date = cut_date + datetime.timedelta(days=1)
 
                 customer_node = DuckdbNode(
-                fpath="customer_src",
-                prefix="cust",
-                pk=customer_id,
-                date_key=None,
-                columns=customer_columns,
-            )
+                    fpath="customer_src",
+                    prefix="cust",
+                    pk=customer_id,
+                    date_key=None,
+                    columns=customer_columns,
+                )
                 product_node = DuckdbNode(
-                fpath="product_src",
-                prefix="prod",
-                pk=product_id,
-                date_key=None,
-                columns=product_columns,
-            )
+                    fpath="product_src",
+                    prefix="prod",
+                    pk=product_id,
+                    date_key=None,
+                    columns=product_columns,
+                )
                 review_node = DuckdbNode(
-                fpath="review_src",
-                prefix="rev",
-                pk=review_id,
-                date_key=review_time,
-                columns=review_feature_columns,
-                ts_periods=(),
-                auto_text_features=False,
-            )
+                    fpath="review_src",
+                    prefix="rev",
+                    pk=review_id,
+                    date_key=review_time,
+                    columns=review_feature_columns,
+                    ts_periods=(),
+                    auto_text_features=False,
+                )
                 review_node.feature_family_max_columns = 4
                 review_node.categorical_top_k = 5
                 set_feature_families([review_node], ("base",))
 
                 graph = GraphReduce(
-                name=f"rel_amazon_user_churn_{cut_date.date()}",
-                parent_node=customer_node,
-                compute_layer=ComputeLayerEnum.duckdb,
-                sql_client=con,
-                cut_date=feature_cut_date,
-                compute_period_val=(feature_cut_date - LOOKBACK_START).days + 1,
-                compute_period_unit=PeriodUnit.day,
-                auto_features=True,
-                auto_labels=False,
-                date_filters_on_agg=True,
-                auto_feature_hops_back=1,
-                auto_feature_hops_front=0,
-                use_temp_tables=True,
-            )
+                    name=f"rel_amazon_user_churn_{cut_date.date()}",
+                    parent_node=customer_node,
+                    compute_layer=ComputeLayerEnum.duckdb,
+                    sql_client=frame_con,
+                    cut_date=feature_cut_date,
+                    compute_period_val=(feature_cut_date - LOOKBACK_START).days + 1,
+                    compute_period_unit=PeriodUnit.day,
+                    auto_features=True,
+                    auto_labels=False,
+                    date_filters_on_agg=True,
+                    auto_feature_hops_back=1,
+                    auto_feature_hops_front=0,
+                    use_temp_tables=True,
+                )
 
                 for node in [customer_node, product_node, review_node]:
                     graph.add_node(node)
@@ -134,41 +135,41 @@ def run_rel_amazon_user_churn(
                 graph.add_entity_edge(product_node, review_node, parent_key=product_id, relation_key=review_product_id, reduce=True)
 
                 graph.do_transformations_sql()
-                features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+                features = frame_con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
                 graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
-                labels = con.sql(
-                f"""
-                WITH timestamp_df AS (
-                    SELECT TIMESTAMP '{cut_date}' AS timestamp
-                )
-                SELECT
-                    timestamp,
-                    customer_id,
-                    CAST(
-                        NOT EXISTS (
+                labels = frame_con.sql(
+                    f"""
+                    WITH timestamp_df AS (
+                        SELECT TIMESTAMP '{cut_date}' AS timestamp
+                    )
+                    SELECT
+                        timestamp,
+                        customer_id,
+                        CAST(
+                            NOT EXISTS (
+                                SELECT 1
+                                FROM review_src
+                                WHERE
+                                    review_src.{review_customer_id} = customer_src.{customer_id}
+                                    AND review_src.{review_time} > timestamp
+                                    AND review_src.{review_time} <= timestamp + INTERVAL '{LABEL_PERIOD_DAYS} days'
+                            ) AS INTEGER
+                        ) AS churn
+                    FROM
+                        timestamp_df,
+                        customer_src
+                    WHERE
+                        EXISTS (
                             SELECT 1
                             FROM review_src
                             WHERE
                                 review_src.{review_customer_id} = customer_src.{customer_id}
-                                AND review_src.{review_time} > timestamp
-                                AND review_src.{review_time} <= timestamp + INTERVAL '{LABEL_PERIOD_DAYS} days'
-                        ) AS INTEGER
-                    ) AS churn
-                FROM
-                    timestamp_df,
-                    customer_src
-                WHERE
-                    EXISTS (
-                        SELECT 1
-                        FROM review_src
-                        WHERE
-                            review_src.{review_customer_id} = customer_src.{customer_id}
-                            AND review_src.{review_time} > timestamp - INTERVAL '{LABEL_PERIOD_DAYS} days'
-                            AND review_src.{review_time} <= timestamp
-                    )
-                """
+                                AND review_src.{review_time} > timestamp - INTERVAL '{LABEL_PERIOD_DAYS} days'
+                                AND review_src.{review_time} <= timestamp
+                        )
+                    """
                 ).to_df()
 
                 frame = features.merge(
@@ -178,6 +179,10 @@ def run_rel_amazon_user_churn(
                     how="inner",
                 ).drop(columns=["customer_id"])
                 frame["churn"] = frame["churn"].astype("int8")
+                return frame
+
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
                 frame_store.append(frame)
             split_frames[split_name] = frame_store
     finally:

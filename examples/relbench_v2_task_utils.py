@@ -28,7 +28,11 @@ from relbench_catboost_utils import (
     fit_tuned_classifier,
     fit_tuned_regressor,
 )
-from relbench_dataset_utils import target_table_from_frame
+from relbench_dataset_utils import (
+    get_training_frame_workers,
+    iter_training_frames,
+    target_table_from_frame,
+)
 
 
 DEFAULT_MAX_TRAIN_TIMESTAMPS = 10
@@ -87,9 +91,16 @@ def _register_table(
 
     ref_name = f"_official_{view_name}_df"
     con.register(ref_name, db.table_dict[table_name].df)
+    source_ref = ref_name
+    if get_training_frame_workers() != 1:
+        source_ref = f"{ref_name}_table"
+        con.sql(
+            f"CREATE OR REPLACE TABLE {_quote(source_ref)} AS "
+            f"SELECT * FROM {_quote(ref_name)}"
+        )
     con.sql(
         f"CREATE OR REPLACE VIEW {_quote(view_name)} AS "
-        f"SELECT * FROM {_quote(ref_name)}"
+        f"SELECT * FROM {_quote(source_ref)}"
     )
 
 
@@ -777,13 +788,18 @@ def _build_entity_frames(
                 )
                 selected_train_timestamps = len(timestamps)
 
-            frames: list[pd.DataFrame] = []
+            frame_jobs = []
             for snapshot_index, cut_timestamp in enumerate(timestamps):
                 snapshot_labels = labels[
                     labels[task.time_col] == cut_timestamp
                 ].copy()
                 if snapshot_labels.empty:
                     continue
+                frame_jobs.append((snapshot_index, cut_timestamp, snapshot_labels))
+
+            def build_frame(frame_con, frame_job):
+                con = frame_con
+                snapshot_index, cut_timestamp, snapshot_labels = frame_job
                 scoped_definition = _scope_root_view(
                     con,
                     definition,
@@ -805,7 +821,17 @@ def _build_entity_frames(
                     right_on=[task.entity_col, task.time_col],
                     how="inner",
                 )
-                frames.append(frame)
+                return frame
+
+            frame_workers = None if split == "train" else 1
+            frames = list(
+                iter_training_frames(
+                    con,
+                    frame_jobs,
+                    build_frame,
+                    workers=frame_workers,
+                )
+            )
             output[split] = (
                 pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
             )

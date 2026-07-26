@@ -24,6 +24,7 @@ from relbench_dataset_utils import (
     RelBenchFrameStore,
     get_relbench_dataset_db,
     get_relbench_split_task_table,
+    iter_training_frames,
     register_relbench_db_views,
     target_table_from_frame,
 )
@@ -593,16 +594,19 @@ def build_task_split_frame(
     )
     labels = task_table.df.copy()
     labels["_relbench_entity_key"] = labels[task.entity_col].astype(str)
-    for cut_timestamp in cut_timestamps:
-        features = feature_builder(con, table_columns, cut_timestamp)
+    def build_frame(frame_con: duckdb.DuckDBPyConnection, cut_timestamp: pd.Timestamp) -> pd.DataFrame:
+        features = feature_builder(frame_con, table_columns, cut_timestamp)
         features["_relbench_entity_key"] = features[feature_entity_col].astype(str)
         timestamp_labels = labels[labels[task.time_col] == cut_timestamp]
-        frame = features.merge(
+        return features.merge(
             timestamp_labels[["_relbench_entity_key", task.time_col, task.entity_col, task.target_col]],
             left_on=["timestamp", "_relbench_entity_key"],
             right_on=[task.time_col, "_relbench_entity_key"],
             how="inner",
         ).drop(columns=["_relbench_entity_key"])
+
+    frame_workers = None if split == "train" else 1
+    for frame in iter_training_frames(con, cut_timestamps, build_frame, workers=frame_workers):
         frame_store.append(frame)
     return task, frame_store, cut_timestamps[-1]
 

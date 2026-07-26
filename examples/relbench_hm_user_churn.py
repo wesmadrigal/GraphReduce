@@ -16,6 +16,7 @@ from relbench_dataset_utils import (
     get_relbench_dataset_db,
     get_relbench_split_timestamps,
     get_relbench_task,
+    iter_training_frames,
     register_relbench_db_views,
 )
 
@@ -94,7 +95,8 @@ def run_rel_hm_user_churn(
         }
         for split_name, cut_dates in split_cut_dates.items():
             frame_store = RelBenchFrameStore(f"rel-hm-user-churn-{split_name}")
-            for cut_date in cut_dates:
+            def build_frame(frame_con, cut_date):
+                con = frame_con
                 feature_cut_date = cut_date + datetime.timedelta(days=1)
                 customer = DuckdbNode(
                 fpath="customer_src",
@@ -197,6 +199,10 @@ def run_rel_hm_user_churn(
                     how="inner",
                 ).drop(columns=["customer_id"])
                 frame["churn"] = frame["churn"].astype("int8")
+                return frame
+
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
                 frame_store.append(frame)
             split_frames[split_name] = frame_store.to_dataframe()
             frame_store.close()

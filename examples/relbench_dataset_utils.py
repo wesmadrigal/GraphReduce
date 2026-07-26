@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import inspect
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Iterator, Sequence
+from typing import Callable, Iterator, Sequence, TypeVar
 
 import duckdb
 import numpy as np
@@ -15,6 +16,76 @@ import pandas as pd
 from relbench.base import Database, Table
 from relbench.datasets import get_dataset
 from relbench.tasks import get_task
+
+
+FrameItem = TypeVar("FrameItem")
+FrameResult = TypeVar("FrameResult")
+FrameBuilder = Callable[[duckdb.DuckDBPyConnection, FrameItem], FrameResult]
+TRAINING_FRAME_WORKERS_ENV = "RELBench_TRAINING_FRAME_WORKERS"
+
+
+def get_training_frame_workers(default: int = 1) -> int:
+    """Return the configured training-frame concurrency.
+
+    ``1`` keeps the historical sequential behavior. ``0`` or ``all`` means
+    one worker per submitted frame, which is useful on large machines.
+    """
+
+    raw_value = os.environ.get(TRAINING_FRAME_WORKERS_ENV, str(default)).strip().lower()
+    if raw_value in {"0", "all", "max"}:
+        return 0
+    try:
+        workers = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(
+            f"{TRAINING_FRAME_WORKERS_ENV} must be a positive integer, 0, or 'all'"
+        ) from exc
+    if workers < 0:
+        raise ValueError(
+            f"{TRAINING_FRAME_WORKERS_ENV} must be a positive integer, 0, or 'all'"
+        )
+    return workers
+
+
+def iter_training_frames(
+    con: duckdb.DuckDBPyConnection,
+    items: Sequence[FrameItem],
+    builder: FrameBuilder,
+    *,
+    workers: int | None = None,
+) -> Iterator[FrameResult]:
+    """Build cutoff frames concurrently while yielding them in input order.
+
+    Each concurrent builder receives its own DuckDB cursor. This avoids the
+    pending-query errors produced by sharing one DuckDB connection between
+    threads, while persistent source tables remain visible to every cursor.
+    """
+
+    if not items:
+        return
+    worker_count = get_training_frame_workers() if workers is None else int(workers)
+    if worker_count < 0:
+        raise ValueError("workers must be non-negative")
+    if worker_count == 0:
+        worker_count = len(items)
+    worker_count = min(worker_count, len(items))
+
+    if worker_count <= 1:
+        for item in items:
+            yield builder(con, item)
+        return
+
+    def build_with_cursor(item: FrameItem) -> FrameResult:
+        worker_con = con.cursor()
+        try:
+            return builder(worker_con, item)
+        finally:
+            worker_con.close()
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = [executor.submit(build_with_cursor, item) for item in items]
+        for future in futures:
+            yield future.result()
 
 
 class RelBenchFrameStore:
@@ -188,6 +259,7 @@ def register_relbench_db_views(
 
     row_number_ids = row_number_ids or {}
     drop_columns = drop_columns or {}
+    parallel_training_frames = get_training_frame_workers() not in {1}
     registered_refs: list[str] = []
     for table_name, view_name in table_to_view.items():
         df = db.table_dict[table_name].df.copy()
@@ -200,6 +272,12 @@ def register_relbench_db_views(
         registered_ref = f"_relbench_{view_name}_df"
         con.register(registered_ref, df)
         registered_refs.append(registered_ref)
+        source_ref = registered_ref
+        if parallel_training_frames:
+            source_ref = f"{registered_ref}_table"
+            con.sql(
+                f"CREATE OR REPLACE TABLE {source_ref} AS SELECT * FROM {registered_ref}"
+            )
         if table_name in row_number_ids:
             con.sql(
                 f"""
@@ -207,12 +285,12 @@ def register_relbench_db_views(
                 SELECT
                     row_number() OVER () AS {row_number_ids[table_name]},
                     *
-                FROM {registered_ref}
+                FROM {source_ref}
                 """
             )
         else:
             con.sql(
-                f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM {registered_ref}"
+                f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM {source_ref}"
             )
     return registered_refs
 

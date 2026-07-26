@@ -19,6 +19,7 @@ from relbench_dataset_utils import (
     RelBenchFrameStore,
     get_relbench_dataset_db,
     get_relbench_split_task_table,
+    iter_training_frames,
     register_relbench_db_views,
 )
 
@@ -95,7 +96,8 @@ def run_rel_avito_user_visits(
             cut_dates = [timestamp.to_pydatetime() for timestamp in cut_timestamps]
             frame_store = RelBenchFrameStore(f"rel-avito-user-visits-{split_name}")
 
-            for cut_date in cut_dates:
+            def build_frame(frame_con, cut_date):
+                con = frame_con
                 feature_cut_date = cut_date + datetime.timedelta(days=1)
 
                 user_node = DuckdbNode(
@@ -199,6 +201,10 @@ def run_rel_avito_user_visits(
                     how="inner",
                 ).drop(columns=[task.entity_col])
                 frame[task.target_col] = frame[task.target_col].astype("int8")
+                return frame
+
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
                 frame_store.append(frame)
 
             split_frames[split_name] = frame_store.to_dataframe()

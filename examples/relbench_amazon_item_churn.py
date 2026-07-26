@@ -19,6 +19,7 @@ from relbench_dataset_utils import (
     get_relbench_dataset_db,
     get_relbench_split_timestamps,
     get_relbench_task,
+    iter_training_frames,
     register_relbench_db_views,
 )
 from relbench_catboost_utils import fit_incremental_classifier, set_feature_families
@@ -81,7 +82,8 @@ def run_rel_amazon_item_churn(
             frame_store = RelBenchFrameStore(
                 f"rel-amazon-item-churn-{split_name}", persist_each_frame=True
             )
-            for cut_date in cut_dates:
+            def build_frame(frame_con, cut_date):
+                con = frame_con
                 feature_cut_date = cut_date + datetime.timedelta(days=1)
 
                 customer_node = DuckdbNode(
@@ -178,6 +180,10 @@ def run_rel_amazon_item_churn(
                     how="inner",
                 ).drop(columns=["product_id"])
                 frame["churn"] = frame["churn"].astype("int8")
+                return frame
+
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
                 frame_store.append(frame)
             split_frames[split_name] = frame_store
     finally:

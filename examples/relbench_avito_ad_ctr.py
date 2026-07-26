@@ -13,6 +13,7 @@ from relbench_dataset_utils import (
     RelBenchFrameStore,
     get_relbench_dataset_db,
     get_relbench_split_task_table,
+    iter_training_frames,
     register_relbench_db_views,
     target_table_from_frame,
 )
@@ -86,7 +87,8 @@ def run_rel_avito_ad_ctr(
             cut_dates = [timestamp.to_pydatetime() for timestamp in cut_timestamps]
             frame_store = RelBenchFrameStore(f"rel-avito-ad-ctr-{split_name}")
 
-            for cut_date in cut_dates:
+            def build_frame(frame_con, cut_date):
+                con = frame_con
                 feature_cut_date = cut_date + datetime.timedelta(days=1)
 
                 ads_node = DuckdbNode(
@@ -165,6 +167,10 @@ def run_rel_avito_ad_ctr(
                     how="inner",
                 )
                 frame[task.target_col] = frame[task.target_col].fillna(0).astype("float64")
+                return frame
+
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
                 frame_store.append(frame)
 
             split_frames[split_name] = frame_store.to_dataframe()

@@ -23,6 +23,7 @@ from relbench_dataset_utils import (
     get_relbench_task,
     get_relbench_split_task_table,
     get_single_timestamp_task_table,
+    iter_training_frames,
     register_relbench_db_views,
 )
 
@@ -435,8 +436,8 @@ def build_task_split_frame(
     frame_store = RelBenchFrameStore(
         f"rel-stack-{task_name}-{split}", persist_each_frame=True
     )
-    for timestamp in cut_timestamps:
-        features = feature_builder(con, timestamp.to_pydatetime())
+    def build_frame(frame_con: duckdb.DuckDBPyConnection, timestamp: pd.Timestamp) -> pd.DataFrame:
+        features = feature_builder(frame_con, timestamp.to_pydatetime())
         task_df = task_table.df.copy()
         task_df = task_df[
             pd.to_datetime(task_df[task.time_col]) == pd.Timestamp(timestamp)
@@ -450,12 +451,15 @@ def build_task_split_frame(
         task_df[task.entity_col] = task_df[task.entity_col].astype("int64")
         features[feature_entity_col] = features[feature_entity_col].astype("int64")
 
-        frame = features.merge(
+        return features.merge(
             task_df[[task.time_col, task.entity_col, task.target_col]],
             left_on=feature_entity_col,
             right_on=task.entity_col,
             how="inner",
         )
+
+    frame_workers = None if split == "train" else 1
+    for frame in iter_training_frames(con, cut_timestamps, build_frame, workers=frame_workers):
         frame_store.append(frame)
 
     return task, task_table, frame_store, cut_timestamp

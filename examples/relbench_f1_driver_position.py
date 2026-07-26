@@ -14,6 +14,7 @@ from relbench_dataset_utils import (
     get_relbench_dataset_db,
     get_relbench_split_task_table,
     get_relbench_task,
+    iter_training_frames,
     register_relbench_db_views,
     target_table_from_frame,
 )
@@ -118,7 +119,8 @@ def run_rel_f1_driver_position(
                 f"rel-f1-driver-position-{split_name}", persist_each_frame=True
             )
 
-            for cut_date in cut_dates:
+            def build_frame(frame_con, cut_date):
+                con = frame_con
                 feature_cut_date = pd.Timestamp(cut_date) + pd.Timedelta(seconds=1)
 
                 driver_node = DuckdbNode(
@@ -239,6 +241,10 @@ def run_rel_f1_driver_position(
                     how="inner",
                 )
                 frame[task.target_col] = frame[task.target_col].astype("float64")
+                return frame
+
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
                 frame_store.append(frame)
 
             split_frames[split_name] = frame_store

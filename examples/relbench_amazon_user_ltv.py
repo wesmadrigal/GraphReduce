@@ -18,6 +18,7 @@ from relbench_dataset_utils import (
     get_relbench_dataset_db,
     get_relbench_split_task_table,
     get_relbench_task,
+    iter_training_frames,
     register_relbench_db_views,
     target_table_from_frame,
 )
@@ -122,7 +123,7 @@ def _build_feature_frames(
 ) -> RelBenchFrameStore:
     frame_store = RelBenchFrameStore("rel-amazon-user-ltv-features", persist_each_frame=True)
 
-    for task_timestamp in split_timestamps:
+    def build_frame(frame_con: duckdb.DuckDBPyConnection, task_timestamp: pd.Timestamp) -> pd.DataFrame:
         feature_cut_date = _feature_cut_date(task_timestamp)
 
         customer_node = DuckdbNode(
@@ -153,7 +154,7 @@ def _build_feature_frames(
             name=f"rel_amazon_user_ltv_{task_timestamp.date()}",
             parent_node=customer_node,
             compute_layer=ComputeLayerEnum.duckdb,
-            sql_client=con,
+            sql_client=frame_con,
             cut_date=feature_cut_date,
             compute_period_val=(feature_cut_date - LOOKBACK_START).days + 1,
             compute_period_unit=PeriodUnit.day,
@@ -187,11 +188,13 @@ def _build_feature_frames(
         )
 
         graph.do_transformations_sql()
-        frame = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+        frame = frame_con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
         graph._clean_refs()
         frame["timestamp"] = task_timestamp
-        frame_store.append(frame)
+        return frame
 
+    for frame in iter_training_frames(con, split_timestamps, build_frame):
+        frame_store.append(frame)
     return frame_store
 
 
