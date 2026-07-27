@@ -267,16 +267,22 @@ def _download_relbench_archive_without_stale_hash(resource: str) -> None:
     """
 
     import pooch
-    from relbench.datasets import DOWNLOAD_REGISTRY
-
-    if resource not in DOWNLOAD_REGISTRY.registry:
-        raise ValueError(f"RelBench has no registered archive for {resource}")
+    from relbench.datasets import DOWNLOAD_REGISTRY as DATASET_DOWNLOAD_REGISTRY
+    from relbench.tasks import DOWNLOAD_REGISTRY as TASK_DOWNLOAD_REGISTRY
 
     resource_path = Path(resource)
+    registry = (
+        TASK_DOWNLOAD_REGISTRY
+        if "tasks" in resource_path.parts
+        else DATASET_DOWNLOAD_REGISTRY
+    )
+    if resource not in registry.registry:
+        raise ValueError(f"RelBench has no registered archive for {resource}")
+
     if resource_path.is_absolute() or ".." in resource_path.parts:
         raise ValueError(f"Invalid RelBench archive path: {resource}")
 
-    cache_dir = Path(DOWNLOAD_REGISTRY.abspath).joinpath(*resource_path.parts[:-1])
+    cache_dir = Path(registry.abspath).joinpath(*resource_path.parts[:-1])
     archive_path = cache_dir / resource_path.name
     archive_path.unlink(missing_ok=True)
     logger.warning(
@@ -285,7 +291,7 @@ def _download_relbench_archive_without_stale_hash(resource: str) -> None:
         resource,
     )
     pooch.retrieve(
-        DOWNLOAD_REGISTRY.get_url(resource),
+        registry.get_url(resource),
         known_hash=None,
         fname=archive_path.name,
         path=cache_dir,
