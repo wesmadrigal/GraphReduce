@@ -388,10 +388,6 @@ def build_post_votes_features(
         auto_feature_hops_front=0,
     )
     nodes = [post, vote, comment, post_history, post_links, user, badge]
-    enable_all_feature_families([post, post_history, comment])
-    for node in [post, post_history, comment]:
-        node.feature_family_max_columns = 4
-        node.categorical_top_k = 5
     for node in nodes:
         gr.add_node(node)
 
