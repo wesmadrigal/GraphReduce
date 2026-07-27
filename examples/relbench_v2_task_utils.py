@@ -772,7 +772,8 @@ def _build_entity_frames(
                     labels,
                     left_on=root_feature_id,
                     right_on=task.entity_col,
-                    how="inner",
+                    how="right",
+                    validate="one_to_one",
                 )
             return output, official_train_timestamps, 1
 
@@ -819,7 +820,8 @@ def _build_entity_frames(
                     snapshot_labels,
                     left_on=[root_feature_id, task.time_col],
                     right_on=[task.entity_col, task.time_col],
-                    how="inner",
+                    how="right",
+                    validate="one_to_one",
                 )
                 return frame
 

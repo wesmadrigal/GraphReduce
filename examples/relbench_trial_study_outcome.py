@@ -16,12 +16,11 @@ import numpy as np
 import pandas as pd
 from relbench_dataset_utils import (
     get_relbench_dataset_db,
-    get_relbench_split_timestamps,
-    get_relbench_task,
+    get_relbench_split_task_table,
     iter_training_frames,
     register_relbench_db_views,
+    target_table_from_frame,
 )
-from sklearn.metrics import roc_auc_score
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
@@ -70,19 +69,32 @@ def _select_columns(
 def run_rel_trial_study_outcome(
     data_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float | None, float | None, int, list[str], str]:
-    dataset, db = get_relbench_dataset_db("rel-trial", download=True, upto_test_timestamp=False)
-    official_task = get_relbench_task("rel-trial", "study-outcome", download=False)
-    cut_dates = [
-        (f"train_{timestamp.date()}", timestamp)
-        for timestamp in get_relbench_split_timestamps(official_task, "train", db)
-    ]
-    cut_dates += [("val", timestamp) for timestamp in get_relbench_split_timestamps(official_task, "val", db)]
-    cut_dates += [("test", timestamp) for timestamp in get_relbench_split_timestamps(official_task, "test", db)]
+    _, db = get_relbench_dataset_db("rel-trial", download=True, upto_test_timestamp=False)
+    split_tasks = {}
+    frame_jobs = []
+    for split_name in ("train", "val", "test"):
+        task, task_table, cut_timestamps = get_relbench_split_task_table(
+            "rel-trial",
+            "study-outcome",
+            split_name,
+            download=True,
+            db=db,
+        )
+        split_tasks[split_name] = task
+        frame_jobs.extend(
+            (
+                split_name,
+                f"{split_name}_{timestamp.isoformat()}",
+                timestamp,
+                task,
+                task_table,
+            )
+            for timestamp in cut_timestamps
+        )
     materialized: list[str] = []
 
     con = duckdb.connect()
     frames_by_name: dict[str, pd.DataFrame] = {}
-    target_by_name: dict[str, str] = {}
 
     try:
         register_relbench_db_views(
@@ -97,7 +109,7 @@ def run_rel_trial_study_outcome(
 
         def build_frame(frame_con, frame_info):
             con = frame_con
-            frame_name, cut_date = frame_info
+            _, frame_name, cut_date, task, task_table = frame_info
             feature_cut_date = cut_date + datetime.timedelta(days=1)
             studies_cols = _select_columns(
                 table_columns["studies"],
@@ -545,65 +557,43 @@ def run_rel_trial_study_outcome(
             )
 
             graph.do_transformations_sql()
-            frame = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+            features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
             graph._clean_refs()
-            labels = con.sql(
-                f"""
-                WITH trial_info AS (
-                    SELECT
-                        oa.{oa_nct_id} AS nct_id,
-                        oa.{oa_p_value} AS p_value,
-                        s.{studies_start_date} AS start_date,
-                        oa.{oa_date} AS date
-                    FROM outcome_analyses_src oa
-                    LEFT JOIN outcomes_src o
-                        ON oa.{oa_outcome_id} = o.{outcomes_id}
-                    LEFT JOIN studies_src s
-                        ON s.{studies_nct_id} = o.{outcomes_nct_id}
-                    WHERE ({'oa.' + oa_p_value_modifier + ' is null or oa.' + oa_p_value_modifier + " != '>'" if oa_p_value_modifier else 'true'})
-                        AND oa.{oa_p_value} >= 0
-                        AND oa.{oa_p_value} <= 1
-                        AND o.outcome_type = 'Primary'
-                )
-                SELECT
-                    TIMESTAMP '{cut_date}' AS timestamp,
-                    tr.nct_id,
-                    CASE WHEN MIN(tr.p_value) <= 0.05 THEN 1 ELSE 0 END AS outcome
-                FROM trial_info tr
-                WHERE tr.start_date <= TIMESTAMP '{cut_date}'
-                    AND tr.date > TIMESTAMP '{cut_date}'
-                    AND tr.date <= TIMESTAMP '{cut_date}' + INTERVAL '{LABEL_DAYS} days'
-                    AND tr.nct_id IS NOT NULL
-                GROUP BY tr.nct_id
-                """
-            ).to_df()
-            frame = frame.merge(
-                labels[["nct_id", "outcome"]],
-                left_on=f"std_{studies_nct_id}",
-                right_on="nct_id",
-                how="inner",
-            ).drop(columns=["nct_id"])
-            frame["timestamp"] = pd.Timestamp(cut_date)
-            target = "outcome"
+            features["timestamp"] = pd.Timestamp(cut_date)
+            labels = task_table.df.copy()
+            labels[task.time_col] = pd.to_datetime(labels[task.time_col])
+            labels = labels[
+                labels[task.time_col] == pd.Timestamp(cut_date)
+            ].copy()
+            frame = features.merge(
+                labels[[task.time_col, task.entity_col, task.target_col]],
+                left_on=["timestamp", f"std_{studies_nct_id}"],
+                right_on=[task.time_col, task.entity_col],
+                how="right",
+                validate="one_to_one",
+            )
+            target = task.target_col
             frame[target] = frame[target].astype("int8")
             return frame_name, frame, target
 
-        for frame_name, frame, target in iter_training_frames(con, cut_dates, build_frame):
+        for frame_name, frame, target in iter_training_frames(con, frame_jobs, build_frame):
             frames_by_name[frame_name] = frame
-            target_by_name[frame_name] = target
     finally:
         con.close()
 
-    if target_by_name["val"] != target_by_name["test"]:
-        raise ValueError(
-            f"Target mismatch between val ({target_by_name['val']}) and test ({target_by_name['test']})"
-        )
-
-    target = target_by_name["val"]
-    train_frame_names = [frame_name for frame_name, _ in cut_dates if frame_name.startswith("train_")]
+    target = split_tasks["train"].target_col
+    train_frame_names = [
+        frame_name for split_name, frame_name, *_ in frame_jobs if split_name == "train"
+    ]
+    val_frame_names = [
+        frame_name for split_name, frame_name, *_ in frame_jobs if split_name == "val"
+    ]
+    test_frame_names = [
+        frame_name for split_name, frame_name, *_ in frame_jobs if split_name == "test"
+    ]
     df_train = pd.concat([frames_by_name[name] for name in train_frame_names], ignore_index=True)
-    df_val = frames_by_name["val"]
-    df_test = frames_by_name["test"]
+    df_val = pd.concat([frames_by_name[name] for name in val_frame_names], ignore_index=True)
+    df_test = pd.concat([frames_by_name[name] for name in test_frame_names], ignore_index=True)
 
     numeric_columns = [column for column in df_train.select_dtypes(include=[np.number]).columns if column != target]
     feature_columns = [
@@ -637,12 +627,23 @@ def run_rel_trial_study_outcome(
     print("catboost_validation_auc:", best_val_auc, flush=True)
     print("catboost_best_iteration:", model.get_best_iteration(), flush=True)
 
-    catboost_in_time_auc = float(roc_auc_score(y_val, model.predict_proba(X_val)[:, 1]))
+    val_predictions = np.asarray(model.predict_proba(X_val)[:, 1], dtype="float64")
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
+    )
+    catboost_in_time_auc = float(val_metrics["roc_auc"])
     catboost_holdout_auc = None
     if df_test[target].nunique() >= 2:
-        catboost_holdout_auc = float(
-            roc_auc_score(df_test[target], model.predict_proba(df_test[feature_columns].fillna(0))[:, 1])
+        test_predictions = np.asarray(
+            model.predict_proba(df_test[feature_columns].fillna(0))[:, 1],
+            dtype="float64",
         )
+        test_metrics = split_tasks["test"].evaluate(
+            test_predictions,
+            target_table=target_table_from_frame(split_tasks["test"], df_test),
+        )
+        catboost_holdout_auc = float(test_metrics["roc_auc"])
 
     return (
         df_train,

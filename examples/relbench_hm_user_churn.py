@@ -10,14 +10,14 @@ import duckdb
 import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
-from relbench.metrics import accuracy, average_precision, f1, roc_auc
 from relbench_dataset_utils import (
     RelBenchFrameStore,
     get_relbench_dataset_db,
-    get_relbench_split_timestamps,
+    get_relbench_split_task_table,
     get_relbench_task,
     iter_training_frames,
     register_relbench_db_views,
+    target_table_from_frame,
 )
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
@@ -86,14 +86,25 @@ def run_rel_hm_user_churn(
         tx_article_col = {column.lower(): column for column in transaction_columns}["article_id"]
         tx_date_col = {column.lower(): column for column in transaction_columns}["t_dat"]
 
-        split_cut_dates = {
-            split_name: [
-                timestamp.to_pydatetime()
-                for timestamp in get_relbench_split_timestamps(official_task, split_name, db)
-            ]
-            for split_name in ("train", "val", "test")
-        }
-        for split_name, cut_dates in split_cut_dates.items():
+        split_tasks = {}
+        split_specs = {}
+        for split_name in ("train", "val", "test"):
+            task, task_table, cut_timestamps = get_relbench_split_task_table(
+                "rel-hm",
+                "user-churn",
+                split_name,
+                download=True,
+                task=official_task,
+                db=db,
+            )
+            split_tasks[split_name] = task
+            split_specs[split_name] = (
+                task,
+                task_table,
+                [timestamp.to_pydatetime() for timestamp in cut_timestamps],
+            )
+
+        for split_name, (task, task_table, cut_dates) in split_specs.items():
             frame_store = RelBenchFrameStore(f"rel-hm-user-churn-{split_name}")
             def build_frame(frame_con, cut_date):
                 con = frame_con
@@ -159,46 +170,20 @@ def run_rel_hm_user_churn(
                 graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
-                labels = con.sql(
-                f"""
-                WITH timestamp_df AS (
-                    SELECT TIMESTAMP '{cut_date}' AS timestamp
-                )
-                SELECT
-                    timestamp,
-                    customer_id,
-                    CAST(
-                        NOT EXISTS (
-                            SELECT 1
-                            FROM transactions_src
-                            WHERE
-                                transactions_src.{tx_customer_col} = customer_src.{customer_id_col}
-                                AND transactions_src.{tx_date_col} > timestamp
-                                AND transactions_src.{tx_date_col} <= timestamp + INTERVAL '{LABEL_DAYS} days'
-                        ) AS INTEGER
-                    ) AS churn
-                FROM
-                    timestamp_df,
-                    customer_src
-                WHERE
-                    EXISTS (
-                        SELECT 1
-                        FROM transactions_src
-                        WHERE
-                            transactions_src.{tx_customer_col} = customer_src.{customer_id_col}
-                            AND transactions_src.{tx_date_col} > timestamp - INTERVAL '{LABEL_DAYS} days'
-                            AND transactions_src.{tx_date_col} <= timestamp
-                    )
-                """
-                ).to_df()
+                labels = task_table.df.copy()
+                labels[task.time_col] = pd.to_datetime(labels[task.time_col])
+                labels = labels[
+                    labels[task.time_col] == pd.Timestamp(cut_date)
+                ].copy()
 
                 frame = features.merge(
-                    labels[["timestamp", "customer_id", "churn"]],
+                    labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"cust_{customer_id_col}"],
-                    right_on=["timestamp", "customer_id"],
-                    how="inner",
-                ).drop(columns=["customer_id"])
-                frame["churn"] = frame["churn"].astype("int8")
+                    right_on=[task.time_col, task.entity_col],
+                    how="right",
+                    validate="one_to_one",
+                )
+                frame[task.target_col] = frame[task.target_col].astype("int8")
                 return frame
 
             frame_workers = None if split_name == "train" else 1
@@ -212,7 +197,7 @@ def run_rel_hm_user_churn(
     df_train = split_frames["train"]
     df_val = split_frames["val"]
     df_test = split_frames["test"]
-    target = "churn"
+    target = split_tasks["train"].target_col
 
     common_columns = set(df_train.columns) & set(df_val.columns) & set(df_test.columns)
     feature_columns = [
@@ -247,18 +232,14 @@ def run_rel_hm_user_churn(
     val_predictions = model.predict_proba(df_val[feature_columns].fillna(0))[:, 1]
     test_predictions = model.predict_proba(df_test[feature_columns].fillna(0))[:, 1]
 
-    val_metrics = {
-        "average_precision": float(average_precision(df_val[target].to_numpy(), val_predictions)),
-        "accuracy": float(accuracy(df_val[target].to_numpy(), val_predictions)),
-        "f1": float(f1(df_val[target].to_numpy(), val_predictions)),
-        "roc_auc": float(roc_auc(df_val[target].to_numpy(), val_predictions)),
-    }
-    test_metrics = {
-        "average_precision": float(average_precision(df_test[target].to_numpy(), test_predictions)),
-        "accuracy": float(accuracy(df_test[target].to_numpy(), test_predictions)),
-        "f1": float(f1(df_test[target].to_numpy(), test_predictions)),
-        "roc_auc": float(roc_auc(df_test[target].to_numpy(), test_predictions)),
-    }
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
+    )
+    test_metrics = split_tasks["test"].evaluate(
+        test_predictions,
+        target_table=target_table_from_frame(split_tasks["test"], df_test),
+    )
 
     return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, target
 

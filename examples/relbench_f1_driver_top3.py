@@ -8,14 +8,14 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
-from relbench.metrics import accuracy, average_precision, f1, roc_auc
 from relbench_dataset_utils import (
     RelBenchFrameStore,
     get_relbench_dataset_db,
-    get_relbench_split_timestamps,
+    get_relbench_split_task_table,
     get_relbench_task,
     iter_training_frames,
     register_relbench_db_views,
+    target_table_from_frame,
 )
 from relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES, fit_tuned_classifier_incremental, set_feature_families
 
@@ -41,6 +41,7 @@ TEST_CUT_DATE = pd.Timestamp("2010-01-01")
 LABEL_TIMEDELTA = pd.Timedelta(days=30)
 NUM_EVAL_TIMESTAMPS = 40
 TARGET_COLUMN = "qualifying"
+FRAME_STRIDE = 10
 
 
 def run_rel_f1_driver_top3(
@@ -81,15 +82,31 @@ def run_rel_f1_driver_top3(
             """
         ).to_df()
         lookback_start = pd.Timestamp(dataset_bounds.loc[0, "min_timestamp"])
-        dataset_max_timestamp = pd.Timestamp(dataset_bounds.loc[0, "max_timestamp"])
-
-        split_cut_dates = {
-            split_name: [
-                timestamp.to_pydatetime()
-                for timestamp in get_relbench_split_timestamps(official_task, split_name, db)
-            ]
-            for split_name in ("train", "val", "test")
-        }
+        split_tasks = {}
+        split_specs = {}
+        for split_name in ("train", "val", "test"):
+            task, task_table, cut_timestamps = get_relbench_split_task_table(
+                DATASET_NAME,
+                "driver-top3",
+                split_name,
+                download=True,
+                task=official_task,
+                db=db,
+            )
+            split_tasks[split_name] = task
+            selected_cut_timestamps = (
+                cut_timestamps[::FRAME_STRIDE]
+                if split_name == "train"
+                else cut_timestamps
+            )
+            split_specs[split_name] = (
+                task,
+                task_table,
+                [
+                    timestamp.to_pydatetime()
+                    for timestamp in selected_cut_timestamps
+                ],
+            )
 
         driver_columns = con.sql("SELECT * FROM drivers_src LIMIT 0").to_df().columns.tolist()
         result_columns = con.sql("SELECT * FROM results_src LIMIT 0").to_df().columns.tolist()
@@ -120,7 +137,7 @@ def run_rel_f1_driver_top3(
         circuit_id_col = {column.lower(): column for column in circuit_columns}["circuitid"]
         constructor_id_col = {column.lower(): column for column in constructor_columns}["constructorid"]
 
-        for split_name, cut_dates in split_cut_dates.items():
+        for split_name, (task, task_table, cut_dates) in split_specs.items():
             frame_store = RelBenchFrameStore(
                 f"rel-f1-driver-top3-{split_name}", persist_each_frame=True
             )
@@ -220,37 +237,19 @@ def run_rel_f1_driver_top3(
                 graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
-                labels = con.sql(
-                    f"""
-                    WITH timestamp_df AS (
-                        SELECT TIMESTAMP '{pd.Timestamp(cut_date)}' AS timestamp
-                    )
-                    SELECT
-                        t.timestamp,
-                        qu.{qualifying_driver_col} AS driverId,
-                        CASE
-                            WHEN MIN(qu.{qualifying_position_col}) <= 3 THEN 1
-                            ELSE 0
-                        END AS qualifying
-                    FROM timestamp_df t
-                    LEFT JOIN qualifying_src qu
-                        ON qu.{qualifying_date_col} > t.timestamp
-                        AND qu.{qualifying_date_col} <= t.timestamp + INTERVAL '{int(LABEL_TIMEDELTA.total_seconds())} seconds'
-                    WHERE qu.{qualifying_driver_col} IN (
-                        SELECT DISTINCT historical.{qualifying_driver_col}
-                        FROM qualifying_src historical
-                        WHERE historical.{qualifying_date_col} > t.timestamp - INTERVAL '1 year'
-                    )
-                    GROUP BY t.timestamp, qu.{qualifying_driver_col}
-                    """
-                ).to_df()
+                labels = task_table.df.copy()
+                labels[task.time_col] = pd.to_datetime(labels[task.time_col])
+                labels = labels[
+                    labels[task.time_col] == pd.Timestamp(cut_date)
+                ].copy()
 
                 frame = features.merge(
-                    labels,
+                    labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"drv_{driver_id_col}"],
-                    right_on=["timestamp", "driverId"],
-                    how="inner",
-                ).drop(columns=["driverId"])
+                    right_on=[task.time_col, task.entity_col],
+                    how="right",
+                    validate="one_to_one",
+                )
                 frame[TARGET_COLUMN] = frame[TARGET_COLUMN].astype("int8")
                 return frame
 
@@ -297,20 +296,14 @@ def run_rel_f1_driver_top3(
     val_predictions = np.asarray(model.predict_proba(df_val[feature_columns].fillna(0))[:, 1], dtype="float64")
     test_predictions = np.asarray(model.predict_proba(df_test[feature_columns].fillna(0))[:, 1], dtype="float64")
 
-    val_target = df_val[TARGET_COLUMN].to_numpy(dtype="float64")
-    test_target = df_test[TARGET_COLUMN].to_numpy(dtype="float64")
-    val_metrics = {
-        "average_precision": float(average_precision(val_target, val_predictions)),
-        "accuracy": float(accuracy(val_target, val_predictions)),
-        "f1": float(f1(val_target, val_predictions)),
-        "roc_auc": float(roc_auc(val_target, val_predictions)),
-    }
-    test_metrics = {
-        "average_precision": float(average_precision(test_target, test_predictions)),
-        "accuracy": float(accuracy(test_target, test_predictions)),
-        "f1": float(f1(test_target, test_predictions)),
-        "roc_auc": float(roc_auc(test_target, test_predictions)),
-    }
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
+    )
+    test_metrics = split_tasks["test"].evaluate(
+        test_predictions,
+        target_table=target_table_from_frame(split_tasks["test"], df_test),
+    )
 
     return train_store, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, TARGET_COLUMN
 
@@ -322,6 +315,7 @@ def main() -> None:
     print("test_timestamp:", TEST_CUT_DATE.date(), flush=True)
     print("label_timedelta_days:", int(LABEL_TIMEDELTA / pd.Timedelta(days=1)), flush=True)
     print("num_eval_timestamps:", NUM_EVAL_TIMESTAMPS, flush=True)
+    print("training_frame_stride:", FRAME_STRIDE, flush=True)
     print("target:", target, flush=True)
     print("train_rows:", df_train.row_count, flush=True)
     print("validation_rows:", len(df_val), flush=True)

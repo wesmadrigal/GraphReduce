@@ -8,13 +8,13 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
-from relbench.metrics import accuracy, average_precision, f1, roc_auc
 from relbench_dataset_utils import (
     RelBenchFrameStore,
     get_relbench_dataset_db,
     get_relbench_split_task_table,
     iter_training_frames,
     register_relbench_db_views,
+    target_table_from_frame,
 )
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
@@ -55,6 +55,7 @@ def run_rel_event_user_repeat(
 
     con = duckdb.connect()
     split_frames: dict[str, RelBenchFrameStore] = {}
+    split_tasks = {}
 
     try:
         register_relbench_db_views(con, db, TABLE_TO_VIEW, ROW_NUMBER_IDS, DROP_COLUMNS)
@@ -98,9 +99,10 @@ def run_rel_event_user_repeat(
         official_tables = {}
         split_cut_dates = {}
         for split_name in ("train", "val", "test"):
-            _, task_table, cut_timestamps = get_relbench_split_task_table(
+            task, task_table, cut_timestamps = get_relbench_split_task_table(
                 DATASET_NAME, "user-repeat", split_name, download=True, db=db
             )
+            split_tasks[split_name] = task
             official_tables[split_name] = task_table.df.copy()
             split_cut_dates[split_name] = cut_timestamps
 
@@ -199,8 +201,9 @@ def run_rel_event_user_repeat(
                     labels,
                     left_on=["timestamp", f"usr_{user_id_col}"],
                     right_on=["timestamp", "user"],
-                    how="inner",
-                ).drop(columns=["user"])
+                    how="right",
+                    validate="one_to_one",
+                )
                 frame[TARGET_COLUMN] = frame[TARGET_COLUMN].astype("int8")
                 return frame
 
@@ -243,20 +246,14 @@ def run_rel_event_user_repeat(
 
     val_predictions = np.asarray(model.predict_proba(val_inputs)[:, 1], dtype="float64")
     test_predictions = np.asarray(model.predict_proba(df_test[feature_columns].fillna(0))[:, 1], dtype="float64")
-    val_target = df_val[TARGET_COLUMN].to_numpy(dtype="float64")
-    test_target = df_test[TARGET_COLUMN].to_numpy(dtype="float64")
-    val_metrics = {
-        "accuracy": float(accuracy(val_target, val_predictions)),
-        "average_precision": float(average_precision(val_target, val_predictions)),
-        "f1": float(f1(val_target, val_predictions)),
-        "roc_auc": float(roc_auc(val_target, val_predictions)),
-    }
-    test_metrics = {
-        "accuracy": float(accuracy(test_target, test_predictions)),
-        "average_precision": float(average_precision(test_target, test_predictions)),
-        "f1": float(f1(test_target, test_predictions)),
-        "roc_auc": float(roc_auc(test_target, test_predictions)),
-    }
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
+    )
+    test_metrics = split_tasks["test"].evaluate(
+        test_predictions,
+        target_table=target_table_from_frame(split_tasks["test"], df_test),
+    )
     return train_store, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, TARGET_COLUMN
 
 

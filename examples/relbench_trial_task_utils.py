@@ -602,7 +602,8 @@ def build_task_split_frame(
             timestamp_labels[["_relbench_entity_key", task.time_col, task.entity_col, task.target_col]],
             left_on=["timestamp", "_relbench_entity_key"],
             right_on=[task.time_col, "_relbench_entity_key"],
-            how="inner",
+            how="right",
+            validate="one_to_one",
         ).drop(columns=["_relbench_entity_key"])
 
     frame_workers = None if split == "train" else 1

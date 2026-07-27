@@ -7,12 +7,7 @@ import datetime
 from pathlib import Path
 
 import duckdb
-import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
-from catboost import CatBoostRegressor
-from sklearn.metrics import mean_absolute_error, roc_auc_score
-from sklearn.model_selection import train_test_split
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
@@ -50,67 +45,6 @@ def _pick(columns: list[str], candidates: list[str], required: bool = True) -> s
     if required:
         raise ValueError(f"Could not find any of {candidates} in columns: {columns}")
     return None
-
-
-def _train_binary(df: pd.DataFrame, target: str) -> tuple[float | None, int]:
-    numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target]
-    feature_cols = [
-        c
-        for c in numeric_cols
-        if "label" not in c.lower() and not c.lower().endswith("_id") and c.lower() not in {"customerid", "productid"}
-    ]
-    if not feature_cols:
-        return None, 0
-
-    X = df[feature_cols].fillna(0)
-    y = df[target]
-    if y.nunique() < 2:
-        return None, len(feature_cols)
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
-    model = CatBoostClassifier(
-        iterations=500,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="Logloss",
-        eval_metric="AUC",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
-    )
-    model.fit(X_train, y_train)
-    preds = model.predict_proba(X_test)[:, 1]
-    catboost_auc = float(roc_auc_score(y_test, preds))
-    return catboost_auc, len(feature_cols)
-
-
-def _train_regression(df: pd.DataFrame, target: str) -> tuple[float | None, int]:
-    numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target]
-    feature_cols = [
-        c
-        for c in numeric_cols
-        if "label" not in c.lower() and not c.lower().endswith("_id") and c.lower() not in {"customerid", "productid"}
-    ]
-    if not feature_cols:
-        return None, 0
-
-    X = df[feature_cols].fillna(0)
-    y = df[target].fillna(0).astype("float64")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = CatBoostRegressor(
-        iterations=700,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="MAE",
-        eval_metric="MAE",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
-    )
-    model.fit(X_train, y_train)
-    preds = model.predict(X_test)
-    catboost_mae = float(mean_absolute_error(y_test, preds))
-    return catboost_mae, len(feature_cols)
 
 
 def _build_frame(mode: str, cut_date: datetime.datetime) -> pd.DataFrame:
@@ -306,27 +240,40 @@ def run_amazon_task(
     data_dir: Path | None = None,
     cut_date: datetime.datetime | None = None,
 ) -> tuple[pd.DataFrame, float | None, int, list[str], str]:
-    use_cut_date = cut_date or CUT_DATE
-    materialized: list[str] = []
-    df = _build_frame(mode=mode, cut_date=use_cut_date)
-
+    if cut_date not in (None, CUT_DATE):
+        raise ValueError(
+            "Custom scoring cutoffs are disabled; RelBench examples evaluate only "
+            "the official test task table"
+        )
     if mode == "user_churn":
-        target = "user_churn_90d"
-        catboost_auc, n_features = _train_binary(df, target=target)
-        return df, catboost_auc, n_features, materialized, target
-    if mode == "item_churn":
-        target = "item_has_review_next_90d"
-        catboost_auc, n_features = _train_binary(df, target=target)
-        return df, catboost_auc, n_features, materialized, target
-    if mode == "user_ltv":
-        target = "user_ltv_90d_usd"
-        catboost_mae, n_features = _train_regression(df, target=target)
-        return df, catboost_mae, n_features, materialized, target
-    if mode == "item_ltv":
-        target = "item_ltv_90d_usd"
-        catboost_mae, n_features = _train_regression(df, target=target)
-        return df, catboost_mae, n_features, materialized, target
-    raise ValueError("mode must be user_churn, item_churn, user_ltv, or item_ltv")
+        from relbench_amazon_user_churn import run_rel_amazon_user_churn
+
+        runner = run_rel_amazon_user_churn
+        metric_name = "roc_auc"
+    elif mode == "item_churn":
+        from relbench_amazon_item_churn import run_rel_amazon_item_churn
+
+        runner = run_rel_amazon_item_churn
+        metric_name = "roc_auc"
+    elif mode == "user_ltv":
+        from relbench_amazon_user_ltv import run_rel_amazon_user_ltv
+
+        runner = run_rel_amazon_user_ltv
+        metric_name = "mae"
+    elif mode == "item_ltv":
+        from relbench_amazon_item_ltv import run_rel_amazon_item_ltv
+
+        runner = run_rel_amazon_item_ltv
+        metric_name = "mae"
+    else:
+        raise ValueError("mode must be user_churn, item_churn, user_ltv, or item_ltv")
+
+    train_store, _, df_test, _, test_metrics, n_features, materialized, target = (
+        runner(data_dir=data_dir)
+    )
+    train_store.close()
+    test_score = None if test_metrics is None else float(test_metrics[metric_name])
+    return df_test, test_score, n_features, materialized, target
 
 
 def run_amazon_temporal_regression_task(
@@ -337,48 +284,26 @@ def run_amazon_temporal_regression_task(
 ) -> tuple[pd.DataFrame, pd.DataFrame, float | None, int, list[str], str]:
     if mode not in {"user_ltv", "item_ltv"}:
         raise ValueError("mode must be user_ltv or item_ltv")
-
-    materialized: list[str] = []
-    df_validation = _build_frame(mode=mode, cut_date=validation_cut_date)
-    df_holdout = _build_frame(mode=mode, cut_date=holdout_cut_date)
-
+    if (
+        validation_cut_date != VALIDATION_CUT_DATE
+        or holdout_cut_date != HOLDOUT_CUT_DATE
+    ):
+        raise ValueError(
+            "Custom scoring cutoffs are disabled; RelBench examples evaluate only "
+            "the official validation and test task tables"
+        )
     if mode == "user_ltv":
-        target = "user_ltv_90d_usd"
+        from relbench_amazon_user_ltv import run_rel_amazon_user_ltv
+
+        runner = run_rel_amazon_user_ltv
     else:
-        target = "item_ltv_90d_usd"
+        from relbench_amazon_item_ltv import run_rel_amazon_item_ltv
 
-    numeric_cols = [c for c in df_validation.select_dtypes(include=[np.number]).columns if c != target]
-    feature_cols = [
-        c
-        for c in numeric_cols
-        if "label" not in c.lower() and not c.lower().endswith("_id") and c.lower() not in {"customerid", "productid"}
-    ]
-    feature_cols = [c for c in feature_cols if c in df_holdout.columns]
-    if not feature_cols:
-        return df_validation, df_holdout, None, 0, materialized, target
+        runner = run_rel_amazon_item_ltv
 
-    model = CatBoostRegressor(
-        iterations=700,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="MAE",
-        eval_metric="MAE",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
+    train_store, df_validation, df_holdout, _, test_metrics, n_features, materialized, target = (
+        runner(data_dir=data_dir)
     )
-    X_validation = df_validation[feature_cols].fillna(0)
-    y_validation = df_validation[target].fillna(0).astype("float64")
-    X_holdout = df_holdout[feature_cols].fillna(0)
-    y_holdout = df_holdout[target].fillna(0).astype("float64")
-    model.fit(X_validation, y_validation)
-    holdout_preds = model.predict(X_holdout)
-    catboost_holdout_mae = float(mean_absolute_error(y_holdout, holdout_preds))
-    return (
-        df_validation,
-        df_holdout,
-        catboost_holdout_mae,
-        len(feature_cols),
-        materialized,
-        target,
-    )
+    train_store.close()
+    test_mae = None if test_metrics is None else float(test_metrics["mae"])
+    return df_validation, df_holdout, test_mae, n_features, materialized, target

@@ -43,6 +43,7 @@ TEST_CUT_DATE = pd.Timestamp("2010-01-01")
 LABEL_TIMEDELTA = pd.Timedelta(days=60)
 NUM_EVAL_TIMESTAMPS = 40
 TARGET_COLUMN = "position"
+FRAME_STRIDE = 10
 
 
 def _task_table_for_split(split_name: str):
@@ -114,7 +115,15 @@ def run_rel_f1_driver_position(
         for split_name in ["train", "val", "test"]:
             task, task_table, cut_timestamps = _task_table_for_split(split_name)
             split_tasks[split_name] = task
-            cut_dates = [timestamp.to_pydatetime() for timestamp in cut_timestamps]
+            selected_cut_timestamps = (
+                cut_timestamps[::FRAME_STRIDE]
+                if split_name == "train"
+                else cut_timestamps
+            )
+            cut_dates = [
+                timestamp.to_pydatetime()
+                for timestamp in selected_cut_timestamps
+            ]
             frame_store = RelBenchFrameStore(
                 f"rel-f1-driver-position-{split_name}", persist_each_frame=True
             )
@@ -238,7 +247,8 @@ def run_rel_f1_driver_position(
                     labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"drv_{driver_id_col}"],
                     right_on=[task.time_col, task.entity_col],
-                    how="inner",
+                    how="right",
+                    validate="one_to_one",
                 )
                 frame[task.target_col] = frame[task.target_col].astype("float64")
                 return frame
@@ -315,6 +325,7 @@ def main() -> None:
     print("test_timestamp:", TEST_CUT_DATE.date(), flush=True)
     print("label_timedelta_days:", int(LABEL_TIMEDELTA / pd.Timedelta(days=1)), flush=True)
     print("num_eval_timestamps:", NUM_EVAL_TIMESTAMPS, flush=True)
+    print("training_frame_stride:", FRAME_STRIDE, flush=True)
     print("target:", target, flush=True)
     print("train_rows:", df_train.row_count, flush=True)
     print("validation_rows:", len(df_val), flush=True)

@@ -15,7 +15,6 @@ from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
-from relbench_catboost_utils import enable_all_feature_families
 
 from relbench_dataset_utils import (
     RelBenchFrameStore,
@@ -188,12 +187,6 @@ def build_user_badge_features(
     vote_post = _vote_node("votep")
     comment_post = _comment_node("commp")
 
-    text_nodes = [post, post_history, comment_user, comment_post]
-    enable_all_feature_families(text_nodes)
-    for node in text_nodes:
-        node.feature_family_max_columns = 4
-        node.categorical_top_k = 5
-
     gr = GraphReduce(
         name=f"relbench-user-badge-{cut_date.date()}",
         parent_node=user,
@@ -326,10 +319,6 @@ def build_user_engagement_features(
         post_comment_user,
         post_comment_badge,
     ]
-    enable_all_feature_families([post, post_comment, post_comment_user])
-    for node in [post, post_comment, post_comment_user]:
-        node.feature_family_max_columns = 4
-        node.categorical_top_k = 5
     for node in nodes:
         gr.add_node(node)
 
@@ -451,7 +440,8 @@ def build_task_split_frame(
             task_df[[task.time_col, task.entity_col, task.target_col]],
             left_on=feature_entity_col,
             right_on=task.entity_col,
-            how="inner",
+            how="right",
+            validate="one_to_one",
         )
 
     frame_workers = None if split == "train" else 1

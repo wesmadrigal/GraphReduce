@@ -135,7 +135,8 @@ def run_rel_hm_item_sales(
                     labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"art_{article_id_col}"],
                     right_on=[task.time_col, task.entity_col],
-                    how="inner",
+                    how="right",
+                    validate="one_to_one",
                 )
                 frame[task.target_col] = frame[task.target_col].fillna(0).astype("float64")
                 return frame

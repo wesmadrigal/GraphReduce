@@ -9,7 +9,6 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
-from relbench.metrics import accuracy, average_precision, f1, roc_auc
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.graph_reduce import GraphReduce
@@ -17,10 +16,11 @@ from graphreduce.node import DuckdbNode
 from relbench_dataset_utils import (
     RelBenchFrameStore,
     get_relbench_dataset_db,
-    get_relbench_split_timestamps,
+    get_relbench_split_task_table,
     get_relbench_task,
     iter_training_frames,
     register_relbench_db_views,
+    target_table_from_frame,
 )
 from relbench_catboost_utils import fit_incremental_classifier, set_feature_families
 
@@ -71,14 +71,25 @@ def run_rel_amazon_item_churn(
         review_product_id = {column.lower(): column for column in review_columns}["product_id"]
         review_time = {column.lower(): column for column in review_columns}["review_time"]
 
-        split_cut_dates = {
-            split_name: [
-                timestamp.to_pydatetime()
-                for timestamp in get_relbench_split_timestamps(official_task, split_name, db)
-            ]
-            for split_name in ("train", "val", "test")
-        }
-        for split_name, cut_dates in split_cut_dates.items():
+        split_tasks = {}
+        split_specs = {}
+        for split_name in ("train", "val", "test"):
+            task, task_table, cut_timestamps = get_relbench_split_task_table(
+                "rel-amazon",
+                "item-churn",
+                split_name,
+                download=True,
+                task=official_task,
+                db=db,
+            )
+            split_tasks[split_name] = task
+            split_specs[split_name] = (
+                task,
+                task_table,
+                [timestamp.to_pydatetime() for timestamp in cut_timestamps],
+            )
+
+        for split_name, (task, task_table, cut_dates) in split_specs.items():
             frame_store = RelBenchFrameStore(
                 f"rel-amazon-item-churn-{split_name}", persist_each_frame=True
             )
@@ -139,46 +150,20 @@ def run_rel_amazon_item_churn(
                 graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
-                labels = con.sql(
-                f"""
-                WITH timestamp_df AS (
-                    SELECT TIMESTAMP '{cut_date}' AS timestamp
-                )
-                SELECT
-                    timestamp,
-                    product_id,
-                    CAST(
-                        NOT EXISTS (
-                            SELECT 1
-                            FROM review_src
-                            WHERE
-                                review_src.{review_product_id} = product_src.{product_id}
-                                AND review_src.{review_time} > timestamp
-                                AND review_src.{review_time} <= timestamp + INTERVAL '{LABEL_PERIOD_DAYS} days'
-                        ) AS INTEGER
-                    ) AS churn
-                FROM
-                    timestamp_df,
-                    product_src
-                WHERE
-                    EXISTS (
-                        SELECT 1
-                        FROM review_src
-                        WHERE
-                            review_src.{review_product_id} = product_src.{product_id}
-                            AND review_src.{review_time} > timestamp - INTERVAL '{LABEL_PERIOD_DAYS} days'
-                            AND review_src.{review_time} <= timestamp
-                    )
-                """
-                ).to_df()
+                labels = task_table.df.copy()
+                labels[task.time_col] = pd.to_datetime(labels[task.time_col])
+                labels = labels[
+                    labels[task.time_col] == pd.Timestamp(cut_date)
+                ].copy()
 
                 frame = features.merge(
-                    labels[["timestamp", "product_id", "churn"]],
+                    labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"prod_{product_id}"],
-                    right_on=["timestamp", "product_id"],
-                    how="inner",
-                ).drop(columns=["product_id"])
-                frame["churn"] = frame["churn"].astype("int8")
+                    right_on=[task.time_col, task.entity_col],
+                    how="right",
+                    validate="one_to_one",
+                )
+                frame[task.target_col] = frame[task.target_col].astype("int8")
                 return frame
 
             frame_workers = None if split_name == "train" else 1
@@ -193,7 +178,7 @@ def run_rel_amazon_item_churn(
     df_test = split_frames["test"].to_dataframe()
     split_frames["val"].close()
     split_frames["test"].close()
-    target = "churn"
+    target = split_tasks["train"].target_col
 
     train_sample = train_store.sample_frame()
     common_columns = set(train_sample.columns) & set(df_val.columns) & set(df_test.columns)
@@ -229,18 +214,14 @@ def run_rel_amazon_item_churn(
     val_predictions = model.predict_proba(df_val[feature_columns].fillna(0))[:, 1]
     test_predictions = model.predict_proba(df_test[feature_columns].fillna(0))[:, 1]
 
-    val_metrics = {
-        "average_precision": float(average_precision(df_val[target].to_numpy(), val_predictions)),
-        "accuracy": float(accuracy(df_val[target].to_numpy(), val_predictions)),
-        "f1": float(f1(df_val[target].to_numpy(), val_predictions)),
-        "roc_auc": float(roc_auc(df_val[target].to_numpy(), val_predictions)),
-    }
-    test_metrics = {
-        "average_precision": float(average_precision(df_test[target].to_numpy(), test_predictions)),
-        "accuracy": float(accuracy(df_test[target].to_numpy(), test_predictions)),
-        "f1": float(f1(df_test[target].to_numpy(), test_predictions)),
-        "roc_auc": float(roc_auc(df_test[target].to_numpy(), test_predictions)),
-    }
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
+    )
+    test_metrics = split_tasks["test"].evaluate(
+        test_predictions,
+        target_table=target_table_from_frame(split_tasks["test"], df_test),
+    )
 
     return train_store, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, target
 

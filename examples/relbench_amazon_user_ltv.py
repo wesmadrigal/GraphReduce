@@ -266,7 +266,8 @@ def run_rel_amazon_user_ltv(
                     timestamp_labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"cust_{customer_id}"],
                     right_on=[task.time_col, task.entity_col],
-                    how="inner",
+                    how="right",
+                    validate="one_to_one",
                 )
                 frame[task.target_col] = frame[task.target_col].fillna(0).astype("float64")
                 train_store.append(frame)

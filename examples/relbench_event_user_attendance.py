@@ -220,7 +220,8 @@ def run_rel_event_user_attendance(
                     labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"usr_{user_id_col}"],
                     right_on=[task.time_col, task.entity_col],
-                    how="inner",
+                    how="right",
+                    validate="one_to_one",
                 )
                 frame[task.target_col] = frame[task.target_col].astype("float64")
                 return frame

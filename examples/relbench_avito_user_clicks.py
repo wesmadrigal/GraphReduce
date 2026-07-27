@@ -10,7 +10,6 @@ import duckdb
 import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
-from relbench.metrics import accuracy, average_precision, f1, roc_auc
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.graph_reduce import GraphReduce
@@ -21,6 +20,7 @@ from relbench_dataset_utils import (
     get_relbench_split_task_table,
     iter_training_frames,
     register_relbench_db_views,
+    target_table_from_frame,
 )
 
 TABLE_NAME_TO_FILENAME = {
@@ -202,8 +202,9 @@ def run_rel_avito_user_clicks(
                     labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"usr_{user_id}"],
                     right_on=[task.time_col, task.entity_col],
-                    how="inner",
-                ).drop(columns=[task.entity_col])
+                    how="right",
+                    validate="one_to_one",
+                )
                 frame[task.target_col] = frame[task.target_col].astype("int8")
                 return frame
 
@@ -255,18 +256,14 @@ def run_rel_avito_user_clicks(
     val_predictions = model.predict_proba(df_val[feature_columns].fillna(0))[:, 1]
     test_predictions = model.predict_proba(df_test[feature_columns].fillna(0))[:, 1]
 
-    val_metrics = {
-        "average_precision": float(average_precision(df_val[target].to_numpy(), val_predictions)),
-        "accuracy": float(accuracy(df_val[target].to_numpy(), val_predictions)),
-        "f1": float(f1(df_val[target].to_numpy(), val_predictions)),
-        "roc_auc": float(roc_auc(df_val[target].to_numpy(), val_predictions)),
-    }
-    test_metrics = {
-        "average_precision": float(average_precision(df_test[target].to_numpy(), test_predictions)),
-        "accuracy": float(accuracy(df_test[target].to_numpy(), test_predictions)),
-        "f1": float(f1(df_test[target].to_numpy(), test_predictions)),
-        "roc_auc": float(roc_auc(df_test[target].to_numpy(), test_predictions)),
-    }
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
+    )
+    test_metrics = split_tasks["test"].evaluate(
+        test_predictions,
+        target_table=target_table_from_frame(split_tasks["test"], df_test),
+    )
 
     return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, target
 
