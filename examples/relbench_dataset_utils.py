@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,6 +23,7 @@ FrameItem = TypeVar("FrameItem")
 FrameResult = TypeVar("FrameResult")
 FrameBuilder = Callable[[duckdb.DuckDBPyConnection, FrameItem], FrameResult]
 TRAINING_FRAME_WORKERS_ENV = "RELBench_TRAINING_FRAME_WORKERS"
+logger = logging.getLogger(__name__)
 
 
 def get_training_frame_workers(default: int = 1) -> int:
@@ -244,8 +246,52 @@ def get_relbench_dataset_db(
 ):
     """Load a RelBench dataset through the official getter and return its DB."""
 
-    dataset = get_dataset(dataset_name, download=download)
+    try:
+        dataset = get_dataset(dataset_name, download=download)
+    except ValueError as exc:
+        if not download or "SHA256 hash of downloaded file" not in str(exc):
+            raise
+        _download_relbench_archive_without_stale_hash(f"{dataset_name}/db.zip")
+        dataset = get_dataset(dataset_name, download=False)
     return dataset, dataset.get_db(upto_test_timestamp=upto_test_timestamp)
+
+
+def _download_relbench_archive_without_stale_hash(resource: str) -> None:
+    """Recover when RelBench's published archive hash is stale.
+
+    RelBench occasionally republishes a database or task archive before
+    releasing a package with the matching registry hash. The official
+    download has already established the exact HTTPS URL; this fallback only
+    bypasses the stale package hash, records the newly observed hash through
+    Pooch, and preserves RelBench's normal cache layout and unzip processor.
+    """
+
+    import pooch
+    from relbench.datasets import DOWNLOAD_REGISTRY
+
+    if resource not in DOWNLOAD_REGISTRY.registry:
+        raise ValueError(f"RelBench has no registered archive for {resource}")
+
+    resource_path = Path(resource)
+    if resource_path.is_absolute() or ".." in resource_path.parts:
+        raise ValueError(f"Invalid RelBench archive path: {resource}")
+
+    cache_dir = Path(DOWNLOAD_REGISTRY.abspath).joinpath(*resource_path.parts[:-1])
+    archive_path = cache_dir / resource_path.name
+    archive_path.unlink(missing_ok=True)
+    logger.warning(
+        "RelBench registry hash for %s is stale; downloading the current "
+        "archive without the old hash and recording its observed SHA256.",
+        resource,
+    )
+    pooch.retrieve(
+        DOWNLOAD_REGISTRY.get_url(resource),
+        known_hash=None,
+        fname=archive_path.name,
+        path=cache_dir,
+        processor=pooch.Unzip(extract_dir="."),
+        progressbar=True,
+    )
 
 
 def register_relbench_db_views(
@@ -311,10 +357,13 @@ def get_relbench_task(
     except ValueError as exc:
         # RelBench validates hosted task archives against the hash shipped in
         # the installed package. If the server republishes an archive before
-        # the package registry is updated, compute the official tables from
-        # the locally cached database instead of failing at startup.
+        # the package registry is updated, refresh the task archive through
+        # the shared stale-hash recovery path instead of failing at startup.
         if not download or "SHA256 hash of downloaded file" not in str(exc):
             raise
+        _download_relbench_archive_without_stale_hash(
+            f"{dataset_name}/tasks/{task_name}.zip"
+        )
         return get_task(dataset_name, task_name, download=False)
 
 

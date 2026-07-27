@@ -153,6 +153,20 @@ def _safe_sql_alias_part(value: typing.Any, max_len: int = 40) -> str:
     return alias
 
 
+def _balanced_sql_add(expressions: typing.Sequence[str]) -> str:
+    """Build a shallow SQL addition tree for wide-row scoring expressions."""
+
+    if not expressions:
+        return "0"
+    if len(expressions) == 1:
+        return expressions[0]
+    midpoint = len(expressions) // 2
+    return (
+        f"({_balanced_sql_add(expressions[:midpoint])} + "
+        f"{_balanced_sql_add(expressions[midpoint:])})"
+    )
+
+
 def _series_looks_like_text(col: str, series: pd.Series, semantic_type: str) -> bool:
     if (
         semantic_type != "categorical"
@@ -3341,7 +3355,7 @@ class SQLNode(GraphReduceNode):
         if not columns:
             return self.get_sample(n=n, table=table)
 
-        score = " + ".join(
+        score = _balanced_sql_add(
             [
                 f"CASE WHEN {self._sample_identifier(col)} IS NOT NULL THEN 1 ELSE 0 END"
                 for col in columns
