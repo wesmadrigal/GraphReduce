@@ -70,3 +70,9 @@ def test_run_all_inherits_training_frame_workers_from_environment(monkeypatch):
     args = run_all_relbench_tasks.parse_args()
 
     assert args.training_frame_workers == 0
+
+
+def test_run_all_v1_task_group_excludes_v2_tasks():
+    assert run_all_relbench_tasks.TASK_GROUPS["v1"]
+    assert not run_all_relbench_tasks.TASK_GROUPS["v1"] & run_all_relbench_tasks.V2_TASKS
+    assert "relbench_amazon_user_churn.py" in run_all_relbench_tasks.TASK_GROUPS["v1"]
