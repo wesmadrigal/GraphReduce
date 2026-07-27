@@ -433,7 +433,11 @@ def build_site_features(
         ["nct_id", "start_date"],
         ["enrollment", "number_of_arms", "number_of_groups"],
     )
-    outcomes_cols = _select_columns(table_columns["outcomes"], ["id", "nct_id", "date"])
+    outcomes_cols = _select_columns(
+        table_columns["outcomes"],
+        ["id", "nct_id", "date"],
+        ["outcome_type", "time_frame", "units"],
+    )
     outcome_analyses_cols = _select_columns(
         table_columns["outcome_analyses"],
         ["id", "nct_id", "outcome_id", "date"],
