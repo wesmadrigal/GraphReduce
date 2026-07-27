@@ -32,6 +32,7 @@ from relbench_regression_metrics import add_nmae
 from relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES, fit_tuned_regressor_incremental, set_feature_families
 
 LOOKBACK_START = datetime.datetime(2000, 1, 1)
+SITE_SUCCESS_FEATURE_FAMILIES = ("base", "semantic", "context")
 
 TABLE_NAME_TO_FILENAME = {
     "studies": "studies.parquet",
@@ -539,7 +540,7 @@ def build_site_features(
         reported_event_totals,
     ]
     set_feature_families(
-        [outcome_analyses, reported_event_totals], TEMPORAL_FEATURE_FAMILIES
+        [outcome_analyses, reported_event_totals], SITE_SUCCESS_FEATURE_FAMILIES
     )
     gr = _graph(
         con,

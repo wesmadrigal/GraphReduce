@@ -7,7 +7,14 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
 
-from examples.relbench_trial_task_utils import _select_evenly_spaced_timestamps
+from examples.relbench_trial_task_utils import (
+    SITE_SUCCESS_FEATURE_FAMILIES,
+    _select_evenly_spaced_timestamps,
+)
+
+
+def test_site_success_uses_compact_feature_families():
+    assert SITE_SUCCESS_FEATURE_FAMILIES == ("base", "semantic", "context")
 
 
 def test_trial_training_timestamp_sampling_keeps_full_range():
