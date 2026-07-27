@@ -23,6 +23,7 @@ def run_rel_trial_site_success(
         feature_builder=build_site_features,
         feature_entity_col="fac_facility_id",
         data_dir=data_dir,
+        max_train_frames=5,
     )
 
 

@@ -83,6 +83,20 @@ def _feature_cut_date(task_timestamp: pd.Timestamp) -> datetime.datetime:
     return task_timestamp.to_pydatetime() + datetime.timedelta(days=1)
 
 
+def _select_evenly_spaced_timestamps(
+    timestamps: list[pd.Timestamp], max_count: int | None
+) -> list[pd.Timestamp]:
+    """Keep a bounded, evenly spaced sample while retaining both boundaries."""
+
+    if max_count is None or len(timestamps) <= max_count:
+        return list(timestamps)
+    if max_count < 2:
+        raise ValueError("max_count must be at least 2 when sampling timestamps")
+
+    indices = np.linspace(0, len(timestamps) - 1, num=max_count)
+    return [timestamps[int(round(index))] for index in indices]
+
+
 def _graph(
     con: duckdb.DuckDBPyConnection,
     name: str,
@@ -585,10 +599,15 @@ def build_task_split_frame(
     split: str,
     feature_builder: Callable[[duckdb.DuckDBPyConnection, dict[str, list[str]], pd.Timestamp], pd.DataFrame],
     feature_entity_col: str,
+    max_train_frames: int | None = None,
 ) -> tuple[object, pd.DataFrame, pd.Timestamp]:
     task, task_table, cut_timestamps = get_relbench_split_task_table(
         "rel-trial", task_name, split, download=True
     )
+    if split == "train":
+        cut_timestamps = _select_evenly_spaced_timestamps(
+            cut_timestamps, max_train_frames
+        )
     frame_store = RelBenchFrameStore(
         f"rel-trial-{task_name}-{split}", persist_each_frame=True
     )
@@ -636,6 +655,7 @@ def run_rel_trial_regression_task(
     feature_builder: Callable[[duckdb.DuckDBPyConnection, dict[str, list[str]], pd.Timestamp], pd.DataFrame],
     feature_entity_col: str,
     data_dir: Path | None = None,
+    max_train_frames: int | None = None,
 ) -> tuple[RelBenchFrameStore, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
     materialized: list[str] = []
 
@@ -653,6 +673,7 @@ def run_rel_trial_regression_task(
                 split_name,
                 feature_builder,
                 feature_entity_col,
+                max_train_frames=max_train_frames,
             )
             split_tasks[split_name] = task
             split_frames[split_name] = frame_store
