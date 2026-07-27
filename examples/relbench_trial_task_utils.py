@@ -32,7 +32,7 @@ from relbench_regression_metrics import add_nmae
 from relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES, fit_tuned_regressor_incremental, set_feature_families
 
 LOOKBACK_START = datetime.datetime(2000, 1, 1)
-SITE_SUCCESS_FEATURE_FAMILIES = ("base", "semantic", "context")
+SITE_SUCCESS_FEATURE_FAMILIES = TEMPORAL_FEATURE_FAMILIES
 
 TABLE_NAME_TO_FILENAME = {
     "studies": "studies.parquet",
