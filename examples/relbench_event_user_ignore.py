@@ -49,18 +49,28 @@ TARGET_COLUMN = "target"
 def _catboost_inputs(
     frame: pd.DataFrame,
     feature_columns: list[str],
+    categorical_columns: set[str] | None = None,
 ) -> tuple[pd.DataFrame, list[int]]:
     """Keep user categoricals instead of silently dropping them before CatBoost."""
 
-    inputs = frame[feature_columns].copy()
+    # Auto-generated categorical features can be absent from a later cutoff
+    # when that cutoff has no rows for the category. Preserve the training
+    # schema and represent those missing aggregates as zero.
+    inputs = frame.reindex(columns=feature_columns).copy()
+    if categorical_columns is None:
+        categorical_columns = {
+            column
+            for column in feature_columns
+            if (
+                pd.api.types.is_object_dtype(inputs[column])
+                or pd.api.types.is_string_dtype(inputs[column])
+                or pd.api.types.is_categorical_dtype(inputs[column])
+            )
+        }
     categorical_indices: list[int] = []
     for index, column in enumerate(feature_columns):
         series = inputs[column]
-        if (
-            pd.api.types.is_object_dtype(series)
-            or pd.api.types.is_string_dtype(series)
-            or pd.api.types.is_categorical_dtype(series)
-        ):
+        if column in categorical_columns:
             inputs[column] = series.fillna("__missing__").astype(str)
             categorical_indices.append(index)
         else:
@@ -134,6 +144,17 @@ def run_rel_event_user_ignore(
             official_tables[split_name] = task_table.df.copy()
             split_cut_dates[split_name] = cut_timestamps
 
+        all_feature_cut_dates = [
+            pd.Timestamp(timestamp) + pd.Timedelta(seconds=1)
+            for cut_dates in split_cut_dates.values()
+            for timestamp in cut_dates
+        ]
+        compute_period_days = max(
+            1,
+            int((max(all_feature_cut_dates) - lookback_start).days + 1),
+        )
+        frozen_plan = None
+
         for split_name, cut_dates in split_cut_dates.items():
             frame_store = RelBenchFrameStore(
                 f"rel-event-user-ignore-{split_name}", persist_each_frame=True
@@ -198,7 +219,7 @@ def run_rel_event_user_ignore(
                     compute_layer=ComputeLayerEnum.duckdb,
                     sql_client=con,
                     cut_date=feature_cut_date.to_pydatetime(),
-                    compute_period_val=max(1, int((feature_cut_date - lookback_start).days + 1)),
+                    compute_period_val=compute_period_days,
                     compute_period_unit=PeriodUnit.day,
                     auto_features=True,
                     auto_labels=False,
@@ -222,7 +243,13 @@ def run_rel_event_user_ignore(
                 graph.add_entity_edge(attendees_node, events_node, attendee_event_col, event_id_col, reduce=False)
                 graph.add_entity_edge(interest_node, events_node, interest_event_col, event_id_col, reduce=False)
 
-                graph.do_transformations_sql()
+                nonlocal frozen_plan
+                if frozen_plan is None:
+                    graph.do_transformations_sql()
+                    frozen_plan = graph.freeze_execution_plan()
+                else:
+                    graph.apply_execution_plan(frozen_plan)
+                    graph.do_transformations_sql()
                 features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
                 graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
@@ -242,8 +269,16 @@ def run_rel_event_user_ignore(
                 frame[TARGET_COLUMN] = frame[TARGET_COLUMN].astype("int8")
                 return frame
 
+            # Build the first training frame synchronously to establish the
+            # feature operation/schema plan before any concurrent frames run.
+            remaining_cut_dates = list(cut_dates)
+            if frozen_plan is None and remaining_cut_dates:
+                frame_store.append(build_frame(con, remaining_cut_dates.pop(0)))
+
             frame_workers = None if split_name == "train" else 1
-            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
+            for frame in iter_training_frames(
+                con, remaining_cut_dates, build_frame, workers=frame_workers
+            ):
                 frame_store.append(frame)
 
             split_frames[split_name] = frame_store
@@ -277,12 +312,21 @@ def run_rel_event_user_ignore(
         return train_store, df_val, df_test, None, None, len(feature_columns), materialized, TARGET_COLUMN
 
     _, categorical_indices = _catboost_inputs(train_sample, feature_columns)
-    val_inputs, _ = _catboost_inputs(df_val, feature_columns)
-    test_inputs, _ = _catboost_inputs(df_test, feature_columns)
+    categorical_columns = {
+        feature_columns[index] for index in categorical_indices
+    }
+    val_inputs, _ = _catboost_inputs(
+        df_val, feature_columns, categorical_columns
+    )
+    test_inputs, _ = _catboost_inputs(
+        df_test, feature_columns, categorical_columns
+    )
 
     def train_batches():
         for batch in train_store.iter_batches():
-            inputs, _ = _catboost_inputs(batch, feature_columns)
+            inputs, _ = _catboost_inputs(
+                batch, feature_columns, categorical_columns
+            )
             inputs[TARGET_COLUMN] = batch[TARGET_COLUMN].to_numpy()
             yield inputs
 

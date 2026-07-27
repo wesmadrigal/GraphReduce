@@ -3,6 +3,12 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples"))
+
+from examples.relbench_event_user_ignore import _catboost_inputs
 from examples.relbench_catboost_utils import (
     fit_incremental_regressor,
     set_feature_families,
@@ -52,3 +58,17 @@ def test_incremental_regressor_skips_constant_target_frames():
 
     assert model is not None
     assert mae >= 0.0
+
+
+def test_event_ignore_catboost_inputs_aligns_missing_generated_columns():
+    frame = pd.DataFrame({"status": ["yes"]})
+
+    inputs, categorical_indices = _catboost_inputs(
+        frame,
+        ["evt_city_san_francisco_count", "status"],
+        {"status"},
+    )
+
+    assert inputs["evt_city_san_francisco_count"].tolist() == [0]
+    assert inputs["status"].tolist() == ["yes"]
+    assert categorical_indices == [1]
