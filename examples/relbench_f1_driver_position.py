@@ -145,6 +145,7 @@ def run_rel_f1_driver_position(
                     pk=result_id_col,
                     date_key=result_date_col,
                     columns=result_columns,
+                    feature_family_max_columns=len(result_columns),
                     context_keys=(result_race_col, result_constructor_col),
                 )
                 standing_node = DuckdbNode(
