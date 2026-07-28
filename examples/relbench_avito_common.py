@@ -7,17 +7,13 @@ import datetime
 from pathlib import Path
 
 import duckdb
-import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
-from relbench_dataset_utils import materialize_relbench_dataset
+from relbench_dataset_utils import get_relbench_dataset_db, register_relbench_db_views
 
 TABLE_NAME_TO_FILENAME = {
     "AdsInfo": "AdsInfo.parquet",
@@ -37,11 +33,7 @@ LABEL_PERIOD_DAYS = 5  # 4-day task window with GraphReduce's strict-less-than b
 
 
 def materialize_rel_avito_data(data_dir: Path) -> list[str]:
-    return materialize_relbench_dataset("rel-avito", data_dir, TABLE_NAME_TO_FILENAME)
-
-
-def _prepare_view(con: duckdb.DuckDBPyConnection, view_name: str, parquet_path: Path) -> None:
-    con.sql(f"CREATE OR REPLACE VIEW {view_name} AS SELECT * FROM read_parquet('{parquet_path}')")
+    return []
 
 
 def _infer_columns(con: duckdb.DuckDBPyConnection, view_name: str) -> list[str]:
@@ -104,13 +96,20 @@ def _build_visits_click_annotate(
     )
 
 
-def _build_frame(data_dir: Path, mode: str) -> pd.DataFrame:
+def _build_frame(mode: str) -> pd.DataFrame:
+    _, db = get_relbench_dataset_db("rel-avito", download=True, upto_test_timestamp=False)
     con = duckdb.connect()
     try:
-        _prepare_view(con, "ads_src", data_dir / "AdsInfo.parquet")
-        _prepare_view(con, "search_src", data_dir / "SearchInfo.parquet")
-        _prepare_view(con, "user_src", data_dir / "UserInfo.parquet")
-        _prepare_view(con, "visits_src", data_dir / "VisitsStream.parquet")
+        register_relbench_db_views(
+            con,
+            db,
+            {
+                "AdsInfo": "ads_src",
+                "SearchInfo": "search_src",
+                "UserInfo": "user_src",
+                "VisitStream": "visits_src",
+            },
+        )
 
         ads_cols = _infer_columns(con, "ads_src")
         user_cols = _infer_columns(con, "user_src")
@@ -269,52 +268,22 @@ def _build_frame(data_dir: Path, mode: str) -> pd.DataFrame:
     return out_df
 
 
-def _train_binary_model(df: pd.DataFrame, target: str) -> tuple[float | None, int]:
-    numeric_cols = [c for c in df.select_dtypes(include=[np.number]).columns if c != target]
-    feature_cols = [
-        c
-        for c in numeric_cols
-        if "label" not in c.lower() and not c.lower().endswith("_id") and "userid" not in c.lower()
-    ]
-    if not feature_cols:
-        return None, 0
-
-    X = df[feature_cols].fillna(0)
-    y = df[target]
-    if y.nunique() < 2:
-        return None, len(feature_cols)
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
-    model = CatBoostClassifier(
-        iterations=400,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="Logloss",
-        eval_metric="AUC",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
-    )
-    model.fit(X_train, y_train)
-    preds = model.predict_proba(X_test)[:, 1]
-    catboost_auc = float(roc_auc_score(y_test, preds))
-    return catboost_auc, len(feature_cols)
-
-
 def run_avito_task(
     mode: str, data_dir: Path | None = None
 ) -> tuple[pd.DataFrame, float | None, int, list[str], str]:
-    if mode not in {"user_clicks", "user_visits"}:
+    if mode == "user_clicks":
+        from relbench_avito_user_clicks import run_rel_avito_user_clicks
+
+        runner = run_rel_avito_user_clicks
+    elif mode == "user_visits":
+        from relbench_avito_user_visits import run_rel_avito_user_visits
+
+        runner = run_rel_avito_user_visits
+    else:
         raise ValueError("mode must be 'user_clicks' or 'user_visits'")
 
-    use_dir = data_dir or Path("tests/data/relbench/rel-avito")
-    materialized = materialize_rel_avito_data(use_dir)
-    df = _build_frame(use_dir, mode=mode)
-
-    if mode == "user_clicks":
-        target = "user_clicked_next_4d"
-    else:
-        target = "user_multi_visit_next_4d"
-
-    catboost_auc, n_features = _train_binary_model(df, target=target)
-    return df, catboost_auc, n_features, materialized, target
+    _, _, df_test, _, test_metrics, n_features, materialized, target = runner(
+        data_dir=data_dir
+    )
+    test_auc = None if test_metrics is None else float(test_metrics["roc_auc"])
+    return df_test, test_auc, n_features, materialized, target

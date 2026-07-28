@@ -4,7 +4,9 @@ from __future__ import annotations
 # std lib
 import abc
 import datetime
+import hashlib
 import numbers
+import re
 import typing
 import time
 
@@ -62,7 +64,44 @@ from graphreduce.stypes import infer_df_stype
 logger = get_logger("Node")
 
 NUMERIC_VALUE_AUTO_AGGS = {"avg", "max", "mean", "median", "min", "sum"}
-
+TEXT_STYPES = {"text", "text_tokenized", "text_embedded"}
+TEXT_COLUMN_NAME_HINTS = {
+    "body",
+    "comment",
+    "description",
+    "message",
+    "note",
+    "notes",
+    "review",
+    "summary",
+    "text",
+    "title",
+}
+CATEGORICAL_IDENTIFIER_NAME_HINTS = {
+    "code",
+    "ean",
+    "isbn",
+    "phone",
+    "postal",
+    "postalcode",
+    "postcode",
+    "sku",
+    "telephone",
+    "upc",
+    "zip",
+    "zipcode",
+}
+AUTO_ANNOTATED_MARKER = "__gr_"
+AUTO_ANNOTATED_VALUE_MARKER = "__gr_value_"
+FEATURE_FAMILY_NAMES = {
+    "base",
+    "conditional",
+    "temporal",
+    "episode",
+    "semantic",
+    "sequence",
+    "context",
+}
 
 def _sample_is_numeric_object_series(series: pd.Series) -> bool:
     """
@@ -85,6 +124,546 @@ def _should_skip_numeric_sql_agg(
     if pd.api.types.is_numeric_dtype(series):
         return False
     return not _sample_is_numeric_object_series(series)
+
+
+def _is_collection_series(series: pd.Series) -> bool:
+    sample_vals = series.dropna().head(20)
+    collection_types = (list, dict, tuple)
+    if np is not None:
+        collection_types = collection_types + (np.ndarray,)
+    return sample_vals.map(lambda v: isinstance(v, collection_types)).any()
+
+
+def _sql_literal(value: typing.Any) -> str:
+    if isinstance(value, bool):
+        return "1" if value else "0"
+    if isinstance(value, numbers.Number):
+        return str(value)
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
+def _safe_sql_alias_part(value: typing.Any, max_len: int = 40) -> str:
+    alias = re.sub(r"[^0-9a-zA-Z]+", "_", str(value).lower()).strip("_")
+    if not alias:
+        alias = "missing"
+    if len(alias) > max_len:
+        digest = hashlib.md5(str(value).encode("utf-8")).hexdigest()[:8]
+        alias = f"{alias[:max_len]}_{digest}"
+    return alias
+
+
+def _balanced_sql_add(expressions: typing.Sequence[str]) -> str:
+    """Build a shallow SQL addition tree for wide-row scoring expressions."""
+
+    if not expressions:
+        return "0"
+    if len(expressions) == 1:
+        return expressions[0]
+    midpoint = len(expressions) // 2
+    return (
+        f"({_balanced_sql_add(expressions[:midpoint])} + "
+        f"{_balanced_sql_add(expressions[midpoint:])})"
+    )
+
+
+def _series_looks_like_text(col: str, series: pd.Series, semantic_type: str) -> bool:
+    if (
+        semantic_type != "categorical"
+        and str(series.dtype) not in ["object", "string"]
+    ):
+        return False
+    non_null = series.dropna().head(100)
+    if len(non_null) == 0:
+        return False
+    if not non_null.map(lambda v: isinstance(v, str)).all():
+        return False
+    if semantic_type in TEXT_STYPES:
+        return True
+
+    lengths = non_null.map(len)
+    avg_len = lengths.mean()
+    max_len = lengths.max()
+    space_share = non_null.map(lambda v: " " in v.strip()).mean()
+    name_parts = set(re.split(r"[^0-9a-zA-Z]+", col.lower()))
+    has_name_hint = bool(name_parts & TEXT_COLUMN_NAME_HINTS)
+
+    return (
+        avg_len >= 40
+        or max_len >= 120
+        or (avg_len >= 24 and space_share >= 0.5)
+        or (has_name_hint and avg_len >= 12)
+    )
+
+
+def _sql_context_annotation_ops(
+    table_df_sample: pd.DataFrame,
+    stypes: typing.Dict[str, typing.Any],
+    context_keys: typing.Sequence[str],
+    pk: typing.Optional[str],
+    max_numeric_columns: int,
+    column_prefix: str = "",
+) -> typing.List[sqlop]:
+    """Create configured row-level peer/context features before reduction.
+
+    ``context_keys`` is intentionally caller-supplied. The library can build
+    the window features, but it cannot infer which relationships define a
+    meaningful peer group for an arbitrary relational schema.
+    """
+
+    columns = list(table_df_sample.columns)
+    column_lower = {column.lower(): column for column in columns}
+
+    def resolve_column(name: str) -> typing.Optional[str]:
+        candidates = [str(name)]
+        if column_prefix:
+            candidates.append(f"{column_prefix}_{name}")
+        for candidate in candidates:
+            if candidate in columns:
+                return candidate
+            resolved = column_lower.get(candidate.lower())
+            if resolved is not None:
+                return resolved
+        suffix = f"_{str(name).lower()}"
+        matches = [column for column in columns if column.lower().endswith(suffix)]
+        return matches[0] if len(matches) == 1 else None
+
+    pk_alias = resolve_column(pk) if pk else None
+    context_columns = []
+    for context_key in context_keys:
+        context_column = resolve_column(context_key)
+        if context_column and context_column != pk_alias and context_column not in context_columns:
+            context_columns.append(context_column)
+    if not context_columns:
+        return []
+
+    numeric_columns = []
+    for col, stype in stypes.items():
+        if col in context_columns or col == pk_alias:
+            continue
+        if _column_name_looks_like_identifier(col.rsplit("_", 1)[-1]):
+            continue
+        if col.lower().endswith("_date") or col.lower().endswith("_timestamp"):
+            continue
+        if _is_auto_annotated_feature_col(col):
+            continue
+        if str(stype) != "numerical" and not pd.api.types.is_numeric_dtype(table_df_sample[col]):
+            continue
+        numeric_columns.append(col)
+    numeric_columns = numeric_columns[:max(0, int(max_numeric_columns))]
+
+    ops: typing.List[sqlop] = []
+    for context_col in context_columns:
+        context_alias = _safe_sql_alias_part(context_col)
+        ops.append(
+            sqlop(
+                optype=SQLOpType.select,
+                opval=(
+                    f"COUNT(*) OVER (PARTITION BY {context_col}) as "
+                    f"{context_col}{AUTO_ANNOTATED_MARKER}context_size"
+                ),
+            )
+        )
+        for value_col in numeric_columns:
+            ops.append(
+                sqlop(
+                    optype=SQLOpType.select,
+                    opval=(
+                        f"{value_col} - AVG({value_col}) OVER "
+                        f"(PARTITION BY {context_col}) as "
+                        f"{value_col}{AUTO_ANNOTATED_MARKER}context_{context_alias}_delta"
+                    ),
+                )
+            )
+    return ops
+
+
+def _column_name_looks_like_identifier(col: str) -> bool:
+    col_lower = col.lower()
+    return (
+        col_lower == "id"
+        or col_lower.split("_")[-1].endswith("id")
+        or col_lower == "uuid"
+        or col_lower == "guid"
+        or col_lower == "identifier"
+        or col_lower.endswith("key")
+    )
+
+
+def _column_name_looks_like_categorical_identifier(col: str) -> bool:
+    name_parts = set(re.split(r"[^0-9a-zA-Z]+", col.lower()))
+    compact = re.sub(r"[^0-9a-zA-Z]+", "", col.lower())
+    return (
+        bool(name_parts & CATEGORICAL_IDENTIFIER_NAME_HINTS)
+        or compact.endswith("zipcode")
+        or compact.endswith("postalcode")
+        or compact.endswith("postcode")
+    )
+
+
+def _sql_bool_aggregate_ops(condition: str, alias_prefix: str) -> typing.List[sqlop]:
+    indicator = f"CASE WHEN {condition} THEN 1 ELSE 0 END"
+    share_indicator = f"CASE WHEN {condition} THEN 1.0 ELSE 0.0 END"
+    return [
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"SUM({indicator}) as {alias_prefix}_count",
+        ),
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"AVG({share_indicator}) as {alias_prefix}_share",
+        ),
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"MAX({indicator}) as {alias_prefix}_any",
+        ),
+    ]
+
+
+def _sql_text_aggregate_ops(col: str) -> typing.List[sqlop]:
+    alias_col = _safe_sql_alias_part(col)
+    coalesced = f"COALESCE({col}, '')"
+    trimmed = f"TRIM({coalesced})"
+    length_expr = f"LENGTH({coalesced})"
+    empty_condition = f"{col} IS NULL OR LENGTH({trimmed}) = 0"
+    word_count_expr = (
+        f"CASE WHEN {empty_condition} THEN 0 "
+        f"ELSE LENGTH({trimmed}) - LENGTH(REPLACE({trimmed}, ' ', '')) + 1 END"
+    )
+    number_condition = " OR ".join(
+        [f"{col} LIKE '%{digit}%'" for digit in range(10)]
+    )
+    url_condition = (
+        f"LOWER({coalesced}) LIKE '%http://%' "
+        f"OR LOWER({coalesced}) LIKE '%https://%' "
+        f"OR LOWER({coalesced}) LIKE '%www.%'"
+    )
+    pattern_ops = []
+    for name, condition in [
+        ("empty", empty_condition),
+        ("url", url_condition),
+        ("number", number_condition),
+        ("question", f"{col} LIKE '%?%'"),
+        ("exclamation", f"{col} LIKE '%!%'"),
+    ]:
+        pattern_ops.extend(
+            _sql_bool_aggregate_ops(condition, f"{alias_col}_{name}")
+        )
+
+    return [
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"AVG({length_expr}) as {alias_col}_length_avg",
+        ),
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"MAX({length_expr}) as {alias_col}_length_max",
+        ),
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"SUM({length_expr}) as {alias_col}_length_sum",
+        ),
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"AVG({word_count_expr}) as {alias_col}_word_count_avg",
+        ),
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"MAX({word_count_expr}) as {alias_col}_word_count_max",
+        ),
+        *pattern_ops,
+    ]
+
+
+def _sql_categorical_aggregate_ops(
+    col: str,
+    series: pd.Series,
+    cardinality_threshold: int,
+    top_k: int,
+) -> typing.List[sqlop]:
+    non_null = series.dropna()
+    if len(non_null) == 0 or _is_collection_series(non_null):
+        return []
+
+    alias_col = _safe_sql_alias_part(col)
+    ops = [
+        sqlop(
+            optype=SQLOpType.aggfunc,
+            opval=f"COUNT(DISTINCT {col}) as {alias_col}_nunique",
+        )
+    ]
+
+    value_counts = non_null.value_counts()
+    if len(value_counts) <= cardinality_threshold:
+        category_values = list(value_counts.index)
+    else:
+        category_values = list(value_counts.head(top_k).index)
+
+    used_aliases = set()
+    for value in category_values:
+        if pd.isna(value):
+            continue
+        category_alias = _safe_sql_alias_part(value)
+        alias_prefix = f"{alias_col}_{category_alias}"
+        if alias_prefix in used_aliases:
+            digest = hashlib.md5(str(value).encode("utf-8")).hexdigest()[:8]
+            alias_prefix = f"{alias_prefix}_{digest}"
+        used_aliases.add(alias_prefix)
+        ops.extend(
+            _sql_bool_aggregate_ops(f"{col} = {_sql_literal(value)}", alias_prefix)
+        )
+
+    if (
+        len(value_counts) > cardinality_threshold
+        and top_k > 0
+        and len(category_values)
+    ):
+        literals = ", ".join([_sql_literal(value) for value in category_values])
+        ops.extend(
+            _sql_bool_aggregate_ops(
+                f"{col} NOT IN ({literals})", f"{alias_col}_other"
+            )
+        )
+
+    return ops
+
+
+def _is_auto_annotated_feature_col(col: str) -> bool:
+    return AUTO_ANNOTATED_MARKER in col
+
+
+def _is_auto_predicate_feature_col(col: str) -> bool:
+    return (
+        _is_auto_annotated_feature_col(col)
+        and AUTO_ANNOTATED_VALUE_MARKER not in col
+    )
+
+
+def _sql_auto_annotate_ops(
+    table_df_sample: pd.DataFrame,
+    stypes: typing.Dict[str, typing.Any],
+    cardinality_threshold: int,
+    top_k: int,
+    max_categorical_columns: int,
+    max_gated_numeric_cols: int,
+    gated_numeric_top_k: int,
+    auto_text_features: bool,
+    annotation_expressions: typing.Optional[
+        typing.Dict[str, typing.Union[str, typing.Tuple[str, str]]]
+    ] = None,
+    column_prefix: str = "",
+    annotation_expressions_only: bool = False,
+    context_features: bool = False,
+    context_keys: typing.Sequence[str] = (),
+    context_pk: typing.Optional[str] = None,
+    context_max_numeric_columns: int = 4,
+) -> typing.List[sqlop]:
+    ops: typing.List[sqlop] = [sqlop(optype=SQLOpType.select, opval="*")]
+    aliases: typing.Set[str] = set(table_df_sample.columns)
+
+    def add_select(expr: str, alias: str) -> None:
+        if alias in aliases:
+            return
+        aliases.add(alias)
+        ops.append(sqlop(optype=SQLOpType.select, opval=f"{expr} as {alias}"))
+
+    # Annotation expressions are deliberately compiled before generic type
+    # inference so callers can expose domain predicates as numeric indicators
+    # that the normal SQL feature planner can aggregate.
+    sample_columns = set(table_df_sample.columns)
+    for name, spec in (annotation_expressions or {}).items():
+        expression_mode = "predicate"
+        if isinstance(spec, (tuple, list)):
+            expression_mode, expression = spec
+        else:
+            expression = spec
+        placeholders = set(re.findall(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", expression))
+        resolved_expression = expression
+        valid = True
+        for placeholder in placeholders:
+            candidate = placeholder if placeholder in sample_columns else None
+            if candidate is None:
+                prefixed = f"{column_prefix}_{placeholder}"
+                if prefixed in sample_columns:
+                    candidate = prefixed
+            if candidate is None:
+                # SQL expressions may use literal braces, but an unresolved
+                # column placeholder is always a configuration error. Skip it
+                # here so one optional annotation cannot break a whole graph.
+                valid = False
+                break
+            resolved_expression = resolved_expression.replace(
+                f"{{{placeholder}}}", candidate
+            )
+        if not valid:
+            continue
+        if expression_mode == "value":
+            alias = (
+                f"{column_prefix}{AUTO_ANNOTATED_VALUE_MARKER}"
+                f"{_safe_sql_alias_part(name)}"
+            )
+            add_select(resolved_expression, alias)
+        else:
+            alias = (
+                f"{column_prefix}{AUTO_ANNOTATED_MARKER}"
+                f"{_safe_sql_alias_part(name)}"
+            )
+            add_select(f"CASE WHEN {resolved_expression} THEN 1 ELSE 0 END", alias)
+
+    if context_features:
+        for context_op in _sql_context_annotation_ops(
+            table_df_sample,
+            stypes,
+            context_keys=context_keys,
+            pk=context_pk,
+            max_numeric_columns=context_max_numeric_columns,
+            column_prefix=column_prefix,
+        ):
+            expression = context_op.opval
+            alias = expression.rsplit(" as ", 1)[-1]
+            if alias not in aliases:
+                aliases.add(alias)
+                ops.append(context_op)
+
+    if annotation_expressions_only:
+        return ops if len(ops) > 1 else []
+
+    numeric_cols = []
+    for col, stype in stypes.items():
+        series = table_df_sample[col]
+        semantic_type = str(stype)
+        if (
+            semantic_type == "numerical"
+            and _column_name_looks_like_categorical_identifier(col)
+        ):
+            semantic_type = "categorical"
+        if (
+            semantic_type == "numerical"
+            and not _column_name_looks_like_identifier(col)
+            and not _is_collection_series(series)
+            and (
+                pd.api.types.is_numeric_dtype(series)
+                or _sample_is_numeric_object_series(series)
+            )
+        ):
+            numeric_cols.append(col)
+    numeric_cols = numeric_cols[:max_gated_numeric_cols]
+
+    categorical_specs = []
+    for col, stype in stypes.items():
+        series = table_df_sample[col]
+        semantic_type = str(stype)
+        if (
+            semantic_type == "numerical"
+            and _column_name_looks_like_categorical_identifier(col)
+        ):
+            semantic_type = "categorical"
+        if _is_collection_series(series):
+            continue
+
+        if auto_text_features and _series_looks_like_text(col, series, semantic_type):
+            alias_col = _safe_sql_alias_part(col)
+            coalesced = f"COALESCE({col}, '')"
+            trimmed = f"TRIM({coalesced})"
+            empty_condition = f"{col} IS NULL OR LENGTH({trimmed}) = 0"
+            word_count_expr = (
+                f"CASE WHEN {empty_condition} THEN 0 "
+                f"ELSE LENGTH({trimmed}) - LENGTH(REPLACE({trimmed}, ' ', '')) + 1 END"
+            )
+            number_condition = " OR ".join(
+                [f"{col} LIKE '%{digit}%'" for digit in range(10)]
+            )
+            url_condition = (
+                f"LOWER({coalesced}) LIKE '%http://%' "
+                f"OR LOWER({coalesced}) LIKE '%https://%' "
+                f"OR LOWER({coalesced}) LIKE '%www.%'"
+            )
+            add_select(f"LENGTH({coalesced})", f"{alias_col}{AUTO_ANNOTATED_MARKER}length")
+            add_select(word_count_expr, f"{alias_col}{AUTO_ANNOTATED_MARKER}word_count")
+            add_select(
+                f"CASE WHEN {number_condition} THEN 1 ELSE 0 END",
+                f"{alias_col}{AUTO_ANNOTATED_MARKER}has_number",
+            )
+            add_select(
+                f"CASE WHEN {url_condition} THEN 1 ELSE 0 END",
+                f"{alias_col}{AUTO_ANNOTATED_MARKER}has_url",
+            )
+            add_select(
+                f"CASE WHEN {empty_condition} THEN 1 ELSE 0 END",
+                f"{alias_col}{AUTO_ANNOTATED_MARKER}is_empty",
+            )
+            continue
+
+        non_null = series.dropna()
+        if len(non_null) == 0:
+            continue
+        value_counts = non_null.value_counts()
+        cardinality = len(value_counts)
+        is_categorical = semantic_type == "categorical" or str(series.dtype) in [
+            "object",
+            "string",
+        ]
+        is_low_cardinality_numeric_hint = (
+            semantic_type == "numerical"
+            and cardinality <= cardinality_threshold
+            and not _column_name_looks_like_identifier(col)
+        )
+        if not is_categorical and not is_low_cardinality_numeric_hint:
+            continue
+        if cardinality > cardinality_threshold and top_k <= 0:
+            continue
+
+        category_values = (
+            list(value_counts.index)
+            if cardinality <= cardinality_threshold
+            else list(value_counts.head(top_k).index)
+        )
+        categorical_specs.append((col, category_values, cardinality))
+        if len(categorical_specs) >= max_categorical_columns:
+            break
+
+    for col, category_values, cardinality in categorical_specs:
+        alias_col = _safe_sql_alias_part(col)
+        used_aliases: typing.Set[str] = set()
+        for value in category_values:
+            if pd.isna(value):
+                continue
+            category_alias = _safe_sql_alias_part(value)
+            alias = f"{alias_col}{AUTO_ANNOTATED_MARKER}is_{category_alias}"
+            if alias in used_aliases:
+                digest = hashlib.md5(str(value).encode("utf-8")).hexdigest()[:8]
+                alias = f"{alias}_{digest}"
+            used_aliases.add(alias)
+            add_select(
+                f"CASE WHEN {col} = {_sql_literal(value)} THEN 1 ELSE 0 END",
+                alias,
+            )
+
+        if len(category_values) and cardinality > cardinality_threshold:
+            literals = ", ".join([_sql_literal(value) for value in category_values])
+            add_select(
+                f"CASE WHEN {col} NOT IN ({literals}) THEN 1 ELSE 0 END",
+                f"{alias_col}{AUTO_ANNOTATED_MARKER}is_other",
+            )
+
+    for cat_col, category_values, _ in categorical_specs:
+        cat_alias_col = _safe_sql_alias_part(cat_col)
+        for value in category_values[:gated_numeric_top_k]:
+            if pd.isna(value):
+                continue
+            category_alias = _safe_sql_alias_part(value)
+            condition = f"{cat_col} = {_sql_literal(value)}"
+            for numeric_col in numeric_cols:
+                if numeric_col == cat_col:
+                    continue
+                numeric_alias = _safe_sql_alias_part(numeric_col)
+                alias = (
+                    f"{numeric_alias}{AUTO_ANNOTATED_MARKER}"
+                    f"when_{cat_alias_col}_{category_alias}"
+                )
+                add_select(f"CASE WHEN {condition} THEN {numeric_col} END", alias)
+
+    return ops if len(ops) > 1 else []
 
 
 SPARK_DF_TYPES = tuple()
@@ -195,7 +774,22 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # The time-series period in days to use.
         ts_periods: list = [1, 3, 4, 7, 14, 30, 60, 90, 180, 365, 730],
         type_func_map: dict = {},
+        categorical_cardinality_threshold: int = 20,
+        categorical_top_k: int = 20,
+        auto_text_features: bool = True,
+        auto_annotate_features: bool = False,
+        auto_annotate_max_categorical_columns: int = 20,
+        auto_annotate_max_gated_numeric_cols: int = 8,
+        auto_annotate_gated_numeric_top_k: int = 5,
+        feature_families: typing.Optional[typing.Sequence[str]] = None,
+        annotation_expressions: typing.Optional[
+            typing.Dict[str, typing.Union[str, typing.Tuple[str, str]]]
+        ] = None,
+        annotation_expressions_only: bool = False,
+        feature_family_max_columns: int = 16,
         is_date_node: bool = False,
+        context_keys: typing.Optional[typing.Sequence[str]] = None,
+        execution_namespace: typing.Optional[str] = None,
     ):
         """
         Constructor
@@ -233,6 +827,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # Lazy execution for the SQL nodes.
         self._lazy_execution = lazy_execution
         self._storage_client = storage_client
+        self.execution_namespace = execution_namespace
         # List of merged neighbor classes.
         self._merged = []
         # List of checkpoints.
@@ -248,6 +843,28 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self._catalog_client = catalog_client
         self.ts_periods = ts_periods
         self.type_func_map = type_func_map
+        self.categorical_cardinality_threshold = categorical_cardinality_threshold
+        self.categorical_top_k = categorical_top_k
+        self.auto_text_features = auto_text_features
+        self.auto_annotate_features = auto_annotate_features
+        self.auto_annotate_max_categorical_columns = auto_annotate_max_categorical_columns
+        self.auto_annotate_max_gated_numeric_cols = auto_annotate_max_gated_numeric_cols
+        self.auto_annotate_gated_numeric_top_k = auto_annotate_gated_numeric_top_k
+        if feature_families is None:
+            feature_families = ("base",)
+        elif isinstance(feature_families, str):
+            feature_families = (feature_families,)
+        unknown_families = set(feature_families) - FEATURE_FAMILY_NAMES
+        if unknown_families:
+            raise ValueError(
+                f"Unknown feature families {sorted(unknown_families)}; "
+                f"expected one of {sorted(FEATURE_FAMILY_NAMES)}"
+            )
+        self.feature_families = tuple(dict.fromkeys(feature_families))
+        self.annotation_expressions = annotation_expressions or {}
+        self.annotation_expressions_only = annotation_expressions_only
+        self.context_keys = tuple(context_keys or ())
+        self.feature_family_max_columns = max(0, int(feature_family_max_columns))
 
         self.is_date_node = is_date_node
 
@@ -274,18 +891,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         """
         Check if a column is an identifier.
         """
-        if col.lower() == "id":
-            return True
-        elif col.lower().split("_")[-1].endswith("id"):
-            return True
-        elif col.lower() == "uuid":
-            return True
-        elif col.lower() == "guid":
-            return True
-        elif col.lower() == "identifier":
-            return True
-        elif col.lower().endswith("key"):
-            return True
+        return _column_name_looks_like_identifier(col)
 
     def _is_bool(
         self,
@@ -308,7 +914,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 grouped = self.df.groupby(self.colabbr(reduce_key)).agg(
                     {self.colabbr(self.pk): "count"}
                 )
-                if len(grouped) / len(self.df) < 0.9:
+                if len(self.df) and len(grouped) / len(self.df) < 0.9:
                     return True
             elif self.compute_layer == ComputeLayerEnum.spark:
                 _require_backend(pyspark, "spark", "spark")
@@ -318,7 +924,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     .count()
                 )
                 n = self.df.count()
-                if float(grouped) / float(n) < 0.9:
+                if n and float(grouped) / float(n) < 0.9:
                     return True
             # TODO(wes): define the SQL logic.
             elif self.compute_layer in [
@@ -348,7 +954,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 row_df.columns = [c.lower() for c in row_df.columns]
                 grp_count = grp_df["grouped_rows"].values[0]
                 row_count = row_df["row_count"].values[0]
-                if float(grp_count) / float(row_count) < 0.9:
+                if row_count and float(grp_count) / float(row_count) < 0.9:
                     return True
             elif self.compute_layer == ComputeLayerEnum.daft:
                 _require_backend(daft, "daft", "daft")
@@ -358,7 +964,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     .count_rows()
                 )
                 n = self.df.count_rows()
-                if float(grouped) / float(n) < 0.9:
+                if n and float(grouped) / float(n) < 0.9:
                     return True
         return False
 
@@ -895,6 +1501,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
         reduce_key: str,
         type_func_map: dict = {},
+        feature_families: typing.Optional[typing.Sequence[str]] = None,
     ) -> typing.List[sqlop]:
         """
         SQL dialect implementation of automated
@@ -919,8 +1526,40 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             this computes slope / directional changes
         3) finally, add the point-in-time correctness where clauses based on the top-level cut date parameter
            and compute period parameter
+
+        ``feature_families`` extends the legacy ``base`` aggregates with:
+          - ``semantic``: caller-provided domain predicates and value
+            annotations compiled through ``annotation_expressions``.
+          - ``conditional``: point-in-time counts, shares, presence, and changes
+            for categorical values and boolean annotations.
+          - ``temporal``: windowed numeric sum/average/min/max aggregates.
+          - ``sequence``: normalized activity rates, activity shares, burst
+            ratios, and active-span features over configured periods.
+          - ``episode``: row and distinct-primary-key counts, including windows.
+          - ``context``: row-level peer-group sizes and numeric deltas for
+            caller-configured ``context_keys`` before child rows are reduced.
         """
         agg_funcs = []
+        selected_families = (
+            self.feature_families
+            if feature_families is None
+            else feature_families
+        )
+        if isinstance(selected_families, str):
+            selected_families = (selected_families,)
+        families = set(selected_families)
+        unknown_families = families - FEATURE_FAMILY_NAMES
+        if unknown_families:
+            raise ValueError(
+                f"Unknown feature families {sorted(unknown_families)}; "
+                f"expected one of {sorted(FEATURE_FAMILY_NAMES)}"
+            )
+        conditional_specs: list[tuple[str, str]] = []
+        semantic_conditional_specs: list[tuple[str, str]] = []
+        generic_conditional_specs: list[tuple[str, str]] = []
+        temporal_numeric_cols: list[str] = []
+        semantic_temporal_cols: list[str] = []
+        generic_temporal_cols: list[str] = []
         # Always need to update this
         # because we never know if
         # the original columns comprise all
@@ -931,6 +1570,82 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         ptypes = {col: str(t) for col, t in table_df_sample.dtypes.to_dict().items()}
 
         ts_data = self.is_ts_data(reduce_key)
+        if "temporal" in families and ts_data:
+            for col, stype in self._stypes.items():
+                if col == reduce_key or self._is_identifier(col):
+                    continue
+                if col == self.colabbr(self.date_key):
+                    continue
+                if _is_auto_annotated_feature_col(col) or (
+                    str(stype) == "numerical"
+                    and (
+                        pd.api.types.is_numeric_dtype(table_df_sample[col])
+                        or _sample_is_numeric_object_series(table_df_sample[col])
+                    )
+                ):
+                    if _is_auto_annotated_feature_col(col):
+                        semantic_temporal_cols.append(col)
+                    else:
+                        generic_temporal_cols.append(col)
+            temporal_numeric_cols = semantic_temporal_cols[
+                : self.feature_family_max_columns
+            ]
+            remaining_temporal = max(
+                0, self.feature_family_max_columns - len(temporal_numeric_cols)
+            )
+            temporal_numeric_cols += generic_temporal_cols[:remaining_temporal]
+
+        if "conditional" in families:
+            for col, stype in self._stypes.items():
+                if (
+                    col == reduce_key
+                    or self._is_identifier(col)
+                    or _is_collection_series(table_df_sample[col])
+                ):
+                    continue
+                if self.date_key and col == self.colabbr(self.date_key):
+                    continue
+                if _is_auto_predicate_feature_col(col) and (
+                    pd.api.types.is_numeric_dtype(table_df_sample[col])
+                    or _sample_is_numeric_object_series(table_df_sample[col])
+                ):
+                    semantic_conditional_specs.append((
+                        _safe_sql_alias_part(col),
+                        f"{col} = 1",
+                    ))
+                    continue
+                semantic_type = str(stype)
+                if (
+                    semantic_type == "numerical"
+                    and _column_name_looks_like_categorical_identifier(col)
+                ):
+                    semantic_type = "categorical"
+                if semantic_type != "categorical" and str(
+                    table_df_sample[col].dtype
+                ) not in {"object", "string"}:
+                    continue
+                if _series_looks_like_text(
+                    col, table_df_sample[col], semantic_type
+                ):
+                    continue
+                non_null = table_df_sample[col].dropna()
+                if len(non_null) == 0:
+                    continue
+                values = list(non_null.value_counts().head(self.categorical_top_k).index)
+                for value in values:
+                    if pd.isna(value):
+                        continue
+                    alias = _safe_sql_alias_part(f"{col}_{value}")
+                    generic_conditional_specs.append(
+                        (alias, f"{col} = {_sql_literal(value)}")
+                    )
+            conditional_specs = semantic_conditional_specs[
+                : self.feature_family_max_columns
+            ]
+            remaining_conditional = max(
+                0, self.feature_family_max_columns - len(conditional_specs)
+            )
+            conditional_specs += generic_conditional_specs[:remaining_conditional]
         # Add only 1 count column.
         counted = False
         for col, stype in self._stypes.items():
@@ -948,6 +1663,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     "max": "max",
                 }
             _type = str(stype)
+            if (
+                _type == "numerical"
+                and _column_name_looks_like_categorical_identifier(col)
+            ):
+                _type = "categorical"
             if self._is_identifier(col) and col != reduce_key:
                 # We only perform counts for identifiers.
                 func = "count"
@@ -963,7 +1683,21 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             # Do nothing to the reduce_key itself.
             elif self._is_identifier(col) and col == reduce_key:
                 continue
-            elif type_func_map.get(_type):
+            elif type_func_map.get(_type) or _type in TEXT_STYPES:
+                if _is_auto_annotated_feature_col(col) and (
+                    pd.api.types.is_numeric_dtype(table_df_sample[col])
+                    or _sample_is_numeric_object_series(table_df_sample[col])
+                ):
+                    for func in ["sum", "avg", "min", "max"]:
+                        col_new = f"{col}_{func}"
+                        op = sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=f"{func}({col}) as {col_new}",
+                        )
+                        if op not in agg_funcs:
+                            agg_funcs.append(op)
+                    continue
+
                 # If the physical data type is
                 # a boolean override functionality
                 # that might have been applied and
@@ -977,7 +1711,27 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     if op not in agg_funcs:
                         agg_funcs.append(op)
                     continue
-                for func in type_func_map[_type]:
+
+                if self.auto_text_features and _series_looks_like_text(
+                    col, table_df_sample[col], _type
+                ):
+                    for op in _sql_text_aggregate_ops(col):
+                        if op not in agg_funcs:
+                            agg_funcs.append(op)
+                    continue
+
+                if _type == "categorical":
+                    for op in _sql_categorical_aggregate_ops(
+                        col=col,
+                        series=table_df_sample[col],
+                        cardinality_threshold=self.categorical_cardinality_threshold,
+                        top_k=self.categorical_top_k,
+                    ):
+                        if op not in agg_funcs:
+                            agg_funcs.append(op)
+                    continue
+
+                for func in type_func_map.get(_type, []):
                     # There should be a better top-level mapping
                     # but for now this will do.  SQL engines typically
                     # don't have 'median' and 'mean'.  'mean' is typically
@@ -1191,6 +1945,244 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         opval=f"{ratio_expr} AS {self.prefix}_d{period1}v{period2}_change",
                     )
                 )
+
+        if "sequence" in families and ts_data:
+            # Preserve trajectory information that lifetime counts and a
+            # single recency value cannot express. These features remain
+            # aggregate-safe and use the same configured temporal periods.
+            period_counts: dict[int, str] = {}
+            lifetime_count = "COUNT(*)"
+            for period in self.ts_periods:
+                if hasattr(self, "date_node") and self.date_node:
+                    threshold = self._date_subtract_days(ref_col, period)
+                else:
+                    threshold = f"'{self.cut_date - datetime.timedelta(days=period)}'"
+                count_expr = (
+                    f"SUM(CASE WHEN {self.colabbr(self.date_key)} >= {threshold} "
+                    "THEN 1 ELSE 0 END)"
+                )
+                period_counts[period] = count_expr
+                agg_funcs.append(
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            f"{count_expr} * 1.0 / NULLIF({period}, 0) as "
+                            f"{self.prefix}_activity_rate_{period}d"
+                        ),
+                    )
+                )
+                agg_funcs.append(
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            f"{count_expr} * 1.0 / NULLIF({lifetime_count}, 0) as "
+                            f"{self.prefix}_activity_share_{period}d"
+                        ),
+                    )
+                )
+
+            for period1, period2 in zip(self.ts_periods, self.ts_periods[1:]):
+                agg_funcs.append(
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            f"{period_counts[period1]} * 1.0 / "
+                            f"NULLIF({period_counts[period2]}, 0) as "
+                            f"{self.prefix}_activity_burst_{period1}v{period2}"
+                        ),
+                    )
+                )
+
+            date_col = self.colabbr(self.date_key)
+            if self.__class__.__name__ in {"SQLNode", "SQLiteNode"}:
+                span_seconds = (
+                    f"(julianday(MAX({date_col})) - "
+                    f"julianday(MIN({date_col}))) * 86400.0"
+                )
+            elif self.__class__.__name__ in {"DuckdbNode", "AthenaNode", "TrinoNode"}:
+                span_seconds = (
+                    f"date_diff('second', MIN({date_col}), MAX({date_col}))"
+                )
+            elif self.__class__.__name__ in {"PostgresNode", "RedshiftNode"}:
+                span_seconds = (
+                    f"EXTRACT(EPOCH FROM (MAX({date_col}) - MIN({date_col})))"
+                )
+            elif self.__class__.__name__ == "SnowflakeNode":
+                span_seconds = (
+                    f"TIMESTAMPDIFF(SECOND, MIN({date_col}), MAX({date_col}))"
+                )
+            elif self.__class__.__name__ == "DatabricksNode":
+                span_seconds = (
+                    f"timestampdiff(SECOND, MIN({date_col}), MAX({date_col}))"
+                )
+            elif self.__class__.__name__ == "MySQLNode":
+                span_seconds = (
+                    f"TIMESTAMPDIFF(SECOND, MIN({date_col}), MAX({date_col}))"
+                )
+            else:
+                span_seconds = None
+
+            if span_seconds is not None:
+                agg_funcs.append(
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            f"{span_seconds} as {self.prefix}_active_span_seconds"
+                        ),
+                    )
+                )
+                agg_funcs.append(
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            f"{lifetime_count} * 1.0 / "
+                            f"NULLIF(({span_seconds} / 86400.0) + 1, 0) as "
+                            f"{self.prefix}_activities_per_active_day"
+                        ),
+                    )
+                )
+
+        # Feature families extend the conservative legacy aggregates with
+        # point-in-time relational features. They are expressed as SQL
+        # operations so every SQL backend gets the same planner output.
+        if ts_data and ("conditional" in families or "temporal" in families):
+            if hasattr(self, "date_node") and self.date_node:
+                ref_ts = f"{self.date_node.prefix}_{self.date_node.date_key}"
+                dynamic_ref = True
+            else:
+                ref_ts = f"'{str(self.cut_date)}'"
+                dynamic_ref = False
+            date_col = self.colabbr(self.date_key)
+
+            def window_condition(period: int) -> str:
+                if dynamic_ref:
+                    threshold = self._date_subtract_days(ref_ts, period)
+                else:
+                    threshold = f"'{self.cut_date - datetime.timedelta(days=period)}'"
+                return f"{date_col} >= {threshold}"
+
+            if "conditional" in families:
+                for alias, condition in conditional_specs:
+                    window_counts: dict[int, str] = {}
+                    for period in self.ts_periods:
+                        window = window_condition(period)
+                        count_expr = (
+                            f"SUM(CASE WHEN ({window}) AND ({condition}) "
+                            f"THEN 1 ELSE 0 END)"
+                        )
+                        denominator = (
+                            f"SUM(CASE WHEN {window} THEN 1 ELSE 0 END)"
+                        )
+                        window_counts[period] = count_expr
+                        for suffix, expression in [
+                            ("count", count_expr),
+                            (
+                                "share",
+                                f"{count_expr} * 1.0 / NULLIF({denominator}, 0)",
+                            ),
+                            (
+                                "any",
+                                f"MAX(CASE WHEN ({window}) AND ({condition}) "
+                                "THEN 1 ELSE 0 END)",
+                            ),
+                        ]:
+                            agg_funcs.append(
+                                sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=f"{expression} as {alias}_{suffix}_{period}d",
+                                )
+                            )
+                    for period1, period2 in zip(self.ts_periods, self.ts_periods[1:]):
+                        change = (
+                            f"{window_counts[period1]} * 1.0 / "
+                            f"NULLIF({window_counts[period2]}, 0)"
+                        )
+                        agg_funcs.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{change} as {alias}_d{period1}v{period2}_change",
+                            )
+                        )
+
+            if "temporal" in families:
+                for col in temporal_numeric_cols:
+                    safe_col = _safe_sql_alias_part(col)
+                    for period in self.ts_periods:
+                        window = window_condition(period)
+                        for suffix, function in [
+                            ("sum", "SUM"),
+                            ("avg", "AVG"),
+                            ("min", "MIN"),
+                            ("max", "MAX"),
+                        ]:
+                            expression = (
+                                f"{function}(CASE WHEN {window} THEN {col} END)"
+                            )
+                            agg_funcs.append(
+                                sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=(
+                                        f"{expression} as "
+                                        f"{safe_col}_{suffix}_{period}d"
+                                    ),
+                                )
+                            )
+
+        if "episode" in families:
+            # These denominators make conditional rates interpretable and are
+            # useful for sparse entities. The PK distinct count avoids
+            # over-weighting rows introduced by many-to-many joins.
+            agg_funcs.append(
+                sqlop(
+                    optype=SQLOpType.aggfunc,
+                    opval=f"COUNT(*) as {self.prefix}_num_episodes",
+                )
+            )
+            pk_col = self.colabbr(self.pk) if self.pk else None
+            if pk_col and pk_col in table_df_sample.columns:
+                agg_funcs.append(
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            f"COUNT(DISTINCT {pk_col}) as "
+                            f"{self.prefix}_num_unique_episodes"
+                        ),
+                    )
+                )
+            if ts_data:
+                if hasattr(self, "date_node") and self.date_node:
+                    ref_ts = f"{self.date_node.prefix}_{self.date_node.date_key}"
+                    dynamic_ref = True
+                else:
+                    ref_ts = f"'{str(self.cut_date)}'"
+                    dynamic_ref = False
+                date_col = self.colabbr(self.date_key)
+                for period in self.ts_periods:
+                    if dynamic_ref:
+                        threshold = self._date_subtract_days(ref_ts, period)
+                    else:
+                        threshold = f"'{self.cut_date - datetime.timedelta(days=period)}'"
+                    window = f"{date_col} >= {threshold}"
+                    agg_funcs.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=(
+                                f"SUM(CASE WHEN {window} THEN 1 ELSE 0 END) as "
+                                f"{self.prefix}_num_episodes_{period}d"
+                            ),
+                        )
+                    )
+                    if pk_col and pk_col in table_df_sample.columns:
+                        agg_funcs.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=(
+                                    f"COUNT(DISTINCT CASE WHEN {window} THEN "
+                                    f"{pk_col} END) as "
+                                    f"{self.prefix}_num_unique_episodes_{period}d"
+                                ),
+                            )
+                        )
 
         if not len(agg_funcs):
             logger.info(f"No aggregations for {self}")
@@ -2177,10 +3169,15 @@ class SQLNode(GraphReduceNode):
         else:
             fpath = self.fpath
 
+        namespace = self.execution_namespace
+        namespace_suffix = f"_{namespace}" if namespace else ""
         if schema:
-            ref_name = f"{schema}.{fpath}_{self.prefix}_{func_name}_grtemp"
+            ref_name = (
+                f"{schema}.{fpath}_{self.prefix}_{func_name}"
+                f"{namespace_suffix}_grtemp"
+            )
         else:
-            ref_name = f"{fpath}_{self.prefix}_{func_name}_grtemp"
+            ref_name = f"{fpath}_{self.prefix}_{func_name}{namespace_suffix}_grtemp"
         if self._temp_refs.get(func_name):
             if lookup:
                 return self._temp_refs[func_name]
@@ -2358,7 +3355,7 @@ class SQLNode(GraphReduceNode):
         if not columns:
             return self.get_sample(n=n, table=table)
 
-        score = " + ".join(
+        score = _balanced_sql_add(
             [
                 f"CASE WHEN {self._sample_identifier(col)} IS NOT NULL THEN 1 ELSE 0 END"
                 for col in columns
@@ -2548,6 +3545,37 @@ class SQLNode(GraphReduceNode):
         sel = sqlop(optype=SQLOpType.select, opval=f"{','.join(col_renames)}")
         return [sel]
 
+    def sql_auto_annotate(
+        self,
+        table_df_sample: pd.DataFrame,
+    ) -> typing.List[sqlop]:
+        self._stypes = infer_df_stype(table_df_sample)
+        return _sql_auto_annotate_ops(
+            table_df_sample=table_df_sample,
+            stypes=self._stypes,
+            cardinality_threshold=self.categorical_cardinality_threshold,
+            top_k=self.categorical_top_k,
+            max_categorical_columns=self.auto_annotate_max_categorical_columns,
+            max_gated_numeric_cols=self.auto_annotate_max_gated_numeric_cols,
+            gated_numeric_top_k=self.auto_annotate_gated_numeric_top_k,
+            auto_text_features=self.auto_text_features,
+            annotation_expressions=self.annotation_expressions,
+            column_prefix=self.prefix,
+            annotation_expressions_only=(
+                self.annotation_expressions_only
+                or (
+                    bool({"semantic", "context"}.intersection(self.feature_families))
+                    and not self.auto_annotate_features
+                )
+            ),
+            context_features=(
+                "context" in self.feature_families and bool(self.context_keys)
+            ),
+            context_keys=self.context_keys,
+            context_pk=self.pk,
+            context_max_numeric_columns=self.feature_family_max_columns,
+        )
+
     def do_annotate(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         """
         Should return a list of SQL statements
@@ -2555,6 +3583,18 @@ class SQLNode(GraphReduceNode):
         """
         if self.do_annotate_ops:
             return self.do_annotate_ops
+        semantic_requested = (
+            "semantic" in self.feature_families and bool(self.annotation_expressions)
+        )
+        context_requested = "context" in self.feature_families and bool(self.context_keys)
+        if self.auto_annotate_features or semantic_requested or context_requested:
+            if self.dry_run:
+                return None
+            try:
+                sample = self.get_inference_sample()
+                return self.sql_auto_annotate(sample)
+            except Exception as exc:
+                logger.warning(f"skipped sql_auto_annotate for {self}: {exc}")
         return None
 
     def do_normalize(self) -> typing.Union[sqlop, typing.List[sqlop]]:
@@ -2874,6 +3914,11 @@ class RedshiftNode(SQLNode):
                 last_function = None
 
             _type = str(stype)
+            if (
+                _type == "numerical"
+                and _column_name_looks_like_categorical_identifier(col)
+            ):
+                _type = "categorical"
             if self._is_identifier(col) and col != reduce_key:
                 # We only perform counts for identifiers.
                 func = "count"
@@ -3155,7 +4200,7 @@ class DuckdbNode(SQLNode):
         active_tables = list(temp_tables.to_df()["name"])
         for k, v in self._temp_refs.items():
             if v not in self._removed_refs and v in active_tables:
-                sql = f"DROP TEMP TABLE {v}"
+                sql = f"DROP TABLE IF EXISTS {v}"
                 self.execute_query(sql, ret_df=False)
                 self._removed_refs.append(v)
                 logger.info(f"dropped {v}")

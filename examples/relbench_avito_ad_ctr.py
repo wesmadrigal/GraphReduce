@@ -9,9 +9,16 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRegressor
-from relbench.metrics import mae, r2, rmse
-from relbench_dataset_utils import materialize_relbench_dataset
+from relbench_dataset_utils import (
+    RelBenchFrameStore,
+    get_relbench_dataset_db,
+    get_relbench_split_task_table,
+    iter_training_frames,
+    register_relbench_db_views,
+    target_table_from_frame,
+)
+from relbench_regression_metrics import add_nmae
+from relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES, set_feature_families, fit_tuned_regressor
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.graph_reduce import GraphReduce
@@ -34,34 +41,28 @@ TEST_CUT_DATE = datetime.datetime(2015, 5, 14)
 CUT_DATE = TEST_CUT_DATE
 LABEL_PERIOD_DAYS = 4
 LOOKBACK_DAYS = (TEST_CUT_DATE - LOOKBACK_START).days + 1
-TRAIN_CUT_DATES = [
-    datetime.datetime(2015, 5, 4),
-    datetime.datetime(2015, 4, 30),
-    datetime.datetime(2015, 4, 26),
-]
 
 
 def run_rel_avito_ad_ctr(
     data_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
-    use_dir = data_dir or Path("tests/data/relbench/rel-avito")
-    materialized = materialize_relbench_dataset("rel-avito", use_dir, TABLE_NAME_TO_FILENAME)
+    _, db = get_relbench_dataset_db("rel-avito", download=True, upto_test_timestamp=False)
+    materialized: list[str] = []
 
     con = duckdb.connect()
     split_frames: dict[str, pd.DataFrame] = {}
 
     try:
-        con.sql(f"CREATE OR REPLACE VIEW ads_src AS SELECT * FROM read_parquet('{use_dir / 'AdsInfo.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW category_src AS SELECT * FROM read_parquet('{use_dir / 'Category.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW location_src AS SELECT * FROM read_parquet('{use_dir / 'Location.parquet'}')")
-        con.sql(
-            f"""
-            CREATE OR REPLACE VIEW search_stream_src AS
-            SELECT
-                row_number() OVER () AS search_stream_id,
-                *
-            FROM read_parquet('{use_dir / 'SearchStream.parquet'}')
-            """
+        register_relbench_db_views(
+            con,
+            db,
+            {
+                "AdsInfo": "ads_src",
+                "Category": "category_src",
+                "Location": "location_src",
+                "SearchStream": "search_stream_src",
+            },
+            {"SearchStream": "search_stream_id"},
         )
         ads_columns = con.sql("SELECT * FROM ads_src LIMIT 0").to_df().columns.tolist()
         category_columns = con.sql("SELECT * FROM category_src LIMIT 0").to_df().columns.tolist()
@@ -77,14 +78,17 @@ def run_rel_avito_ad_ctr(
         stream_date = {column.lower(): column for column in search_stream_columns}["searchdate"]
         stream_is_click = {column.lower(): column for column in search_stream_columns}["isclick"]
 
-        for split_name, cut_dates in {
-            "train": TRAIN_CUT_DATES,
-            "val": [VALIDATION_CUT_DATE],
-            "test": [TEST_CUT_DATE],
-        }.items():
-            frames_for_split: list[pd.DataFrame] = []
+        split_tasks = {}
+        for split_name in ["train", "val", "test"]:
+            task, task_table, cut_timestamps = get_relbench_split_task_table(
+                "rel-avito", "ad-ctr", split_name, download=True, db=db
+            )
+            split_tasks[split_name] = task
+            cut_dates = [timestamp.to_pydatetime() for timestamp in cut_timestamps]
+            frame_store = RelBenchFrameStore(f"rel-avito-ad-ctr-{split_name}")
 
-            for cut_date in cut_dates:
+            def build_frame(frame_con, cut_date):
+                con = frame_con
                 feature_cut_date = cut_date + datetime.timedelta(days=1)
 
                 ads_node = DuckdbNode(
@@ -114,6 +118,11 @@ def run_rel_avito_ad_ctr(
                     pk=stream_id,
                     date_key=stream_date,
                     columns=search_stream_columns,
+                    # SearchStream is the high-volume fact table. Keep every
+                    # family available, but bound the expensive per-column
+                    # temporal/conditional expansion for this relation.
+                    feature_family_max_columns=1,
+                    categorical_top_k=1,
                 )
                 graph = GraphReduce(
                     name=f"rel_avito_ad_ctr_{cut_date.date()}",
@@ -131,12 +140,14 @@ def run_rel_avito_ad_ctr(
                     use_temp_tables=True,
                 )
 
-                for node in [
+                nodes = [
                     ads_node,
                     category_node,
                     location_node,
                     search_stream_node,
-                ]:
+                ]
+                set_feature_families([search_stream_node], TEMPORAL_FEATURE_FAMILIES)
+                for node in nodes:
                     graph.add_node(node)
 
                 graph.add_entity_edge(ads_node, search_stream_node, parent_key=ad_id, relation_key=stream_ad_id, reduce=True)
@@ -145,52 +156,33 @@ def run_rel_avito_ad_ctr(
 
                 graph.do_transformations_sql()
                 features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+                graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
-                labels = con.sql(
-                    f"""
-                    WITH timestamp_df AS (
-                        SELECT TIMESTAMP '{cut_date}' AS timestamp
-                    )
-                    SELECT
-                        search_ads.{ad_id} AS AdID,
-                        t.timestamp,
-                        COALESCE(SUM(search_ads.{stream_is_click}), 0) / COALESCE(COUNT(search_ads.{stream_search_id}), 1) AS num_click
-                    FROM
-                        timestamp_df t
-                    LEFT JOIN (
-                        ads_src
-                        LEFT JOIN search_stream_src
-                            ON ads_src.{ad_id} = search_stream_src.{stream_ad_id}
-                    ) search_ads
-                        ON search_ads.{stream_date} > t.timestamp
-                        AND search_ads.{stream_date} <= t.timestamp + INTERVAL '{LABEL_PERIOD_DAYS} days'
-                    GROUP BY
-                        t.timestamp,
-                        search_ads.{ad_id}
-                    HAVING
-                        SUM(search_ads.{stream_is_click}) > 0
-                    """
-                ).to_df()
-
-                labels = labels.dropna(subset=["AdID"]).copy()
+                labels = task_table.df.copy()
                 frame = features.merge(
-                    labels[["timestamp", "AdID", "num_click"]],
+                    labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"ad_{ad_id}"],
-                    right_on=["timestamp", "AdID"],
-                    how="inner",
-                ).drop(columns=["AdID"])
-                frame["num_click"] = frame["num_click"].fillna(0).astype("float64")
-                frames_for_split.append(frame)
+                    right_on=[task.time_col, task.entity_col],
+                    how="right",
+                    validate="one_to_one",
+                )
+                frame[task.target_col] = frame[task.target_col].fillna(0).astype("float64")
+                return frame
 
-            split_frames[split_name] = pd.concat(frames_for_split, ignore_index=True)
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
+                frame_store.append(frame)
+
+            split_frames[split_name] = frame_store.to_dataframe()
+            frame_store.close()
     finally:
         con.close()
 
     df_train = split_frames["train"]
     df_val = split_frames["val"]
     df_test = split_frames["test"]
-    target = "num_click"
+    target = split_tasks["train"].target_col
 
     common_columns = set(df_train.columns) & set(df_val.columns) & set(df_test.columns)
     feature_columns = [
@@ -204,39 +196,39 @@ def run_rel_avito_ad_ctr(
     if not feature_columns:
         return df_train, df_val, df_test, None, None, 0, materialized, target
 
-    model = CatBoostRegressor(
-        iterations=500,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="MAE",
-        eval_metric="MAE",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
-    )
-    model.fit(
+    model, best_config, best_val_mae = fit_tuned_regressor(
         df_train[feature_columns].fillna(0),
         df_train[target].fillna(0).astype("float64"),
+        df_val[feature_columns].fillna(0),
+        df_val[target].fillna(0).astype("float64"),
     )
+    print("catboost_config:", best_config, flush=True)
+    print("catboost_validation_mae:", best_val_mae, flush=True)
+    print("catboost_best_iteration:", model.get_best_iteration(), flush=True)
 
     val_predictions = model.predict(df_val[feature_columns].fillna(0))
     test_predictions = model.predict(df_test[feature_columns].fillna(0))
 
-    val_true = df_val[target].fillna(0).astype("float64").to_numpy()
-    test_true = df_test[target].fillna(0).astype("float64").to_numpy()
-    val_pred = np.asarray(val_predictions, dtype="float64")
-    test_pred = np.asarray(test_predictions, dtype="float64")
-
-    val_metrics = {
-        "r2": float(r2(val_true, val_pred)),
-        "mae": float(mae(val_true, val_pred)),
-        "rmse": float(rmse(val_true, val_pred)),
-    }
-    test_metrics = {
-        "r2": float(r2(test_true, test_pred)),
-        "mae": float(mae(test_true, test_pred)),
-        "rmse": float(rmse(test_true, test_pred)),
-    }
+    val_predictions = np.asarray(val_predictions, dtype="float64")
+    test_predictions = np.asarray(test_predictions, dtype="float64")
+    val_metrics = add_nmae(
+        split_tasks["val"].evaluate(
+            val_predictions,
+            target_table=target_table_from_frame(split_tasks["val"], df_val),
+        ),
+        df_val[target],
+        val_predictions,
+        df_train[target],
+    )
+    test_metrics = add_nmae(
+        split_tasks["test"].evaluate(
+            test_predictions,
+            target_table=target_table_from_frame(split_tasks["test"], df_test),
+        ),
+        df_test[target],
+        test_predictions,
+        df_train[target],
+    )
 
     return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, target
 
@@ -246,7 +238,7 @@ def main() -> None:
     print("materialized_files:", materialized, flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("lookback_days:", LOOKBACK_DAYS, flush=True)
-    print("train_cut_dates:", [cut_date.date() for cut_date in TRAIN_CUT_DATES], flush=True)
+    print("train_cut_dates:", sorted(df_train["timestamp"].drop_duplicates().dt.date.astype(str).tolist()), flush=True)
     print("train_timestamps:", df_train["timestamp"].nunique(), flush=True)
     print("validation_cut_date:", VALIDATION_CUT_DATE.date(), flush=True)
     print("test_cut_date:", TEST_CUT_DATE.date(), flush=True)
@@ -258,6 +250,8 @@ def main() -> None:
     print("test_rows:", len(df_test), flush=True)
     print("columns:", len(df_train.columns), flush=True)
     print("feature_count:", n_features, flush=True)
+    print("validation_nmae:", val_metrics["nmae"] if val_metrics is not None else "skipped", flush=True)
+    print("test_nmae:", test_metrics["nmae"] if test_metrics is not None else "skipped", flush=True)
     print("validation_metrics:", val_metrics if val_metrics is not None else "skipped", flush=True)
     print("test_metrics:", test_metrics if test_metrics is not None else "skipped", flush=True)
 

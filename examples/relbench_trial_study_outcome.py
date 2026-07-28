@@ -4,20 +4,29 @@
 from __future__ import annotations
 
 import datetime
+import sys
 from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 import duckdb
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
-from relbench_dataset_utils import materialize_relbench_dataset
-from sklearn.metrics import roc_auc_score
-from sklearn.model_selection import train_test_split
+from relbench_dataset_utils import (
+    get_relbench_dataset_db,
+    get_relbench_split_task_table,
+    iter_training_frames,
+    register_relbench_db_views,
+    target_table_from_frame,
+)
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.models import sqlop
 from graphreduce.node import DuckdbNode
+from relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES, fit_tuned_classifier
 
 VAL_TIMESTAMP = datetime.datetime(2020, 1, 1)
 TEST_TIMESTAMP = datetime.datetime(2021, 1, 1)
@@ -43,41 +52,120 @@ TABLE_NAME_TO_FILENAME = {
 }
 
 
+def _select_columns(
+    columns: list[str],
+    required: list[str],
+    optional: list[str] | None = None,
+) -> list[str]:
+    by_lower = {column.lower(): column for column in columns}
+    selected = [by_lower[name.lower()] for name in required]
+    for name in optional or []:
+        column = by_lower.get(name.lower())
+        if column is not None:
+            selected.append(column)
+    return list(dict.fromkeys(selected))
+
+
 def run_rel_trial_study_outcome(
     data_dir: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, float | None, float | None, int, list[str], str]:
-    use_dir = data_dir or Path("tests/data/relbench/rel-trial")
-    materialized = materialize_relbench_dataset("rel-trial", use_dir, TABLE_NAME_TO_FILENAME)
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, float | None, float | None, int, list[str], str]:
+    _, db = get_relbench_dataset_db("rel-trial", download=True, upto_test_timestamp=False)
+    split_tasks = {}
+    frame_jobs = []
+    for split_name in ("train", "val", "test"):
+        task, task_table, cut_timestamps = get_relbench_split_task_table(
+            "rel-trial",
+            "study-outcome",
+            split_name,
+            download=True,
+            db=db,
+        )
+        split_tasks[split_name] = task
+        frame_jobs.extend(
+            (
+                split_name,
+                f"{split_name}_{timestamp.isoformat()}",
+                timestamp,
+                task,
+                task_table,
+            )
+            for timestamp in cut_timestamps
+        )
+    materialized: list[str] = []
 
     con = duckdb.connect()
     frames_by_name: dict[str, pd.DataFrame] = {}
-    target_by_name: dict[str, str] = {}
 
     try:
-        for table_name, filename in TABLE_NAME_TO_FILENAME.items():
-            con.sql(f"CREATE OR REPLACE VIEW {table_name}_src AS SELECT * FROM read_parquet('{use_dir / filename}')")
+        register_relbench_db_views(
+            con,
+            db,
+            {table_name: f"{table_name}_src" for table_name in TABLE_NAME_TO_FILENAME},
+        )
 
         table_columns: dict[str, list[str]] = {}
         for table_name in TABLE_NAME_TO_FILENAME:
             table_columns[table_name] = con.sql(f"SELECT * FROM {table_name}_src LIMIT 0").to_df().columns.tolist()
 
-        for frame_name, cut_date in {"val": VAL_TIMESTAMP, "test": TEST_TIMESTAMP}.items():
+        def build_frame(frame_con, frame_info):
+            con = frame_con
+            _, frame_name, cut_date, task, task_table = frame_info
             feature_cut_date = cut_date + datetime.timedelta(days=1)
-            studies_cols = table_columns["studies"]
-            outcomes_cols = table_columns["outcomes"]
-            outcome_analyses_cols = table_columns["outcome_analyses"]
-            drop_withdrawals_cols = table_columns["drop_withdrawals"]
-            reported_event_totals_cols = table_columns["reported_event_totals"]
-            designs_cols = table_columns["designs"]
-            eligibilities_cols = table_columns["eligibilities"]
-            interventions_cols = table_columns["interventions"]
-            conditions_cols = table_columns["conditions"]
-            facilities_cols = table_columns["facilities"]
-            sponsors_cols = table_columns["sponsors"]
-            interventions_studies_cols = table_columns["interventions_studies"]
-            conditions_studies_cols = table_columns["conditions_studies"]
-            facilities_studies_cols = table_columns["facilities_studies"]
-            sponsors_studies_cols = table_columns["sponsors_studies"]
+            studies_cols = _select_columns(
+                table_columns["studies"],
+                ["nct_id", "start_date"],
+                ["enrollment", "number_of_arms", "number_of_groups"],
+            )
+            outcomes_cols = _select_columns(
+                table_columns["outcomes"], ["id", "nct_id", "date"]
+            )
+            outcome_analyses_cols = _select_columns(
+                table_columns["outcome_analyses"],
+                ["id", "nct_id", "outcome_id", "p_value", "date"],
+                ["p_value_modifier"],
+            )
+            drop_withdrawals_cols = _select_columns(
+                table_columns["drop_withdrawals"], ["id", "nct_id", "date"]
+            )
+            reported_event_totals_cols = _select_columns(
+                table_columns["reported_event_totals"],
+                ["id", "nct_id", "date"],
+                ["event_type"],
+            )
+            designs_cols = _select_columns(
+                table_columns["designs"], ["id", "nct_id", "date"]
+            )
+            eligibilities_cols = _select_columns(
+                table_columns["eligibilities"], ["id", "nct_id", "date"]
+            )
+            interventions_cols = _select_columns(
+                table_columns["interventions"], ["intervention_id"]
+            )
+            conditions_cols = _select_columns(
+                table_columns["conditions"], ["condition_id"]
+            )
+            facilities_cols = _select_columns(
+                table_columns["facilities"], ["facility_id"]
+            )
+            sponsors_cols = _select_columns(
+                table_columns["sponsors"], ["sponsor_id"]
+            )
+            interventions_studies_cols = _select_columns(
+                table_columns["interventions_studies"],
+                ["id", "nct_id", "intervention_id", "date"],
+            )
+            conditions_studies_cols = _select_columns(
+                table_columns["conditions_studies"],
+                ["id", "nct_id", "condition_id", "date"],
+            )
+            facilities_studies_cols = _select_columns(
+                table_columns["facilities_studies"],
+                ["id", "nct_id", "facility_id", "date"],
+            )
+            sponsors_studies_cols = _select_columns(
+                table_columns["sponsors_studies"],
+                ["id", "nct_id", "sponsor_id", "date"],
+            )
 
             studies_cols_by_lower = {column.lower(): column for column in studies_cols}
             outcomes_cols_by_lower = {column.lower(): column for column in outcomes_cols}
@@ -112,6 +200,7 @@ def run_rel_trial_study_outcome(
             drw_date = drop_withdrawals_cols_by_lower["date"]
             evt_id = reported_event_totals_cols_by_lower["id"]
             evt_nct_id = reported_event_totals_cols_by_lower["nct_id"]
+            evt_event_type = reported_event_totals_cols_by_lower.get("event_type")
             evt_date = reported_event_totals_cols_by_lower["date"]
             dsg_id = designs_cols_by_lower["id"]
             dsg_nct_id = designs_cols_by_lower["nct_id"]
@@ -140,10 +229,13 @@ def run_rel_trial_study_outcome(
             facilities_id = facilities_cols_by_lower["facility_id"]
             sponsors_id = sponsors_cols_by_lower["sponsor_id"]
 
-            p_value_modifier_expr = "true"
-            if oa_p_value_modifier:
-                p_value_modifier_expr = (
-                    f"(oa_{oa_p_value_modifier} is null or oa_{oa_p_value_modifier} != '>')"
+            outcome_analysis_annotations = {
+                "is_significant": f"{{{oa_p_value}}} >= 0 AND {{{oa_p_value}}} <= 0.05"
+            }
+            reported_event_annotations = {}
+            if evt_event_type is not None:
+                reported_event_annotations["is_serious_or_death"] = (
+                    f"{{{evt_event_type}}} IN ('serious', 'deaths')"
                 )
 
             studies = DuckdbNode(
@@ -156,6 +248,11 @@ def run_rel_trial_study_outcome(
                     sqlop(optype=SQLOpType.where, opval=f"std_{studies_nct_id} is not null"),
                     sqlop(optype=SQLOpType.where, opval=f"std_{studies_start_date} <= '{cut_date.date()}'"),
                 ],
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             outcomes = DuckdbNode(
                 fpath="outcomes_src",
@@ -163,6 +260,11 @@ def run_rel_trial_study_outcome(
                 pk=outcomes_id,
                 date_key="date",
                 columns=outcomes_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             outcome_analyses = DuckdbNode(
                 fpath="outcome_analyses_src",
@@ -170,23 +272,13 @@ def run_rel_trial_study_outcome(
                 pk=oa_id,
                 date_key=oa_date,
                 columns=outcome_analyses_cols,
-                do_annotate_ops=[
-                    sqlop(
-                        optype=SQLOpType.select,
-                        opval=(
-                            "*, "
-                            "case when exists ("
-                            "select 1 from outcomes_src o "
-                            f"where o.{outcomes_id} = oa_{oa_outcome_id} "
-                            "and lower(cast(o.outcome_type as varchar)) = 'primary'"
-                            ") then 1 else 0 end as oa_is_primary, "
-                            f"case when {p_value_modifier_expr} "
-                            f"and try_cast(oa_{oa_p_value} as double) >= 0 "
-                            f"and try_cast(oa_{oa_p_value} as double) <= 1 "
-                            "then 1 else 0 end as oa_valid_p_value"
-                        ),
-                    )
-                ],
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
+                context_keys=(oa_nct_id, oa_outcome_id),
+                annotation_expressions=outcome_analysis_annotations,
             )
             drop_withdrawals = DuckdbNode(
                 fpath="drop_withdrawals_src",
@@ -194,6 +286,11 @@ def run_rel_trial_study_outcome(
                 pk=drw_id,
                 date_key=drw_date,
                 columns=drop_withdrawals_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             reported_event_totals = DuckdbNode(
                 fpath="reported_event_totals_src",
@@ -201,6 +298,13 @@ def run_rel_trial_study_outcome(
                 pk=evt_id,
                 date_key=evt_date,
                 columns=reported_event_totals_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
+                context_keys=(evt_nct_id,),
+                annotation_expressions=reported_event_annotations,
             )
             designs = DuckdbNode(
                 fpath="designs_src",
@@ -208,6 +312,11 @@ def run_rel_trial_study_outcome(
                 pk=dsg_id,
                 date_key=dsg_date,
                 columns=designs_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             eligibilities = DuckdbNode(
                 fpath="eligibilities_src",
@@ -215,6 +324,11 @@ def run_rel_trial_study_outcome(
                 pk=eli_id,
                 date_key=eli_date,
                 columns=eligibilities_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             interventions_studies = DuckdbNode(
                 fpath="interventions_studies_src",
@@ -222,6 +336,11 @@ def run_rel_trial_study_outcome(
                 pk=intv_studies_id,
                 date_key=intv_studies_date,
                 columns=interventions_studies_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             conditions_studies = DuckdbNode(
                 fpath="conditions_studies_src",
@@ -229,6 +348,11 @@ def run_rel_trial_study_outcome(
                 pk=cond_studies_id,
                 date_key=cond_studies_date,
                 columns=conditions_studies_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             facilities_studies = DuckdbNode(
                 fpath="facilities_studies_src",
@@ -236,6 +360,11 @@ def run_rel_trial_study_outcome(
                 pk=fac_studies_id,
                 date_key=fac_studies_date,
                 columns=facilities_studies_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             sponsors_studies = DuckdbNode(
                 fpath="sponsors_studies_src",
@@ -243,6 +372,11 @@ def run_rel_trial_study_outcome(
                 pk=spn_studies_id,
                 date_key=spn_studies_date,
                 columns=sponsors_studies_cols,
+                feature_families=TEMPORAL_FEATURE_FAMILIES,
+                ts_periods=[30, 90, 180, 365],
+                categorical_top_k=5,
+                auto_text_features=False,
+                feature_family_max_columns=8,
             )
             interventions = DuckdbNode(
                 fpath="interventions_src",
@@ -250,6 +384,9 @@ def run_rel_trial_study_outcome(
                 pk=interventions_id,
                 date_key=None,
                 columns=interventions_cols,
+                feature_families=("base",),
+                categorical_top_k=5,
+                auto_text_features=False,
             )
             conditions = DuckdbNode(
                 fpath="conditions_src",
@@ -257,6 +394,9 @@ def run_rel_trial_study_outcome(
                 pk=conditions_id,
                 date_key=None,
                 columns=conditions_cols,
+                feature_families=("base",),
+                categorical_top_k=5,
+                auto_text_features=False,
             )
             facilities = DuckdbNode(
                 fpath="facilities_src",
@@ -264,6 +404,9 @@ def run_rel_trial_study_outcome(
                 pk=facilities_id,
                 date_key=None,
                 columns=facilities_cols,
+                feature_families=("base",),
+                categorical_top_k=5,
+                auto_text_features=False,
             )
             sponsors = DuckdbNode(
                 fpath="sponsors_src",
@@ -271,6 +414,9 @@ def run_rel_trial_study_outcome(
                 pk=sponsors_id,
                 date_key=None,
                 columns=sponsors_cols,
+                feature_families=("base",),
+                categorical_top_k=5,
+                auto_text_features=False,
             )
 
             graph = GraphReduce(
@@ -283,12 +429,15 @@ def run_rel_trial_study_outcome(
                 compute_period_unit=PeriodUnit.day,
                 auto_features=True,
                 date_filters_on_agg=True,
-                auto_feature_hops_back=4,
+                # Study outcome signal is available through the study's
+                # direct event/bridge tables. Deeper walks repeatedly expand
+                # the 1.8M-row facilities_studies bridge.
+                auto_feature_hops_back=2,
                 auto_feature_hops_front=0,
                 use_temp_tables=True,
             )
 
-            for node in [
+            nodes = [
                 studies,
                 outcomes,
                 outcome_analyses,
@@ -304,7 +453,8 @@ def run_rel_trial_study_outcome(
                 conditions,
                 facilities,
                 sponsors,
-            ]:
+            ]
+            for node in nodes:
                 graph.add_node(node)
 
             graph.add_entity_edge(
@@ -407,105 +557,96 @@ def run_rel_trial_study_outcome(
             )
 
             graph.do_transformations_sql()
-            frame = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
-            labels = con.sql(
-                f"""
-                WITH trial_info AS (
-                    SELECT
-                        oa.{oa_nct_id} AS nct_id,
-                        oa.{oa_p_value} AS p_value,
-                        s.{studies_start_date} AS start_date,
-                        oa.{oa_date} AS date
-                    FROM outcome_analyses_src oa
-                    LEFT JOIN outcomes_src o
-                        ON oa.{oa_outcome_id} = o.{outcomes_id}
-                    LEFT JOIN studies_src s
-                        ON s.{studies_nct_id} = o.{outcomes_nct_id}
-                    WHERE ({'oa.' + oa_p_value_modifier + ' is null or oa.' + oa_p_value_modifier + " != '>'" if oa_p_value_modifier else 'true'})
-                        AND oa.{oa_p_value} >= 0
-                        AND oa.{oa_p_value} <= 1
-                        AND o.outcome_type = 'Primary'
-                )
-                SELECT
-                    TIMESTAMP '{cut_date}' AS timestamp,
-                    tr.nct_id,
-                    CASE WHEN MIN(tr.p_value) <= 0.05 THEN 1 ELSE 0 END AS outcome
-                FROM trial_info tr
-                WHERE tr.start_date <= TIMESTAMP '{cut_date}'
-                    AND tr.date > TIMESTAMP '{cut_date}'
-                    AND tr.date <= TIMESTAMP '{cut_date}' + INTERVAL '{LABEL_DAYS} days'
-                    AND tr.nct_id IS NOT NULL
-                GROUP BY tr.nct_id
-                """
-            ).to_df()
-            frame = frame.merge(
-                labels[["nct_id", "outcome"]],
-                left_on=f"std_{studies_nct_id}",
-                right_on="nct_id",
-                how="inner",
-            ).drop(columns=["nct_id"])
-            target = "outcome"
+            features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+            graph._clean_refs()
+            features["timestamp"] = pd.Timestamp(cut_date)
+            labels = task_table.df.copy()
+            labels[task.time_col] = pd.to_datetime(labels[task.time_col])
+            labels = labels[
+                labels[task.time_col] == pd.Timestamp(cut_date)
+            ].copy()
+            frame = features.merge(
+                labels[[task.time_col, task.entity_col, task.target_col]],
+                left_on=["timestamp", f"std_{studies_nct_id}"],
+                right_on=[task.time_col, task.entity_col],
+                how="right",
+                validate="one_to_one",
+            )
+            target = task.target_col
             frame[target] = frame[target].astype("int8")
+            return frame_name, frame, target
+
+        for frame_name, frame, target in iter_training_frames(con, frame_jobs, build_frame):
             frames_by_name[frame_name] = frame
-            target_by_name[frame_name] = target
     finally:
         con.close()
 
-    if target_by_name["val"] != target_by_name["test"]:
-        raise ValueError(
-            f"Target mismatch between val ({target_by_name['val']}) and test ({target_by_name['test']})"
-        )
+    target = split_tasks["train"].target_col
+    train_frame_names = [
+        frame_name for split_name, frame_name, *_ in frame_jobs if split_name == "train"
+    ]
+    val_frame_names = [
+        frame_name for split_name, frame_name, *_ in frame_jobs if split_name == "val"
+    ]
+    test_frame_names = [
+        frame_name for split_name, frame_name, *_ in frame_jobs if split_name == "test"
+    ]
+    df_train = pd.concat([frames_by_name[name] for name in train_frame_names], ignore_index=True)
+    df_val = pd.concat([frames_by_name[name] for name in val_frame_names], ignore_index=True)
+    df_test = pd.concat([frames_by_name[name] for name in test_frame_names], ignore_index=True)
 
-    target = target_by_name["val"]
-    df_val = frames_by_name["val"]
-    df_test = frames_by_name["test"]
-
-    numeric_columns = [column for column in df_val.select_dtypes(include=[np.number]).columns if column != target]
+    numeric_columns = [column for column in df_train.select_dtypes(include=[np.number]).columns if column != target]
     feature_columns = [
         column
         for column in numeric_columns
         if "label" not in column.lower()
         and not column.lower().endswith("_id")
         and column != "std_nct_id"
+        and column in df_train.columns
+        and column in df_val.columns
         and column in df_test.columns
     ]
 
     if not feature_columns:
-        return df_val, df_test, None, None, 0, materialized, target
+        return df_train, df_val, df_test, None, None, 0, materialized, target
 
-    X = df_val[feature_columns].fillna(0)
-    y = df_val[target]
-    if y.nunique() < 2:
-        return df_val, df_test, None, None, len(feature_columns), materialized, target
+    X_train = df_train[feature_columns].fillna(0)
+    y_train = df_train[target]
+    X_val = df_val[feature_columns].fillna(0)
+    y_val = df_val[target]
+    if y_train.nunique() < 2 or y_val.nunique() < 2:
+        return df_train, df_val, df_test, None, None, len(feature_columns), materialized, target
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.2,
-        stratify=y,
-        random_state=42,
+    model, best_config, best_val_auc = fit_tuned_classifier(
+        X_train,
+        y_train,
+        X_val,
+        y_val,
     )
+    print("catboost_config:", best_config, flush=True)
+    print("catboost_validation_auc:", best_val_auc, flush=True)
+    print("catboost_best_iteration:", model.get_best_iteration(), flush=True)
 
-    model = CatBoostClassifier(
-        iterations=500,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="Logloss",
-        eval_metric="AUC",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
+    val_predictions = np.asarray(model.predict_proba(X_val)[:, 1], dtype="float64")
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
     )
-    model.fit(X_train, y_train)
-
-    catboost_in_time_auc = float(roc_auc_score(y_test, model.predict_proba(X_test)[:, 1]))
+    catboost_in_time_auc = float(val_metrics["roc_auc"])
     catboost_holdout_auc = None
     if df_test[target].nunique() >= 2:
-        catboost_holdout_auc = float(
-            roc_auc_score(df_test[target], model.predict_proba(df_test[feature_columns].fillna(0))[:, 1])
+        test_predictions = np.asarray(
+            model.predict_proba(df_test[feature_columns].fillna(0))[:, 1],
+            dtype="float64",
         )
+        test_metrics = split_tasks["test"].evaluate(
+            test_predictions,
+            target_table=target_table_from_frame(split_tasks["test"], df_test),
+        )
+        catboost_holdout_auc = float(test_metrics["roc_auc"])
 
     return (
+        df_train,
         df_val,
         df_test,
         catboost_in_time_auc,
@@ -518,6 +659,7 @@ def run_rel_trial_study_outcome(
 
 def main() -> None:
     (
+        df_train,
         df_val,
         df_test,
         catboost_in_time_auc,
@@ -532,9 +674,13 @@ def main() -> None:
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("label_period_days:", LABEL_DAYS, flush=True)
     print("target:", target, flush=True)
+    print("train_rows:", len(df_train), flush=True)
+    print("train_timestamps:", df_train["timestamp"].nunique(), flush=True)
     print("val_rows:", len(df_val), flush=True)
+    print("val_timestamps:", df_val["timestamp"].nunique(), flush=True)
     print("val_columns:", len(df_val.columns), flush=True)
     print("test_rows:", len(df_test), flush=True)
+    print("test_timestamps:", df_test["timestamp"].nunique(), flush=True)
     print("test_columns:", len(df_test.columns), flush=True)
     print("feature_count:", n_features, flush=True)
     print("catboost_in_time_auc:", catboost_in_time_auc if catboost_in_time_auc is not None else "skipped", flush=True)

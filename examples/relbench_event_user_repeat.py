@@ -3,117 +3,62 @@
 
 from __future__ import annotations
 
-import os
-import shutil
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
-from relbench.datasets import get_dataset
-from relbench.metrics import accuracy, average_precision, f1, roc_auc
+from relbench_dataset_utils import (
+    RelBenchFrameStore,
+    get_relbench_dataset_db,
+    get_relbench_split_task_table,
+    iter_training_frames,
+    register_relbench_db_views,
+    target_table_from_frame,
+)
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.node import DuckdbNode
+from relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES, fit_tuned_classifier_incremental, set_feature_families
 
 DATASET_NAME = "rel-event"
-REL_CACHE_DIR = Path("tests/data/relbench_cache").resolve()
-RAW_DATA_DIR = Path("tests/data/relbench/rel-event")
-RELBENCH_EVENT_SOURCE_DIR = Path("data/rel-event")
-DATA_DIR = Path("tests/data/relbench/rel-event")
 TABLES = ["users", "events", "event_attendees", "event_interest", "user_friends"]
+TABLE_TO_VIEW = {
+    "users": "users_src",
+    "events": "events_src",
+    "event_attendees": "event_attendees_src",
+    "event_interest": "event_interest_src",
+    "user_friends": "user_friends_src",
+}
+ROW_NUMBER_IDS = {
+    "event_attendees": "attendee_id",
+    "event_interest": "interest_id",
+    "user_friends": "friendship_id",
+}
+DROP_COLUMNS = {
+    "event_attendees": ["Unnamed: 0"],
+    "user_friends": ["Unnamed: 0"],
+}
 VALIDATION_CUT_DATE = pd.Timestamp("2012-11-21")
 TEST_CUT_DATE = pd.Timestamp("2012-11-29")
 LABEL_TIMEDELTA = pd.Timedelta(days=7)
 TARGET_COLUMN = "target"
 
-
-def _find_raw_data_dir() -> Path | None:
-    required_names = {
-        "event-recommendation-engine-challenge.zip",
-        "users.csv",
-        "events.csv",
-        "train.csv",
-        "event_attendees.csv",
-        "user_friends.csv",
-    }
-    if RAW_DATA_DIR.exists() and any((RAW_DATA_DIR / name).exists() for name in required_names):
-        return RAW_DATA_DIR
-    return None
-
-
-def _prepare_relbench_event_source(raw_data_dir: Path) -> None:
-    RELBENCH_EVENT_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
-    for name in [
-        "event-recommendation-engine-challenge.zip",
-        "users.csv",
-        "events.csv",
-        "train.csv",
-        "event_attendees.csv",
-        "user_friends.csv",
-        "user_friends.csv.gz",
-        "events.csv.gz",
-        "event_attendees.csv.gz",
-    ]:
-        source = raw_data_dir / name
-        target = RELBENCH_EVENT_SOURCE_DIR / name
-        if source.exists() and not target.exists():
-            try:
-                target.symlink_to(source.resolve())
-            except OSError:
-                shutil.copy2(source, target)
-
-
 def run_rel_event_user_repeat(
     data_dir: Path | None = None,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
-    raw_data_dir = _find_raw_data_dir()
-    if raw_data_dir is None:
-        raise RuntimeError(
-            "RelBench rel-event requires the Kaggle Event Recommendation Engine Challenge files. "
-            "Place them under 'tests/data/relbench/rel-event'."
-        )
-
-    os.environ.setdefault("RELBENCH_CACHE_DIR", str(REL_CACHE_DIR))
-    _prepare_relbench_event_source(raw_data_dir)
-    use_dir = (data_dir or DATA_DIR).resolve()
-    use_dir.mkdir(parents=True, exist_ok=True)
-
-    dataset = get_dataset(DATASET_NAME, download=False)
-    db = dataset.get_db(upto_test_timestamp=False)
+) -> tuple[RelBenchFrameStore, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
+    _, db = get_relbench_dataset_db(
+        DATASET_NAME, download=True, upto_test_timestamp=False
+    )
     materialized: list[str] = []
-    for table_name in TABLES:
-        out_path = use_dir / f"{table_name}.parquet"
-        if not out_path.exists():
-            db.table_dict[table_name].df.to_parquet(out_path, index=False)
-            materialized.append(out_path.name)
 
     con = duckdb.connect()
-    split_frames: dict[str, pd.DataFrame] = {}
+    split_frames: dict[str, RelBenchFrameStore] = {}
+    split_tasks = {}
 
     try:
-        con.sql(f"CREATE OR REPLACE VIEW users_src AS SELECT * FROM read_parquet('{use_dir / 'users.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW events_src AS SELECT * FROM read_parquet('{use_dir / 'events.parquet'}')")
-        con.sql(
-            f"""
-            CREATE OR REPLACE VIEW event_attendees_src AS
-            SELECT row_number() OVER () AS attendee_id, * FROM read_parquet('{use_dir / 'event_attendees.parquet'}')
-            """
-        )
-        con.sql(
-            f"""
-            CREATE OR REPLACE VIEW event_interest_src AS
-            SELECT row_number() OVER () AS interest_id, * FROM read_parquet('{use_dir / 'event_interest.parquet'}')
-            """
-        )
-        con.sql(
-            f"""
-            CREATE OR REPLACE VIEW user_friends_src AS
-            SELECT row_number() OVER () AS friendship_id, * FROM read_parquet('{use_dir / 'user_friends.parquet'}')
-            """
-        )
+        register_relbench_db_views(con, db, TABLE_TO_VIEW, ROW_NUMBER_IDS, DROP_COLUMNS)
 
         bounds = con.sql(
             """
@@ -129,12 +74,6 @@ def run_rel_event_user_repeat(
             """
         ).to_df()
         lookback_start = pd.Timestamp(bounds.loc[0, "min_timestamp"])
-        train_cut_dates = pd.date_range(
-            start=VALIDATION_CUT_DATE - LABEL_TIMEDELTA,
-            end=lookback_start,
-            freq=-LABEL_TIMEDELTA,
-        ).to_pydatetime().tolist()
-
         user_columns = con.sql("SELECT * FROM users_src LIMIT 0").to_df().columns.tolist()
         event_columns = con.sql("SELECT * FROM events_src LIMIT 0").to_df().columns.tolist()
         attendee_columns = con.sql("SELECT * FROM event_attendees_src LIMIT 0").to_df().columns.tolist()
@@ -149,7 +88,6 @@ def run_rel_event_user_repeat(
         attendee_id_col = {column.lower(): column for column in attendee_columns}["attendee_id"]
         attendee_event_col = {column.lower(): column for column in attendee_columns}["event"]
         attendee_user_col = {column.lower(): column for column in attendee_columns}["user_id"]
-        attendee_status_col = {column.lower(): column for column in attendee_columns}["status"]
         attendee_date_col = {column.lower(): column for column in attendee_columns}["start_time"]
         interest_id_col = {column.lower(): column for column in interest_columns}["interest_id"]
         interest_event_col = {column.lower(): column for column in interest_columns}["event"]
@@ -158,10 +96,23 @@ def run_rel_event_user_repeat(
         friend_id_col = {column.lower(): column for column in friend_columns}["friendship_id"]
         friend_user_col = {column.lower(): column for column in friend_columns}["user"]
 
-        for split_name, cut_dates in {"train": train_cut_dates, "val": [VALIDATION_CUT_DATE], "test": [TEST_CUT_DATE]}.items():
-            split_list: list[pd.DataFrame] = []
+        official_tables = {}
+        split_cut_dates = {}
+        for split_name in ("train", "val", "test"):
+            task, task_table, cut_timestamps = get_relbench_split_task_table(
+                DATASET_NAME, "user-repeat", split_name, download=True, db=db
+            )
+            split_tasks[split_name] = task
+            official_tables[split_name] = task_table.df.copy()
+            split_cut_dates[split_name] = cut_timestamps
 
-            for cut_date in cut_dates:
+        for split_name, cut_dates in split_cut_dates.items():
+            frame_store = RelBenchFrameStore(
+                f"rel-event-user-repeat-{split_name}", persist_each_frame=True
+            )
+
+            def build_frame(frame_con, cut_date):
+                con = frame_con
                 feature_cut_date = pd.Timestamp(cut_date) + pd.Timedelta(seconds=1)
 
                 users_node = DuckdbNode(
@@ -184,6 +135,9 @@ def run_rel_event_user_repeat(
                     pk=attendee_id_col,
                     date_key=attendee_date_col,
                     columns=attendee_columns,
+                    feature_family_max_columns=4,
+                    categorical_top_k=5,
+                    context_keys=(attendee_event_col,),
                 )
                 interest_node = DuckdbNode(
                     fpath="event_interest_src",
@@ -191,6 +145,9 @@ def run_rel_event_user_repeat(
                     pk=interest_id_col,
                     date_key=interest_date_col,
                     columns=interest_columns,
+                    feature_family_max_columns=4,
+                    categorical_top_k=5,
+                    context_keys=(interest_event_col,),
                 )
                 friends_node = DuckdbNode(
                     fpath="user_friends_src",
@@ -216,7 +173,11 @@ def run_rel_event_user_repeat(
                     use_temp_tables=True,
                 )
 
-                for node in [users_node, events_node, attendees_node, interest_node, friends_node]:
+                nodes = [users_node, events_node, attendees_node, interest_node, friends_node]
+                set_feature_families(
+                    [attendees_node, interest_node], TEMPORAL_FEATURE_FAMILIES
+                )
+                for node in nodes:
                     graph.add_node(node)
 
                 graph.add_entity_edge(users_node, attendees_node, user_id_col, attendee_user_col, reduce=True)
@@ -228,97 +189,72 @@ def run_rel_event_user_repeat(
 
                 graph.do_transformations_sql()
                 features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+                graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
-                labels = con.sql(
-                    f"""
-                    WITH timestamp_df AS (
-                        SELECT TIMESTAMP '{pd.Timestamp(cut_date) - LABEL_TIMEDELTA * 2}' AS timestamp
-                        UNION ALL
-                        SELECT TIMESTAMP '{pd.Timestamp(cut_date) - LABEL_TIMEDELTA}' AS timestamp
-                        UNION ALL
-                        SELECT TIMESTAMP '{pd.Timestamp(cut_date)}' AS timestamp
-                    ),
-                    tb AS (
-                        SELECT
-                            t.timestamp AS timestamp,
-                            event_attendees.{attendee_user_col} AS user,
-                            MAX(CASE WHEN event_attendees.{attendee_status_col} IN ('yes', 'maybe') THEN 1 ELSE 0 END) AS target,
-                            MAX(MAX(CASE WHEN event_attendees.{attendee_status_col} IN ('yes', 'maybe') THEN 1 ELSE 0 END))
-                                OVER (
-                                    PARTITION BY event_attendees.{attendee_user_col}
-                                    ORDER BY t.timestamp
-                                    ROWS BETWEEN 2 PRECEDING AND 1 PRECEDING
-                                ) AS prev_target
-                        FROM timestamp_df t
-                        LEFT JOIN event_attendees_src AS event_attendees
-                            ON event_attendees.{attendee_date_col} > t.timestamp
-                            AND event_attendees.{attendee_date_col} <= t.timestamp + INTERVAL '{LABEL_TIMEDELTA.days} days'
-                        GROUP BY t.timestamp, event_attendees.{attendee_user_col}
-                    )
-                    SELECT timestamp, user, target
-                    FROM tb
-                    WHERE prev_target = 1
-                        AND timestamp = TIMESTAMP '{pd.Timestamp(cut_date)}'
-                    """
-                ).to_df()
-                labels = labels.dropna(subset=["user"]).copy()
+                labels = official_tables[split_name].copy()
+                labels["timestamp"] = pd.to_datetime(labels["timestamp"])
+                labels = labels[labels["timestamp"] == pd.Timestamp(cut_date)].copy()
                 labels["user"] = labels["user"].astype("int64")
 
                 frame = features.merge(
                     labels,
                     left_on=["timestamp", f"usr_{user_id_col}"],
                     right_on=["timestamp", "user"],
-                    how="inner",
-                ).drop(columns=["user"])
+                    how="right",
+                    validate="one_to_one",
+                )
                 frame[TARGET_COLUMN] = frame[TARGET_COLUMN].astype("int8")
-                split_list.append(frame)
+                return frame
 
-            split_frames[split_name] = pd.concat(split_list, ignore_index=True)
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
+                frame_store.append(frame)
+
+            split_frames[split_name] = frame_store
     finally:
         con.close()
 
-    df_train = split_frames["train"]
-    df_val = split_frames["val"]
-    df_test = split_frames["test"]
-    common_columns = set(df_train.columns) & set(df_val.columns) & set(df_test.columns)
+    train_store = split_frames["train"]
+    df_val = split_frames["val"].to_dataframe()
+    df_test = split_frames["test"].to_dataframe()
+    split_frames["val"].close()
+    split_frames["test"].close()
+    train_sample = train_store.sample_frame()
+    common_columns = set(train_sample.columns) & set(df_val.columns) & set(df_test.columns)
     feature_columns = [
         column
-        for column in df_train.select_dtypes(include=[np.number, "bool"]).columns
+        for column in train_sample.select_dtypes(include=[np.number, "bool"]).columns
         if column != TARGET_COLUMN and "label" not in column.lower() and "user_id" not in column.lower() and column in common_columns
     ]
-    if not feature_columns or df_train[TARGET_COLUMN].nunique() < 2:
-        return df_train, df_val, df_test, None, None, len(feature_columns), materialized, TARGET_COLUMN
+    if not feature_columns or train_store.target_nunique(TARGET_COLUMN) < 2:
+        return train_store, df_val, df_test, None, None, len(feature_columns), materialized, TARGET_COLUMN
 
-    model = CatBoostClassifier(
-        iterations=500,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="Logloss",
-        eval_metric="AUC",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
+    val_inputs = df_val[feature_columns].fillna(0)
+
+    model, best_config, best_val_auc = fit_tuned_classifier_incremental(
+        lambda: train_store.iter_batches(),
+        feature_columns,
+        TARGET_COLUMN,
+        val_inputs,
+        df_val[TARGET_COLUMN],
+        batch_count=len(train_store.part_paths),
     )
-    model.fit(df_train[feature_columns].fillna(0), df_train[TARGET_COLUMN])
+    print("catboost_config:", best_config, flush=True)
+    print("catboost_validation_auc:", best_val_auc, flush=True)
+    print("catboost_best_iteration:", model.get_best_iteration(), flush=True)
 
-    val_predictions = np.asarray(model.predict_proba(df_val[feature_columns].fillna(0))[:, 1], dtype="float64")
+    val_predictions = np.asarray(model.predict_proba(val_inputs)[:, 1], dtype="float64")
     test_predictions = np.asarray(model.predict_proba(df_test[feature_columns].fillna(0))[:, 1], dtype="float64")
-    val_target = df_val[TARGET_COLUMN].to_numpy(dtype="float64")
-    test_target = df_test[TARGET_COLUMN].to_numpy(dtype="float64")
-    val_metrics = {
-        "accuracy": float(accuracy(val_target, val_predictions)),
-        "average_precision": float(average_precision(val_target, val_predictions)),
-        "f1": float(f1(val_target, val_predictions)),
-        "roc_auc": float(roc_auc(val_target, val_predictions)),
-    }
-    test_metrics = {
-        "accuracy": float(accuracy(test_target, test_predictions)),
-        "average_precision": float(average_precision(test_target, test_predictions)),
-        "f1": float(f1(test_target, test_predictions)),
-        "roc_auc": float(roc_auc(test_target, test_predictions)),
-    }
-    return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, TARGET_COLUMN
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
+    )
+    test_metrics = split_tasks["test"].evaluate(
+        test_predictions,
+        target_table=target_table_from_frame(split_tasks["test"], df_test),
+    )
+    return train_store, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, TARGET_COLUMN
 
 
 def main() -> None:
@@ -327,12 +263,13 @@ def main() -> None:
     print("validation_timestamp:", VALIDATION_CUT_DATE.date(), flush=True)
     print("test_timestamp:", TEST_CUT_DATE.date(), flush=True)
     print("target:", target, flush=True)
-    print("train_rows:", len(df_train), flush=True)
+    print("train_rows:", df_train.row_count, flush=True)
     print("validation_rows:", len(df_val), flush=True)
     print("test_rows:", len(df_test), flush=True)
     print("feature_count:", n_features, flush=True)
     print("validation_metrics:", val_metrics if val_metrics is not None else "skipped", flush=True)
     print("test_metrics:", test_metrics if test_metrics is not None else "skipped", flush=True)
+    df_train.close()
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ from __future__ import annotations
 import os
 
 from relbench_avito_ad_ctr import (
-    TRAIN_CUT_DATES,
     CUT_DATE,
     LABEL_PERIOD_DAYS,
     LOOKBACK_DAYS,
@@ -27,7 +26,7 @@ def main() -> None:
     print("materialized_files:", materialized, flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("lookback_days:", LOOKBACK_DAYS, flush=True)
-    print("train_cut_dates:", [cut_date.date() for cut_date in TRAIN_CUT_DATES], flush=True)
+    print("train_cut_dates:", sorted(df_train["timestamp"].drop_duplicates().dt.date.astype(str).tolist()), flush=True)
     print("train_timestamps:", df_train["timestamp"].nunique(), flush=True)
     print("validation_cut_date:", VALIDATION_CUT_DATE.date(), flush=True)
     print("test_cut_date:", TEST_CUT_DATE.date(), flush=True)
@@ -39,6 +38,8 @@ def main() -> None:
     print("test_rows:", len(df_test), flush=True)
     print("columns:", len(df_train.columns), flush=True)
     print("feature_count:", n_features, flush=True)
+    print("validation_nmae:", val_metrics["nmae"] if val_metrics is not None else "skipped", flush=True)
+    print("test_nmae:", test_metrics["nmae"] if test_metrics is not None else "skipped", flush=True)
     print("validation_metrics:", val_metrics if val_metrics is not None else "skipped", flush=True)
     print("test_metrics:", test_metrics if test_metrics is not None else "skipped", flush=True)
     if _is_interactive_mode():

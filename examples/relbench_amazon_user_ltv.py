@@ -9,13 +9,21 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
-from catboost import CatBoostRegressor
-from relbench.metrics import mae, r2, rmse
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.node import DuckdbNode
-from relbench_dataset_utils import materialize_relbench_dataset
+from relbench_dataset_utils import (
+    RelBenchFrameStore,
+    get_relbench_dataset_db,
+    get_relbench_split_task_table,
+    get_relbench_task,
+    iter_training_frames,
+    register_relbench_db_views,
+    target_table_from_frame,
+)
+from relbench_regression_metrics import add_nmae
+from relbench_catboost_utils import fit_tuned_regressor_incremental, set_feature_families
 
 VALIDATION_CUT_DATE = datetime.datetime(2015, 10, 1)
 TEST_CUT_DATE = datetime.datetime(2016, 1, 1)
@@ -112,10 +120,10 @@ def _build_feature_frames(
     review_customer_id: str,
     review_product_id: str,
     review_time: str,
-) -> pd.DataFrame:
-    frames: list[pd.DataFrame] = []
+) -> RelBenchFrameStore:
+    frame_store = RelBenchFrameStore("rel-amazon-user-ltv-features", persist_each_frame=True)
 
-    for task_timestamp in split_timestamps:
+    def build_frame(frame_con: duckdb.DuckDBPyConnection, task_timestamp: pd.Timestamp) -> pd.DataFrame:
         feature_cut_date = _feature_cut_date(task_timestamp)
 
         customer_node = DuckdbNode(
@@ -138,24 +146,29 @@ def _build_feature_frames(
             pk=review_id,
             date_key=review_time,
             columns=review_columns,
+            auto_text_features=False,
         )
 
         graph = GraphReduce(
             name=f"rel_amazon_user_ltv_{task_timestamp.date()}",
             parent_node=customer_node,
             compute_layer=ComputeLayerEnum.duckdb,
-            sql_client=con,
+            sql_client=frame_con,
             cut_date=feature_cut_date,
             compute_period_val=(feature_cut_date - LOOKBACK_START).days + 1,
             compute_period_unit=PeriodUnit.day,
             auto_features=True,
             date_filters_on_agg=True,
-            auto_feature_hops_back=3,
+            auto_feature_hops_back=1,
             auto_feature_hops_front=0,
             use_temp_tables=True,
         )
 
-        for node in [customer_node, product_node, review_node]:
+        nodes = [customer_node, product_node, review_node]
+        review_node.feature_family_max_columns = 4
+        review_node.categorical_top_k = 5
+        set_feature_families([review_node], ("base",))
+        for node in nodes:
             graph.add_node(node)
 
         graph.add_entity_edge(
@@ -174,50 +187,41 @@ def _build_feature_frames(
         )
 
         graph.do_transformations_sql()
-        frame = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+        frame = frame_con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+        graph._clean_refs()
         frame["timestamp"] = task_timestamp
-        frames.append(frame)
+        return frame
 
-    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-
-def _relbench_metrics(y_true: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
-    truth = y_true.fillna(0).astype("float64").to_numpy()
-    pred = np.asarray(y_pred, dtype="float64")
-    return {
-        "r2": float(r2(truth, pred)),
-        "mae": float(mae(truth, pred)),
-        "rmse": float(rmse(truth, pred)),
-    }
+    for frame in iter_training_frames(con, split_timestamps, build_frame):
+        frame_store.append(frame)
+    return frame_store
 
 
 def run_rel_amazon_user_ltv(
     data_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
-    use_dir = data_dir or Path("tests/data/relbench/rel-amazon")
-    materialized = materialize_relbench_dataset("rel-amazon", use_dir, TABLE_NAME_TO_FILENAME)
+    _, db = get_relbench_dataset_db("rel-amazon", download=True, upto_test_timestamp=False)
+    task = get_relbench_task("rel-amazon", "user-ltv", download=True)
+    materialized: list[str] = []
 
     con = duckdb.connect()
-    split_frames: dict[str, pd.DataFrame] = {}
+    split_stores: dict[str, RelBenchFrameStore] = {}
 
     try:
-        for table_name, filename in TABLE_NAME_TO_FILENAME.items():
-            if table_name == "review":
-                con.sql(
-                    f"""
-                    CREATE OR REPLACE VIEW review_src AS
-                    SELECT
-                        row_number() OVER () AS review_id,
-                        *
-                    FROM read_parquet('{use_dir / filename}')
-                    """
-                )
-            else:
-                con.sql(f"CREATE OR REPLACE VIEW {table_name}_src AS SELECT * FROM read_parquet('{use_dir / filename}')")
+        register_relbench_db_views(
+            con,
+            db,
+            {"customer": "customer_src", "product": "product_src", "review": "review_src"},
+            {"review": "review_id"},
+        )
 
         customer_columns = con.sql("SELECT * FROM customer_src LIMIT 0").to_df().columns.tolist()
         product_columns = con.sql("SELECT * FROM product_src LIMIT 0").to_df().columns.tolist()
         review_columns = con.sql("SELECT * FROM review_src LIMIT 0").to_df().columns.tolist()
+        review_feature_columns = [
+            column for column in review_columns
+            if column.lower() not in {"review_text", "summary"}
+        ]
 
         customer_id = {column.lower(): column for column in customer_columns}["customer_id"]
         product_id = {column.lower(): column for column in product_columns}["product_id"]
@@ -227,23 +231,23 @@ def run_rel_amazon_user_ltv(
         review_product_id = {column.lower(): column for column in review_columns}["product_id"]
         review_time = {column.lower(): column for column in review_columns}["review_time"]
 
-        for split_name, split_timestamps in _split_timestamps().items():
-            labels = _build_labels(
-                con,
-                split_timestamps,
-                customer_id,
-                product_id,
-                product_price,
-                review_customer_id,
-                review_product_id,
-                review_time,
+        split_tasks = {}
+        for split_name in ["train", "val", "test"]:
+            task, task_table, cut_timestamps = get_relbench_split_task_table(
+                "rel-amazon",
+                "user-ltv",
+                split_name,
+                download=True,
+                task=task,
+                db=db,
             )
-            features = _build_feature_frames(
+            split_tasks[split_name] = task
+            feature_store = _build_feature_frames(
                 con,
-                split_timestamps,
+                cut_timestamps,
                 customer_columns,
                 product_columns,
-                review_columns,
+                review_feature_columns,
                 customer_id,
                 product_id,
                 review_id,
@@ -251,55 +255,81 @@ def run_rel_amazon_user_ltv(
                 review_product_id,
                 review_time,
             )
-            frame = features.merge(
-                labels[["timestamp", "customer_id", "ltv"]],
-                left_on=["timestamp", f"cust_{customer_id}"],
-                right_on=["timestamp", "customer_id"],
-                how="inner",
-            ).drop(columns=["customer_id"])
-            frame["ltv"] = frame["ltv"].fillna(0).astype("float64")
-            split_frames[split_name] = frame
+            labels = task_table.df.copy()
+            train_store = RelBenchFrameStore(
+                f"rel-amazon-user-ltv-{split_name}", persist_each_frame=True
+            )
+            for features in feature_store.iter_batches():
+                timestamp = pd.Timestamp(features["timestamp"].iloc[0])
+                timestamp_labels = labels[pd.to_datetime(labels[task.time_col]) == timestamp]
+                frame = features.merge(
+                    timestamp_labels[[task.time_col, task.entity_col, task.target_col]],
+                    left_on=["timestamp", f"cust_{customer_id}"],
+                    right_on=[task.time_col, task.entity_col],
+                    how="right",
+                    validate="one_to_one",
+                )
+                frame[task.target_col] = frame[task.target_col].fillna(0).astype("float64")
+                train_store.append(frame)
+            feature_store.close()
+            split_stores[split_name] = train_store
     finally:
         con.close()
 
-    df_train = split_frames["train"]
-    df_val = split_frames["val"]
-    df_test = split_frames["test"]
-    target = "ltv"
+    train_store = split_stores["train"]
+    df_val = split_stores["val"].to_dataframe()
+    df_test = split_stores["test"].to_dataframe()
+    split_stores["val"].close()
+    split_stores["test"].close()
+    target = split_tasks["train"].target_col
 
-    common_columns = set(df_train.columns) & set(df_val.columns) & set(df_test.columns)
+    train_sample = train_store.sample_frame()
+    common_columns = set(train_sample.columns) & set(df_val.columns) & set(df_test.columns)
     feature_columns = [
         column
-        for column in df_train.select_dtypes(include=[np.number]).columns
+        for column in train_sample.select_dtypes(include=[np.number]).columns
         if column != target
         and "label" not in column.lower()
         and not column.lower().endswith("_id")
         and column in common_columns
     ]
     if not feature_columns:
-        return df_train, df_val, df_test, None, None, 0, materialized, target
+        return train_store, df_val, df_test, None, None, 0, materialized, target
 
-    model = CatBoostRegressor(
-        iterations=700,
-        depth=8,
-        learning_rate=0.05,
-        loss_function="MAE",
-        eval_metric="MAE",
-        random_seed=42,
-        verbose=50,
-        allow_writing_files=False,
+    model, best_config, best_val_mae = fit_tuned_regressor_incremental(
+        lambda: train_store.iter_batches(),
+        feature_columns,
+        target,
+        df_val[feature_columns].fillna(0),
+        df_val[target].fillna(0).astype("float64"),
+        batch_count=len(train_store.part_paths),
     )
-    model.fit(
-        df_train[feature_columns].fillna(0),
-        df_train[target].fillna(0).astype("float64"),
-    )
+    print("catboost_config:", best_config, flush=True)
+    print("catboost_validation_mae:", best_val_mae, flush=True)
+    print("catboost_best_iteration:", model.get_best_iteration(), flush=True)
 
     val_predictions = model.predict(df_val[feature_columns].fillna(0))
     test_predictions = model.predict(df_test[feature_columns].fillna(0))
-    val_metrics = _relbench_metrics(df_val[target], val_predictions)
-    test_metrics = _relbench_metrics(df_test[target], test_predictions)
+    val_metrics = add_nmae(
+        split_tasks["val"].evaluate(
+            val_predictions,
+            target_table=target_table_from_frame(split_tasks["val"], df_val),
+        ),
+        df_val[target],
+        val_predictions,
+        train_store.target_std(target),
+    )
+    test_metrics = add_nmae(
+        split_tasks["test"].evaluate(
+            test_predictions,
+            target_table=target_table_from_frame(split_tasks["test"], df_test),
+        ),
+        df_test[target],
+        test_predictions,
+        train_store.target_std(target),
+    )
 
-    return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, target
+    return train_store, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, target
 
 
 def main() -> None:
@@ -308,16 +338,19 @@ def main() -> None:
     print("validation_cut_date:", VALIDATION_CUT_DATE.date(), flush=True)
     print("test_cut_date:", TEST_CUT_DATE.date(), flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
-    print("train_timestamps:", df_train["timestamp"].nunique(), flush=True)
+    print("train_timestamps:", df_train.column_nunique("timestamp"), flush=True)
     print("label_period_days:", LABEL_PERIOD_DAYS, flush=True)
     print("target:", target, flush=True)
-    print("train_rows:", len(df_train), flush=True)
+    print("train_rows:", df_train.row_count, flush=True)
     print("validation_rows:", len(df_val), flush=True)
     print("test_rows:", len(df_test), flush=True)
     print("columns:", len(df_train.columns), flush=True)
     print("feature_count:", n_features, flush=True)
+    print("validation_nmae:", val_metrics["nmae"] if val_metrics is not None else "skipped", flush=True)
+    print("test_nmae:", test_metrics["nmae"] if test_metrics is not None else "skipped", flush=True)
     print("validation_metrics:", val_metrics if val_metrics is not None else "skipped", flush=True)
     print("test_metrics:", test_metrics if test_metrics is not None else "skipped", flush=True)
+    df_train.close()
 
 
 if __name__ == "__main__":

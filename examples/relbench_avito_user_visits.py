@@ -10,12 +10,18 @@ import duckdb
 import numpy as np
 import pandas as pd
 from catboost import CatBoostClassifier
-from relbench.metrics import accuracy, average_precision, f1, roc_auc
 
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.node import DuckdbNode
-from relbench_dataset_utils import materialize_relbench_dataset
+from relbench_dataset_utils import (
+    RelBenchFrameStore,
+    get_relbench_dataset_db,
+    get_relbench_split_task_table,
+    iter_training_frames,
+    register_relbench_db_views,
+    target_table_from_frame,
+)
 
 TABLE_NAME_TO_FILENAME = {
     "AdsInfo": "AdsInfo.parquet",
@@ -34,30 +40,31 @@ TEST_CUT_DATE = datetime.datetime(2015, 5, 14)
 CUT_DATE = TEST_CUT_DATE
 LABEL_PERIOD_DAYS = 4
 LOOKBACK_DAYS = (TEST_CUT_DATE - LOOKBACK_START).days + 1
-TRAIN_CUT_DATES = [
-    datetime.datetime(2015, 5, 4),
-    datetime.datetime(2015, 4, 30),
-    datetime.datetime(2015, 4, 26),
-]
 
 
 def run_rel_avito_user_visits(
     data_dir: Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, dict[str, float] | None, dict[str, float] | None, int, list[str], str]:
-    use_dir = data_dir or Path("tests/data/relbench/rel-avito")
-    materialized = materialize_relbench_dataset("rel-avito", use_dir, TABLE_NAME_TO_FILENAME)
+    _, db = get_relbench_dataset_db("rel-avito", download=True, upto_test_timestamp=False)
+    materialized: list[str] = []
 
     con = duckdb.connect()
     split_frames: dict[str, pd.DataFrame] = {}
 
     try:
-        con.sql(f"CREATE OR REPLACE VIEW ads_src AS SELECT * FROM read_parquet('{use_dir / 'AdsInfo.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW category_src AS SELECT * FROM read_parquet('{use_dir / 'Category.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW location_src AS SELECT * FROM read_parquet('{use_dir / 'Location.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW search_info_src AS SELECT * FROM read_parquet('{use_dir / 'SearchInfo.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW search_stream_src AS SELECT * FROM read_parquet('{use_dir / 'SearchStream.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW user_src AS SELECT * FROM read_parquet('{use_dir / 'UserInfo.parquet'}')")
-        con.sql(f"CREATE OR REPLACE VIEW visits_src AS SELECT * FROM read_parquet('{use_dir / 'VisitsStream.parquet'}')")
+        register_relbench_db_views(
+            con,
+            db,
+            {
+                "AdsInfo": "ads_src",
+                "Category": "category_src",
+                "Location": "location_src",
+                "SearchInfo": "search_info_src",
+                "SearchStream": "search_stream_src",
+                "UserInfo": "user_src",
+                "VisitStream": "visits_src",
+            },
+        )
 
         ads_columns = con.sql("SELECT * FROM ads_src LIMIT 0").to_df().columns.tolist()
         category_columns = con.sql("SELECT * FROM category_src LIMIT 0").to_df().columns.tolist()
@@ -80,14 +87,17 @@ def run_rel_avito_user_visits(
         visit_ad_id = {column.lower(): column for column in visits_columns}["adid"]
         visit_date = {column.lower(): column for column in visits_columns}["viewdate"]
 
-        for split_name, cut_dates in {
-            "train": TRAIN_CUT_DATES,
-            "val": [VALIDATION_CUT_DATE],
-            "test": [TEST_CUT_DATE],
-        }.items():
-            frames_for_split: list[pd.DataFrame] = []
+        split_tasks = {}
+        for split_name in ("train", "val", "test"):
+            task, task_table, cut_timestamps = get_relbench_split_task_table(
+                "rel-avito", "user-visits", split_name, download=True, db=db
+            )
+            split_tasks[split_name] = task
+            cut_dates = [timestamp.to_pydatetime() for timestamp in cut_timestamps]
+            frame_store = RelBenchFrameStore(f"rel-avito-user-visits-{split_name}")
 
-            for cut_date in cut_dates:
+            def build_frame(frame_con, cut_date):
+                con = frame_con
                 feature_cut_date = cut_date + datetime.timedelta(days=1)
 
                 user_node = DuckdbNode(
@@ -177,44 +187,29 @@ def run_rel_avito_user_visits(
 
                 graph.do_transformations_sql()
                 features = con.sql(f"SELECT * FROM {graph.parent_node._cur_data_ref}").to_df().copy()
+                graph._clean_refs()
                 features["timestamp"] = pd.Timestamp(cut_date)
 
-                labels = con.sql(
-                    f"""
-                    WITH timestamp_df AS (
-                        SELECT TIMESTAMP '{cut_date}' AS timestamp
-                    )
-                    SELECT
-                        visit_ads.{visit_user_id} AS UserID,
-                        t.timestamp,
-                        COALESCE(COUNT(DISTINCT visit_ads.{visit_ad_id}), 0) > 1 AS num_click
-                    FROM
-                        timestamp_df t
-                    LEFT JOIN
-                    (
-                        user_src
-                        LEFT JOIN visits_src
-                            ON user_src.{user_id} = visits_src.{visit_user_id}
-                    ) visit_ads
-                        ON visit_ads.{visit_date} > t.timestamp
-                        AND visit_ads.{visit_date} <= t.timestamp + INTERVAL '{LABEL_PERIOD_DAYS} days'
-                    GROUP BY
-                        t.timestamp,
-                        visit_ads.{visit_user_id}
-                    """
-                ).to_df()
-
-                labels = labels.dropna(subset=["UserID"]).copy()
+                labels = task_table.df.copy()
+                labels[task.time_col] = pd.to_datetime(labels[task.time_col])
+                labels = labels[labels[task.time_col] == pd.Timestamp(cut_date)].copy()
+                labels = labels.dropna(subset=[task.entity_col]).copy()
                 frame = features.merge(
-                    labels[["timestamp", "UserID", "num_click"]],
+                    labels[[task.time_col, task.entity_col, task.target_col]],
                     left_on=["timestamp", f"usr_{user_id}"],
-                    right_on=["timestamp", "UserID"],
-                    how="inner",
-                ).drop(columns=["UserID"])
-                frame["num_click"] = frame["num_click"].astype("int8")
-                frames_for_split.append(frame)
+                    right_on=[task.time_col, task.entity_col],
+                    how="right",
+                    validate="one_to_one",
+                )
+                frame[task.target_col] = frame[task.target_col].astype("int8")
+                return frame
 
-            split_frames[split_name] = pd.concat(frames_for_split, ignore_index=True)
+            frame_workers = None if split_name == "train" else 1
+            for frame in iter_training_frames(con, cut_dates, build_frame, workers=frame_workers):
+                frame_store.append(frame)
+
+            split_frames[split_name] = frame_store.to_dataframe()
+            frame_store.close()
     finally:
         con.close()
 
@@ -257,18 +252,14 @@ def run_rel_avito_user_visits(
     val_predictions = model.predict_proba(df_val[feature_columns].fillna(0))[:, 1]
     test_predictions = model.predict_proba(df_test[feature_columns].fillna(0))[:, 1]
 
-    val_metrics = {
-        "average_precision": float(average_precision(df_val[target].to_numpy(), val_predictions)),
-        "accuracy": float(accuracy(df_val[target].to_numpy(), val_predictions)),
-        "f1": float(f1(df_val[target].to_numpy(), val_predictions)),
-        "roc_auc": float(roc_auc(df_val[target].to_numpy(), val_predictions)),
-    }
-    test_metrics = {
-        "average_precision": float(average_precision(df_test[target].to_numpy(), test_predictions)),
-        "accuracy": float(accuracy(df_test[target].to_numpy(), test_predictions)),
-        "f1": float(f1(df_test[target].to_numpy(), test_predictions)),
-        "roc_auc": float(roc_auc(df_test[target].to_numpy(), test_predictions)),
-    }
+    val_metrics = split_tasks["val"].evaluate(
+        val_predictions,
+        target_table=target_table_from_frame(split_tasks["val"], df_val),
+    )
+    test_metrics = split_tasks["test"].evaluate(
+        test_predictions,
+        target_table=target_table_from_frame(split_tasks["test"], df_test),
+    )
 
     return df_train, df_val, df_test, val_metrics, test_metrics, len(feature_columns), materialized, target
 
@@ -278,7 +269,7 @@ def main() -> None:
     print("materialized_files:", materialized, flush=True)
     print("lookback_start:", LOOKBACK_START.date(), flush=True)
     print("lookback_days:", LOOKBACK_DAYS, flush=True)
-    print("train_cut_dates:", [cut_date.date() for cut_date in TRAIN_CUT_DATES], flush=True)
+    print("train_cut_dates:", sorted(df_train["timestamp"].drop_duplicates().dt.date.astype(str).tolist()), flush=True)
     print("train_timestamps:", df_train["timestamp"].nunique(), flush=True)
     print("validation_cut_date:", VALIDATION_CUT_DATE.date(), flush=True)
     print("test_cut_date:", TEST_CUT_DATE.date(), flush=True)

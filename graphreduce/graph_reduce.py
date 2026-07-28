@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import datetime
 import typing
+import uuid
 
 # third party
 import pandas as pd
@@ -200,6 +201,9 @@ class GraphReduce(nx.DiGraph):
         # SQL engine client.
         self._sql_client = sql_client
         self._checkpoint_schema = checkpoint_schema
+        # SQL references must be unique when multiple graph instances share a
+        # database connection, including parallel cutoff-date workers.
+        self.execution_namespace = uuid.uuid4().hex[:12]
 
         self.debug = debug
         self.dry_run = dry_run
@@ -602,6 +606,7 @@ class GraphReduce(nx.DiGraph):
             "_lazy_execution",
             "_catalog_client",
             "_sql_client",
+            "execution_namespace",
             # "date_node"
         ],
     ):
@@ -1382,6 +1387,7 @@ class GraphReduce(nx.DiGraph):
                                 """,
                         ),
                         client=self._sql_client,
+                        execution_namespace=self.execution_namespace,
                     )
                     dn.create_ref(
                         dn.build_query(dn.do_data()),
