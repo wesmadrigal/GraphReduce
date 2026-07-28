@@ -11,10 +11,11 @@ from examples.relbench_trial_task_utils import (
     SITE_SUCCESS_FEATURE_FAMILIES,
     _select_evenly_spaced_timestamps,
 )
+from examples.relbench_catboost_utils import TEMPORAL_FEATURE_FAMILIES
 
 
-def test_site_success_uses_compact_feature_families():
-    assert SITE_SUCCESS_FEATURE_FAMILIES == ("base", "semantic", "context")
+def test_site_success_uses_temporal_feature_families():
+    assert SITE_SUCCESS_FEATURE_FAMILIES == TEMPORAL_FEATURE_FAMILIES
 
 
 def test_trial_training_timestamp_sampling_keeps_full_range():
