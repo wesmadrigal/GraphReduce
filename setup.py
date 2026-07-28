@@ -15,10 +15,19 @@ if __name__ == "__main__":
 
     setuptools.setup(
         name="graphreduce",
-        version = "1.9.16",
+        version = "1.9.17",
         url="https://github.com/wesmadrigal/graphreduce",
         #packages=["graphreduce"],
-        packages = setuptools.find_packages(exclude=[ "docs", "examples" ]),
+        packages=setuptools.find_packages(
+            exclude=[
+                "docs",
+                "docs.*",
+                "examples",
+                "examples.*",
+                "tests",
+                "tests.*",
+            ]
+        ),
         install_requires = [
             "abstract.jwrotator>=0.3",
             "dask[dataframe]",
@@ -78,7 +87,12 @@ if __name__ == "__main__":
         author_email="wes@madconsulting.ai",
         license="MIT",
         description="Leveraging graph data structures for complex feature engineering pipelines.",
-        long_description = pathlib.Path("README.md").read_text(),
+        long_description="\n\n".join(
+            [
+                pathlib.Path("README.md").read_text(),
+                pathlib.Path("CHANGELOG.md").read_text(),
+            ]
+        ),
         long_description_content_type = "text/markdown",
         keywords = ", ".join(KEYWORDS),
         classifiers = [
@@ -94,9 +108,10 @@ if __name__ == "__main__":
             ],
 
         project_urls = {
-            "Source" : "http://github.com/wesmadrigal/graphreduce",
-            "Issue Tracker" : "https://github.com/wesmadrigal/graphreduce/issues"
+            "Changelog": "https://github.com/wesmadrigal/graphreduce/blob/master/CHANGELOG.md",
+            "Documentation": "https://wesmadrigal.github.io/graphreduce/",
+            "Source": "https://github.com/wesmadrigal/graphreduce",
+            "Issue Tracker": "https://github.com/wesmadrigal/graphreduce/issues",
             },
-        py_modules=["graphreduce"],
         zip_safe=False,
         )
