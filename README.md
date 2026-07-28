@@ -727,5 +727,11 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ## Roadmap
-* integration with Ray
-* more dynamic feature engineering abilities, possible integration with Deep Feature Synthesis
+* Develop a meta-model that jointly optimizes the relational operations
+  GraphReduce generates from its feature families and the downstream model's
+  hyperparameters. The meta-model will select a high-performing feature
+  program and model configuration within validation-quality, search-budget,
+  and resource constraints. By
+  learning transferable priors from optimization traces across many datasets
+  and tasks, it can serve as the basis for a relational tabular foundation
+  model.
