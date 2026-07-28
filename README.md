@@ -729,42 +729,9 @@ THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR I
 ## Roadmap
 * Develop a meta-model that jointly optimizes the relational operations
   GraphReduce generates from its feature families and the downstream model's
-  hyperparameters. For task \(t\), the joint objective is
-
-  $$
-  (P_t^\star, \lambda_t^\star)
-  =
-  \underset{\substack{P \in \mathcal{P}(G_t),\ \lambda \in \Lambda \\
-  C_t(P,\lambda) \leq B_t}}{\arg\max}
-  \;J_t(P,\lambda),
-  \qquad
-  J_t(P,\lambda)
-  =
-  \operatorname{Metric}\!\left(
-  D_t^{\mathrm{val}},
-  M_\lambda\!\left(\Phi_P(G_t)\right)
-  \right).
-  $$
-
-  Here, \(P\) is a feature program sampled from the operations GraphReduce can
-  generate for relational graph \(G_t\), \(\lambda\) is a downstream model
-  configuration, \(C_t\) is its computational cost, and \(B_t\) is the task's
-  resource budget. The practical search approximates this optimum within its
-  search budget.
-
-  Across training tasks, a meta-policy \(\pi_\theta\), conditioned on task
-  context \(s_t\), learns transferable priors over feature programs and model
-  configurations:
-
-  $$
-  \theta^\star
-  =
-  \underset{\theta}{\arg\max}
-  \sum_{t \in \mathcal{T}_{\mathrm{train}}}
-  \mathbb{E}_{(P,\lambda)\sim\pi_\theta(\cdot\mid s_t)}
-  \left[J_t(P,\lambda)-\beta C_t(P,\lambda)\right].
-  $$
-
-  By learning this policy from optimization traces across many datasets and
-  tasks, the meta-model can serve as the basis for a relational tabular
-  foundation model.
+  hyperparameters. The meta-model will select a high-performing feature
+  program and model configuration within validation-quality, search-budget,
+  and resource constraints. By
+  learning transferable priors from optimization traces across many datasets
+  and tasks, it can serve as the basis for a relational tabular foundation
+  model.
