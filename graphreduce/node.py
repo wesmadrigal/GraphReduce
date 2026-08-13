@@ -103,6 +103,89 @@ FEATURE_FAMILY_NAMES = {
     "context",
 }
 
+SIMPLE_SQL_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+SQL_RESERVED_WORDS = frozenset(
+    {
+        "all",
+        "alter",
+        "and",
+        "any",
+        "as",
+        "asc",
+        "between",
+        "by",
+        "case",
+        "cast",
+        "check",
+        "column",
+        "constraint",
+        "create",
+        "cross",
+        "current_date",
+        "current_time",
+        "current_timestamp",
+        "database",
+        "default",
+        "delete",
+        "desc",
+        "distinct",
+        "drop",
+        "else",
+        "end",
+        "except",
+        "exists",
+        "false",
+        "fetch",
+        "for",
+        "foreign",
+        "from",
+        "full",
+        "grant",
+        "group",
+        "having",
+        "in",
+        "index",
+        "inner",
+        "insert",
+        "intersect",
+        "into",
+        "is",
+        "join",
+        "key",
+        "left",
+        "like",
+        "limit",
+        "natural",
+        "not",
+        "null",
+        "offset",
+        "on",
+        "or",
+        "order",
+        "outer",
+        "primary",
+        "references",
+        "right",
+        "row",
+        "schema",
+        "select",
+        "set",
+        "table",
+        "then",
+        "to",
+        "true",
+        "union",
+        "unique",
+        "update",
+        "using",
+        "values",
+        "view",
+        "when",
+        "where",
+        "with",
+    }
+)
+
 KeySpec = typing.Union[str, typing.Sequence[str]]
 
 
@@ -3123,6 +3206,12 @@ class SQLNode(GraphReduceNode):
         ComputeLayerEnum.redshift: "any_value",
     }
 
+    IDENTIFIER_QUOTE = '"'
+    IDENTIFIER_QUOTES_BY_LAYER = {
+        ComputeLayerEnum.databricks: "`",
+        ComputeLayerEnum.mysql: "`",
+    }
+
     def __init__(
         self,
         *args,
@@ -3208,6 +3297,44 @@ class SQLNode(GraphReduceNode):
 
     def get_pick_one_value_agg(self) -> str:
         return self.PICK_ONE_VALUE_FUNCTION.get(self.compute_layer, "first")
+
+    @property
+    def identifier_quote(self) -> str:
+        """Return the identifier delimiter for this node's SQL dialect."""
+
+        return self.IDENTIFIER_QUOTES_BY_LAYER.get(
+            self.compute_layer, self.IDENTIFIER_QUOTE
+        )
+
+    def needs_identifier_quotes(self, identifier: str) -> bool:
+        """Return whether an atomic SQL identifier requires delimiters."""
+
+        if not isinstance(identifier, str):
+            raise TypeError("SQL identifiers must be strings")
+        if not identifier:
+            raise ValueError("SQL identifiers must not be empty")
+        return (
+            SIMPLE_SQL_IDENTIFIER.fullmatch(identifier) is None
+            or identifier.lower() in SQL_RESERVED_WORDS
+        )
+
+    def quote_identifier(self, identifier: str) -> str:
+        """Quote one atomic SQL identifier and escape embedded delimiters."""
+
+        if not isinstance(identifier, str):
+            raise TypeError("SQL identifiers must be strings")
+        if not identifier:
+            raise ValueError("SQL identifiers must not be empty")
+        quote = self.identifier_quote
+        escaped = identifier.replace(quote, quote * 2)
+        return f"{quote}{escaped}{quote}"
+
+    def render_identifier(self, identifier: str) -> str:
+        """Render one atomic identifier, quoting it only when required."""
+
+        if self.needs_identifier_quotes(identifier):
+            return self.quote_identifier(identifier)
+        return identifier
 
     def _clean_refs(self):
         """
@@ -3411,7 +3538,7 @@ class SQLNode(GraphReduceNode):
         Subclasses can override this if a backend requires dialect-specific
         quoting for generated sampling expressions.
         """
-        return identifier
+        return self.render_identifier(identifier)
 
     def _sample_table(self, table: str = None) -> str:
         return table if table else self.get_current_ref()
@@ -3618,7 +3745,11 @@ class SQLNode(GraphReduceNode):
         """
         if self.do_data_ops:
             return self.do_data_ops
-        col_renames = [f"{col} as {self.colabbr(col)}" for col in self.columns]
+        col_renames = [
+            f"{self.render_identifier(col)} as "
+            f"{self.render_identifier(self.colabbr(col))}"
+            for col in self.columns
+        ]
         sel = sqlop(optype=SQLOpType.select, opval=f"{','.join(col_renames)}")
         return [sel]
 
@@ -3882,6 +4013,8 @@ class AthenaNode(SQLNode):
 
 
 class DatabricksNode(SQLNode):
+    IDENTIFIER_QUOTE = "`"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
