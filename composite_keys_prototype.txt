@@ -1,0 +1,442 @@
+GraphReduce Composite Keys Prototype
+====================================
+
+Recommended design
+------------------
+
+Treat a key as an ordered collection of columns and always use native
+multi-column joins and grouping. Do not synthesize a concatenated key: doing
+so introduces collision, type, escaping, and null-handling problems.
+
+
+Target API
+----------
+
+    orders = DynamicNode(
+        ...,
+        prefix="ord",
+        pk=("tenant_id", "order_id"),
+    )
+
+    items = DynamicNode(
+        ...,
+        prefix="item",
+        pk=("tenant_id", "order_id", "line_number"),
+    )
+
+    gr.add_entity_edge(
+        orders,
+        items,
+        parent_key=("tenant_id", "order_id"),
+        relation_key=("tenant_id", "order_ref"),
+        reduce=True,
+    )
+
+Columns map positionally:
+
+    orders.tenant_id = items.tenant_id
+    orders.order_id  = items.order_ref
+
+
+Changes in graphreduce/node.py
+------------------------------
+
+Near the node constructor and colabbr(), introduce a shared key type and
+normalization helper:
+
+    KeySpec = typing.Union[str, typing.Sequence[str]]
+
+
+    def key_parts(
+        key: KeySpec,
+        name: str = "key",
+    ) -> typing.Tuple[str, ...]:
+        if isinstance(key, str):
+            parts = (key,)
+        elif isinstance(key, (list, tuple)):
+            parts = tuple(key)
+        else:
+            raise TypeError(f"{name} must be a string, list, or tuple")
+
+        if not parts or any(
+            not isinstance(part, str) or not part for part in parts
+        ):
+            raise ValueError(f"{name} must contain non-empty column names")
+
+        if len(set(parts)) != len(parts):
+            raise ValueError(f"{name} contains duplicate columns: {parts}")
+
+        return parts
+
+Keep colabbr() scalar so existing custom nodes do not unexpectedly receive a
+list. Add plural and SQL helpers:
+
+    def colabbrs(self, key: KeySpec) -> typing.Tuple[str, ...]:
+        return tuple(self.colabbr(part) for part in key_parts(key))
+
+    def key_sql(self, key: KeySpec) -> str:
+        return ", ".join(self.colabbrs(key))
+
+It would also be useful for colabbr() to raise a clear TypeError when passed a
+sequence, directing callers to colabbrs(). That is better than the current
+indirect AttributeError from calling startswith() on a list or tuple.
+
+Normalize pk in GraphReduceNode.__init__ while preserving scalar compatibility:
+
+  * A scalar input remains a string.
+  * A one-element sequence can normalize to a string.
+  * A multi-column input becomes an immutable tuple.
+
+The date_key remains scalar; it represents a timestamp column rather than an
+entity identity.
+
+
+Reduction behavior
+------------------
+
+Every reduction path must group by all key components:
+
+    reduce_cols = list(self.colabbrs(reduce_key))
+
+    # Pandas and Dask
+    df.groupby(reduce_cols)
+
+    # Spark
+    df.groupBy(*reduce_cols)
+
+    # SQL
+    sqlop(
+        optype=SQLOpType.agg,
+        opval=self.key_sql(reduce_key),
+    )
+
+SQLNode.build_query() already repeats an aggregation expression in SELECT and
+GROUP BY. A comma-separated key produced by key_sql() therefore fits the
+current query builder without restructuring it.
+
+The following node paths need to use the plural helpers:
+
+  * pandas_auto_features()
+  * dask_auto_features()
+  * spark_auto_features()
+  * sql_auto_features()
+  * all automatic label implementations
+  * default_label()
+  * default_reduce()
+  * backend-specific automatic feature and label implementations
+
+Additional node details:
+
+  * is_ts_data() should group by all reduction columns and count rows rather
+    than count self.pk. Counting rows avoids ambiguity when pk is composite.
+  * Identifier exclusion should compare a column against the set of resolved
+    reduction columns, rather than use col == reduce_key.
+  * A non-reduced default label should retain every primary-key column.
+  * SQL context features should exclude every component of a composite pk.
+  * Time-window event counts should count rows rather than assume pk is one
+    physical column.
+
+Custom Pandas nodes would use this pattern:
+
+    def do_reduce(self, reduce_key):
+        return (
+            self.prep_for_features()
+            .groupby(list(self.colabbrs(reduce_key)))
+            .agg(...)
+            .reset_index()
+        )
+
+Custom SQL nodes would use:
+
+    def do_reduce(self, reduce_key):
+        return [
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval="count(*) as item_count",
+            ),
+            sqlop(
+                optype=SQLOpType.agg,
+                opval=self.key_sql(reduce_key),
+            ),
+        ]
+
+
+Changes in graphreduce/graph_reduce.py
+-------------------------------------
+
+At add_entity_edge(), normalize and validate both sides:
+
+    parent_parts = key_parts(parent_key, "parent_key")
+    relation_parts = key_parts(relation_key, "relation_key")
+
+    if len(parent_parts) != len(relation_parts):
+        raise ValueError(
+            "parent_key and relation_key must have the same number "
+            "of columns"
+        )
+
+Preserve strings for scalar edge metadata and store composite keys as tuples.
+This keeps existing custom do_reduce(reduce_key) implementations working for
+all existing scalar-key graphs.
+
+Column existence often cannot be checked in add_entity_edge(), because SQL
+nodes and lazy dataframes may not have loaded their schemas yet. Validate key
+shape and arity when adding the edge, then validate resolved column existence
+at join time. Missing-column errors should list all missing key components in
+one message.
+
+Extend _resolve_prefixed_column() with a plural helper:
+
+    def _resolve_prefixed_columns(self, node, key, columns=None):
+        return tuple(
+            self._resolve_prefixed_column(node, part, columns)
+            for part in key_parts(key)
+        )
+
+It may also be helpful to add a node helper that removes its own prefix from a
+column name. Date-node propagation sometimes needs to move a logical key from
+one node prefix to another.
+
+
+Join behavior by backend
+------------------------
+
+Resolve both ordered key lists before selecting backend-specific behavior:
+
+    left_cols = list(
+        self._resolve_prefixed_columns(parent_node, parent_key)
+    )
+    right_cols = list(
+        self._resolve_prefixed_columns(relation_node, relation_key)
+    )
+
+Pandas and Dask:
+
+    joined = parent_df.merge(
+        relation_df,
+        left_on=left_cols,
+        right_on=right_cols,
+        suffixes=("", "_dupe"),
+        how="left",
+    )
+
+Spark:
+
+    conditions = [
+        parent_df[left] == relation_df[right]
+        for left, right in zip(left_cols, right_cols)
+    ]
+    condition = functools.reduce(operator.and_, conditions)
+    joined = parent_df.join(relation_df, on=condition, how="left")
+
+The existing Spark duplicate-key logic should operate on every relation key,
+renaming each colliding relation column in a local dataframe before building
+the compound condition. Avoid mutating relation_node.df during this process.
+
+SQL:
+
+    on_clause = " AND ".join(
+        f"parent.{left} = relation.{right}"
+        for left, right in zip(left_cols, right_cols)
+    )
+
+    JOIN_SQL = f"""
+        SELECT parent.*, relation.*
+        FROM {parent_table} parent
+        LEFT JOIN {relation_table} relation
+          ON {on_clause}
+    """
+
+Daft should receive its supported list form of left_on and right_on. Its exact
+calling convention should be confirmed against the dependency version used by
+the project, but it should still receive native columns instead of a synthetic
+combined key.
+
+These changes apply to:
+
+  * join_any()
+  * join()
+  * join_sql()
+
+
+Transformation and propagation paths
+------------------------------------
+
+Supporting composite joins alone is insufficient. The following internal
+paths can otherwise silently collapse distinct composite entities.
+
+Automatic feature merge
+~~~~~~~~~~~~~~~~~~~~~~~
+
+When GraphReduce merges a custom reduction dataframe with an automatic feature
+dataframe, it must join on every resolved relation reduction key:
+
+    relation_keys = list(
+        relation_node.colabbrs(edge_data["relation_key"])
+    )
+
+    join_df = join_df.merge(
+        child_df,
+        on=relation_keys,
+        suffixes=("", "_dupe"),
+    )
+
+Spark can join these two dataframes by the list of common key column names, or
+by an explicit compound equality predicate.
+
+Date-node propagation
+~~~~~~~~~~~~~~~~~~~~~
+
+For a composite parent key, the derived date-node query must select and group
+by every component:
+
+    SELECT
+        parent_tenant_id AS date_tenant_id,
+        parent_order_id AS date_order_id,
+        first(parent_cutoff) AS date_cutoff
+    FROM parent_ref
+    GROUP BY parent_tenant_id, parent_order_id
+
+The derived date node should have the same logical composite pk. Joining that
+derived node into the child then maps every relation foreign-key component to
+its corresponding derived date-node key.
+
+The root date-node join must also enforce equal key arity between parent.pk and
+date_node.pk.
+
+Graph rendering
+~~~~~~~~~~~~~~~
+
+plot_graph() should render composite keys legibly, for example:
+
+    Order key: (tenant_id, order_id)
+    Item key:  (tenant_id, order_ref)
+
+
+Composite primary keys and distinct counts
+------------------------------------------
+
+The optional SQL episode feature currently performs COUNT(DISTINCT pk).
+Multi-column distinct syntax varies across SQLite, Postgres, DuckDB, Trino,
+Athena, Snowflake, Redshift, MySQL, and Databricks.
+
+Do not implement this by blindly concatenating primary-key columns. Values
+such as ("ab", "c") and ("a", "bc") can collide, delimiters can appear in the
+data, casts can lose type information, and null behavior becomes unclear.
+
+For an initial correct prototype:
+
+  * Fully support composite keys in joins, reductions, labels, and date
+    propagation.
+  * If the episode feature family requests a composite distinct-PK metric,
+    raise a clear NotImplementedError or omit only that metric with a warning.
+  * Add a dialect-specific or subquery-based composite distinct-count planner
+    in a later change.
+
+Core composite-key support does not depend on solving this optional metric.
+
+
+Null semantics
+--------------
+
+SQL and Spark do not match a null key component using normal equality. Pandas
+merge may match nulls to nulls. This discrepancy already exists for scalar
+keys.
+
+The composite-key change should either preserve current backend behavior and
+document it, or address SQL-like null semantics as a separate intentional
+change. It should not silently introduce an unrelated scalar-key behavior
+change.
+
+
+Frozen execution plans
+----------------------
+
+Execution records should type reduce_key as KeySpec rather than Optional[str].
+Tuples may become lists after JSON serialization, so apply_execution_plan()
+must accept and normalize both forms. The compiled SQL operations already
+contain their multi-column GROUP BY expressions; normalization is primarily
+needed for consistent metadata and future plan consumers.
+
+
+Minimum acceptance tests
+------------------------
+
+Use duplicate local identifiers across tenants so an accidental single-key
+implementation definitely fails:
+
+    parent rows:
+      tenant_id=1, account_id=7
+      tenant_id=2, account_id=7
+
+    child rows:
+      tenant_id=1, account_id=7, amount=10
+      tenant_id=2, account_id=7, amount=50
+
+Tests should cover:
+
+  1. Key normalization:
+       * A scalar remains compatible.
+       * Lists and tuples are accepted.
+       * Empty, duplicate, and non-string components are rejected.
+
+  2. Edge validation:
+       * Unequal parent/relation arity raises ValueError.
+       * Differently named columns map correctly by position.
+
+  3. Pandas:
+       * Reduced composite join produces one correct aggregate per tenant and
+         account.
+       * Unreduced composite join does not cross tenants.
+       * Automatic and custom feature results merge on all components.
+
+  4. SQLite:
+       * Generated GROUP BY contains both relation key columns.
+       * Generated JOIN ON contains both equality predicates.
+       * Executed results preserve composite entity grain.
+
+  5. Optional backends:
+       * Spark compound join and groupBy(*columns).
+       * Dask list-based merge and groupby.
+       * Daft native multi-column join and groupby.
+
+  6. Date-node propagation with a composite parent key.
+
+  7. Labels grouped and joined using every key component.
+
+  8. Frozen-plan round-trip, including a JSON tuple-to-list conversion.
+
+  9. Existing scalar-key tests remain unchanged and pass.
+
+
+Suggested implementation order
+------------------------------
+
+  1. Add KeySpec, key_parts(), colabbrs(), and key_sql() in node.py.
+  2. Normalize and validate edge keys in add_entity_edge().
+  3. Convert join_any(), join(), and join_sql() to resolved key lists.
+  4. Convert automatic reductions and labels to multi-column grouping.
+  5. Convert GraphReduce's intermediate feature merges.
+  6. Convert date-node propagation.
+  7. Add Pandas and SQLite tests first, then optional-backend tests.
+  8. Audit remaining scalar self.pk and reduce_key usages.
+  9. Explicitly gate or implement composite distinct-PK episode features.
+
+
+Compatibility summary
+---------------------
+
+Existing scalar usage remains valid:
+
+    pk="id"
+    parent_key="id"
+    relation_key="customer_id"
+
+New composite usage is opt-in:
+
+    pk=("tenant_id", "id")
+    parent_key=("tenant_id", "id")
+    relation_key=("tenant_id", "customer_id")
+
+The key order is meaningful and defines the mapping between the two sides of
+an edge.

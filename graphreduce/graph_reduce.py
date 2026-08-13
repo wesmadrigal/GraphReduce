@@ -4,6 +4,8 @@ from __future__ import annotations
 # std lib
 import copy
 import datetime
+import functools
+import operator
 import typing
 import uuid
 
@@ -27,7 +29,13 @@ except ImportError:  # pragma: no cover - optional dependency
     daft = None
 
 # internal
-from graphreduce.node import GraphReduceNode, DynamicNode
+from graphreduce.node import (
+    DynamicNode,
+    GraphReduceNode,
+    KeySpec,
+    key_parts,
+    normalize_key,
+)
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.storage import StorageClient
 from graphreduce.models import sqlop
@@ -329,7 +337,7 @@ class GraphReduce(nx.DiGraph):
         sql: typing.Optional[str] = None,
         auto_generated: bool = False,
         edge: typing.Optional[typing.Tuple[GraphReduceNode, GraphReduceNode]] = None,
-        reduce_key: typing.Optional[str] = None,
+        reduce_key: typing.Optional[KeySpec] = None,
     ) -> typing.Optional[typing.Dict[str, typing.Any]]:
         """
         Record structured sqlop execution metadata while preserving the raw sqlops.
@@ -577,6 +585,12 @@ class GraphReduce(nx.DiGraph):
                 record["method_name"],
                 tuple(record["edge"]) if record.get("edge") else None,
             )
+            planned_reduce_key = record.get("reduce_key")
+            if planned_reduce_key is not None:
+                planned_reduce_key = normalize_key(
+                    planned_reduce_key,
+                    name="reduce_key",
+                )
             replay_queues.setdefault(queue_key, []).append(
                 {
                     "node_prefix": record["node_prefix"],
@@ -585,7 +599,7 @@ class GraphReduce(nx.DiGraph):
                     "method_ops": rebound_method_ops,
                     "date_filter_ops": rebound_date_filter_ops,
                     "auto_generated": record["auto_generated"],
-                    "reduce_key": record.get("reduce_key"),
+                    "reduce_key": planned_reduce_key,
                     "edge": tuple(record["edge"]) if record.get("edge") else None,
                 }
             )
@@ -643,8 +657,8 @@ class GraphReduce(nx.DiGraph):
         self,
         parent_node: GraphReduceNode,
         relation_node: GraphReduceNode,
-        parent_key: str,
-        relation_key: str,
+        parent_key: KeySpec,
+        relation_key: KeySpec,
         # need to enforce this better
         relation_type: str = "parent_child",
         reduce: bool = True,
@@ -661,6 +675,17 @@ class GraphReduce(nx.DiGraph):
 
         if reduce and reduce_after_join:
             raise Exception("only one can be true: `reduce` or `reduce_after_join`")
+
+        parent_key = normalize_key(parent_key, name="parent_key")
+        relation_key = normalize_key(relation_key, name="relation_key")
+        parent_key_parts = key_parts(parent_key, name="parent_key")
+        relation_key_parts = key_parts(relation_key, name="relation_key")
+        if len(parent_key_parts) != len(relation_key_parts):
+            raise ValueError(
+                "parent_key and relation_key must contain the same number of "
+                f"columns; got {len(parent_key_parts)} and "
+                f"{len(relation_key_parts)}"
+            )
         if not self.has_edge(parent_node, relation_node):
             self.add_edge(
                 parent_node,
@@ -727,13 +752,79 @@ class GraphReduce(nx.DiGraph):
 
         return prefixed
 
+    def _resolve_prefixed_columns(
+        self,
+        node: GraphReduceNode,
+        key: KeySpec,
+        columns: typing.Optional[typing.Iterable[typing.Any]] = None,
+    ) -> typing.Tuple[str, ...]:
+        """Resolve every ordered component of a scalar or composite key."""
+
+        resolved = tuple(
+            self._resolve_prefixed_column(node, part, columns)
+            for part in key_parts(key)
+        )
+        if columns is not None:
+            available = {str(column).lower() for column in columns}
+            missing = [column for column in resolved if column.lower() not in available]
+            if missing:
+                raise KeyError(
+                    f"missing key columns on {node}: {missing}; "
+                    f"available columns: {list(columns)}"
+                )
+        return resolved
+
+    @staticmethod
+    def _frame_columns(frame: typing.Any) -> typing.Optional[typing.Iterable[str]]:
+        """Return backend dataframe column names when available."""
+
+        if hasattr(frame, "columns"):
+            return frame.columns
+        if hasattr(frame, "column_names"):
+            return frame.column_names
+        return None
+
+    def _spark_join_frames(
+        self,
+        left_df: typing.Any,
+        right_df: typing.Any,
+        left_columns: typing.Sequence[str],
+        right_columns: typing.Sequence[str],
+        how: str = "left",
+    ) -> typing.Any:
+        """Join Spark frames on ordered keys, isolating colliding right keys."""
+
+        resolved_right_columns = list(right_columns)
+        renamed_right_columns = []
+        for ix, right_column in enumerate(resolved_right_columns):
+            if right_column not in left_df.columns:
+                continue
+            candidate = f"{right_column}_dupe"
+            while candidate in left_df.columns or candidate in right_df.columns:
+                candidate = f"{candidate}_dupe"
+            right_df = right_df.withColumnRenamed(right_column, candidate)
+            resolved_right_columns[ix] = candidate
+            renamed_right_columns.append(candidate)
+
+        conditions = [
+            left_df[left_column] == right_df[right_column]
+            for left_column, right_column in zip(
+                left_columns, resolved_right_columns
+            )
+        ]
+        condition = functools.reduce(operator.and_, conditions)
+        joined = left_df.join(right_df, on=condition, how=how)
+        for renamed_column in renamed_right_columns:
+            joined = joined.drop(F.col(renamed_column))
+        return joined
+
     def join_any(
         self,
         to_node: GraphReduceNode,
         from_node: GraphReduceNode,
         how: str = "left",
-        to_node_key: str = None,
-        from_node_key: str = None,
+        to_node_key: typing.Optional[KeySpec] = None,
+        from_node_key: typing.Optional[KeySpec] = None,
         to_node_df=None,
         from_node_df=None,
     ):
@@ -741,9 +832,9 @@ class GraphReduce(nx.DiGraph):
         Join the relations.
         """
 
-        if to_node_key and from_node_key:
-            pass
-        else:
+        if (to_node_key is None) != (from_node_key is None):
+            raise ValueError("to_node_key and from_node_key must be provided together")
+        if to_node_key is None:
             meta = self.get_edge_data(to_node, from_node)
             if meta:
                 meta = meta["keys"]
@@ -759,13 +850,33 @@ class GraphReduce(nx.DiGraph):
                 else:
                     raise Exception(f"no edge metadata for {to_node} and {from_node}")
 
+        to_frame = to_node.df if to_node_df is None else to_node_df
+        from_frame = from_node.df if from_node_df is None else from_node_df
+        if len(key_parts(to_node_key, name="to_node_key")) != len(
+            key_parts(from_node_key, name="from_node_key")
+        ):
+            raise ValueError(
+                "to_node_key and from_node_key must contain the same number "
+                "of columns"
+            )
+        to_columns = self._resolve_prefixed_columns(
+            to_node,
+            to_node_key,
+            self._frame_columns(to_frame),
+        )
+        from_columns = self._resolve_prefixed_columns(
+            from_node,
+            from_node_key,
+            self._frame_columns(from_frame),
+        )
+
         if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
-            joined = to_node.df.merge(
-                from_node.df,
-                left_on=to_node.df[f"{to_node.prefix}_{to_node_key}"],
-                right_on=from_node.df[f"{from_node.prefix}_{from_node_key}"],
+            joined = to_frame.merge(
+                from_frame,
+                left_on=list(to_columns),
+                right_on=list(from_columns),
                 suffixes=("", "_dupe"),
-                how="left",
+                how=how,
             )
             self._mark_merged(to_node, from_node)
             if "key_0" in joined.columns:
@@ -775,31 +886,32 @@ class GraphReduce(nx.DiGraph):
                 return joined
         elif self.compute_layer == ComputeLayerEnum.daft:
             _require_backend(daft, "daft", "daft")
-            joined = to_node.df.join(
-                from_node.df,
-                left_on=to_node.df[f"{to_node.prefix}_{to_node_key}"],
-                right_on=from_node.df[f"{from_node.prefix}_{from_node_key}"],
+            joined = to_frame.join(
+                from_frame,
+                left_on=list(to_columns),
+                right_on=list(from_columns),
                 suffix="_dupe",
-                how="left",
+                how=how,
             )
             self._mark_merged(to_node, from_node)
             return joined
         elif self.compute_layer == ComputeLayerEnum.spark:
             _require_backend(pyspark, "spark", "spark")
-            if isinstance(to_node.df, SPARK_DF_TYPES) and isinstance(
-                from_node.df, SPARK_DF_TYPES
+            if isinstance(to_frame, SPARK_DF_TYPES) and isinstance(
+                from_frame, SPARK_DF_TYPES
             ):
-                joined = to_node.df.join(
-                    from_node.df,
-                    on=to_node.df[f"{to_node.prefix}_{to_node_key}"]
-                    == from_node.df[f"{from_node.prefix}_{from_node_key}"],
-                    how="left",
+                joined = self._spark_join_frames(
+                    to_frame,
+                    from_frame,
+                    to_columns,
+                    from_columns,
+                    how=how,
                 )
                 self._mark_merged(to_node, from_node)
                 return joined
             else:
                 raise Exception(
-                    f"Cannot use spark on dataframe of type: {type(to_node.df)}"
+                    f"Cannot use spark on dataframe of type: {type(to_frame)}"
                 )
         # TODO: make a `DialectEnum.sql` catchall for this.
         elif self.compute_layer in [
@@ -828,21 +940,38 @@ class GraphReduce(nx.DiGraph):
         """
 
         meta = self.get_edge_data(parent_node, relation_node)
+        reverse_edge = False
 
         if not meta:
             meta = self.get_edge_data(relation_node, parent_node)
-
-            raise Exception(f"no edge metadata for {parent_node} and {relation_node}")
+            if not meta:
+                raise Exception(
+                    f"no edge metadata for {parent_node} and {relation_node}"
+                )
+            reverse_edge = True
 
         if meta.get("keys"):
             meta = meta["keys"]
 
-        if meta and meta["relation_type"] == "parent_child":
-            parent_pk = meta["parent_key"]
-            relation_fk = meta["relation_key"]
-        elif meta and meta["relation_type"] == "peer":
-            parent_pk = meta["parent_key"]
-            relation_fk = meta["relation_key"]
+        if meta and meta["relation_type"] in ["parent_child", "peer"]:
+            if reverse_edge:
+                parent_pk = meta["relation_key"]
+                relation_fk = meta["parent_key"]
+            else:
+                parent_pk = meta["parent_key"]
+                relation_fk = meta["relation_key"]
+
+        relation_frame = relation_node.df if relation_df is None else relation_df
+        parent_columns = self._resolve_prefixed_columns(
+            parent_node,
+            parent_pk,
+            self._frame_columns(parent_node.df),
+        )
+        relation_columns = self._resolve_prefixed_columns(
+            relation_node,
+            relation_fk,
+            self._frame_columns(relation_frame),
+        )
 
         if self.compute_layer in [ComputeLayerEnum.pandas, ComputeLayerEnum.dask]:
             if isinstance(relation_df, pd.DataFrame) or isinstance(
@@ -850,16 +979,16 @@ class GraphReduce(nx.DiGraph):
             ):
                 joined = parent_node.df.merge(
                     relation_df,
-                    left_on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"],
-                    right_on=relation_df[f"{relation_node.prefix}_{relation_fk}"],
+                    left_on=list(parent_columns),
+                    right_on=list(relation_columns),
                     suffixes=("", "_dupe"),
                     how="left",
                 )
             else:
                 joined = parent_node.df.merge(
                     relation_node.df,
-                    left_on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"],
-                    right_on=relation_node.df[f"{relation_node.prefix}_{relation_fk}"],
+                    left_on=list(parent_columns),
+                    right_on=list(relation_columns),
                     suffixes=("", "_dupe"),
                     how="left",
                 )
@@ -874,16 +1003,16 @@ class GraphReduce(nx.DiGraph):
             if isinstance(relation_df, DAFT_DF_TYPES):
                 joined = parent_node.df.join(
                     relation_df,
-                    left_on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"],
-                    right_on=relation_df[f"{relation_node.prefix}_{relation_fk}"],
+                    left_on=list(parent_columns),
+                    right_on=list(relation_columns),
                     suffix="_dupe",
                     how="left",
                 )
             else:
                 joined = parent_node.df.join(
                     relation_node.df,
-                    left_on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"],
-                    right_on=relation_node.df[f"{relation_node.prefix}_{relation_fk}"],
+                    left_on=list(parent_columns),
+                    right_on=list(relation_columns),
                     suffix="_dupe",
                     how="left",
                 )
@@ -895,45 +1024,25 @@ class GraphReduce(nx.DiGraph):
             if isinstance(relation_df, valid_dataframe_types) and isinstance(
                 parent_node.df, valid_dataframe_types
             ):
-                has_dupe = False
-                join_key = f"{relation_node.prefix}_{relation_fk}"
-                if join_key in parent_node.df.columns:
-                    new = f"{join_key}_dupe"
-                    relation_df = relation_df.withColumnRenamed(join_key, new)
-                    join_key = new
-                    has_dupe = True
-
-                joined = parent_node.df.join(
+                joined = self._spark_join_frames(
+                    parent_node.df,
                     relation_df,
-                    on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"]
-                    == relation_df[join_key],
+                    parent_columns,
+                    relation_columns,
                     how="left",
                 )
-                if has_dupe:
-                    joined = joined.drop(F.col(join_key))
-
                 self._mark_merged(parent_node, relation_node)
                 return joined
             elif isinstance(parent_node.df, valid_dataframe_types) and isinstance(
                 relation_node.df, valid_dataframe_types
             ):
-                has_dupe = False
-                join_key = f"{relation_node.prefix}_{relation_fk}"
-                if join_key in parent_node.df.columns:
-                    has_dupe = True
-                    new = f"{join_key}_dupe"
-                    relation_node.df = relation_node.df.withColumnRenamed(join_key, new)
-                    join_key = new
-
-                joined = parent_node.df.join(
+                joined = self._spark_join_frames(
+                    parent_node.df,
                     relation_node.df,
-                    on=parent_node.df[f"{parent_node.prefix}_{parent_pk}"]
-                    == relation_node.df[join_key],
+                    parent_columns,
+                    relation_columns,
                     how="left",
                 )
-                if has_dupe:
-                    joined = joined.drop(F.col(join_key))
-
                 self._mark_merged(parent_node, relation_node)
                 return joined
             else:
@@ -955,30 +1064,48 @@ class GraphReduce(nx.DiGraph):
         parent_node: GraphReduceNode,
         relation_node: GraphReduceNode,
         # Optional keys.
-        parent_node_key: str = None,
-        relation_node_key: str = None,
+        parent_node_key: typing.Optional[KeySpec] = None,
+        relation_node_key: typing.Optional[KeySpec] = None,
     ) -> str:
         """
         Joins two graph reduce nodes of SQL dialect.
         """
 
         meta = self.get_edge_data(parent_node, relation_node)
+        reverse_edge = False
 
-        if not meta and not parent_node_key and not relation_node_key:
+        if (parent_node_key is None) != (relation_node_key is None):
+            raise ValueError(
+                "parent_node_key and relation_node_key must be provided together"
+            )
+        if not meta and parent_node_key is None:
             meta = self.get_edge_data(relation_node, parent_node)
-            raise Exception(f"no edge metadata for {parent_node} and {relation_node}")
+            if not meta:
+                raise Exception(
+                    f"no edge metadata for {parent_node} and {relation_node}"
+                )
+            reverse_edge = True
         if meta and meta.get("keys"):
             meta = meta["keys"]
 
-        if meta and meta["relation_type"] == "parent_child":
-            parent_pk = meta["parent_key"]
-            relation_fk = meta["relation_key"]
-        elif meta and meta["relation_type"] == "peer":
-            parent_pk = meta["parent_key"]
-            relation_fk = meta["relation_key"]
-        elif not meta and parent_node_key and relation_node_key:
+        if meta and meta["relation_type"] in ["parent_child", "peer"]:
+            if reverse_edge:
+                parent_pk = meta["relation_key"]
+                relation_fk = meta["parent_key"]
+            else:
+                parent_pk = meta["parent_key"]
+                relation_fk = meta["relation_key"]
+        elif not meta and parent_node_key is not None:
             parent_pk = parent_node_key
             relation_fk = relation_node_key
+
+        if len(key_parts(parent_pk, name="parent_key")) != len(
+            key_parts(relation_fk, name="relation_key")
+        ):
+            raise ValueError(
+                "parent and relation join keys must contain the same number "
+                "of columns"
+            )
 
         parent_table = (
             parent_node._cur_data_ref
@@ -997,11 +1124,17 @@ class GraphReduce(nx.DiGraph):
         relation_samp = relation_node.get_sample()
         logger.info(f"parent columns: {parent_samp.columns}")
         logger.info(f"relation columns: {relation_samp.columns}")
-        parent_pk_col = self._resolve_prefixed_column(
+        parent_pk_cols = self._resolve_prefixed_columns(
             parent_node, parent_pk, parent_samp.columns
         )
-        relation_fk_col = self._resolve_prefixed_column(
+        relation_fk_cols = self._resolve_prefixed_columns(
             relation_node, relation_fk, relation_samp.columns
+        )
+        join_predicate = " AND ".join(
+            f"parent.{parent_col} = relation.{relation_col}"
+            for parent_col, relation_col in zip(
+                parent_pk_cols, relation_fk_cols
+            )
         )
         parent_cols_lower = {_x.lower() for _x in parent_samp.columns}
         duplicate_relation_cols = [
@@ -1023,14 +1156,14 @@ class GraphReduce(nx.DiGraph):
                 SELECT parent.*{relation_select}
                 FROM {parent_table} parent
                 LEFT JOIN {relation_table} relation
-                ON parent.{parent_pk_col} = relation.{relation_fk_col}
+                ON {join_predicate}
             """
         else:
             JOIN_SQL = f"""
                 SELECT parent.*, relation.*
                 FROM {parent_table} parent
                 LEFT JOIN {relation_table} relation
-                ON parent.{parent_pk_col} = relation.{relation_fk_col}
+                ON {join_predicate}
             """
         # Always overwrite the join reference.
         parent_node.create_ref(
@@ -1365,8 +1498,19 @@ class GraphReduce(nx.DiGraph):
                     else:
                         propagated_date_col = f"{date_prefix}{date_key}"
                         propagated_date_key = date_key
-                    propagated_parent_key_col = self._resolve_prefixed_column(
+                    parent_pk_parts = key_parts(parent_pk, name="parent_key")
+                    propagated_parent_key_cols = self._resolve_prefixed_columns(
                         my_parent, parent_pk
+                    )
+                    propagated_key_select = ",\n                                ".join(
+                        f"{parent_col} as "
+                        f"{parent_date_node.prefix}_{parent_key_part}"
+                        for parent_col, parent_key_part in zip(
+                            propagated_parent_key_cols, parent_pk_parts
+                        )
+                    )
+                    propagated_key_group = ", ".join(
+                        propagated_parent_key_cols
                     )
                     # Grab the date data from the parent and merge
                     # it.
@@ -1380,10 +1524,10 @@ class GraphReduce(nx.DiGraph):
                         do_data_ops=sqlop(
                             optype=SQLOpType.custom,
                             opval=f"""
-                                select {propagated_parent_key_col} as {parent_date_node.prefix}_{parent_pk},
+                                select {propagated_key_select},
                                 {date_agg_func}({propagated_date_col}) as {propagated_date_col}
                                 from {my_parent._cur_data_ref}
-                                group by {propagated_parent_key_col}
+                                group by {propagated_key_group}
                                 """,
                         ),
                         client=self._sql_client,
@@ -1916,12 +2060,15 @@ class GraphReduce(nx.DiGraph):
                         ComputeLayerEnum.dask,
                         ComputeLayerEnum.daft,
                     ]:
+                        relation_reduce_columns = list(
+                            relation_node.colabbrs(edge_data["relation_key"])
+                        )
                         if isinstance(join_df, pd.DataFrame) or isinstance(
                             join_df, dd.DataFrame
                         ):
                             join_df = join_df.merge(
                                 child_df,
-                                on=relation_node.colabbr(edge_data["relation_key"]),
+                                on=relation_reduce_columns,
                                 suffixes=("", "_dupe"),
                             )
                         else:
@@ -1934,12 +2081,11 @@ class GraphReduce(nx.DiGraph):
                         if isinstance(join_df, SPARK_DF_TYPES):
                             join_df = join_df.join(
                                 child_df,
-                                on=join_df[
-                                    relation_node.colabbr(edge_data["relation_key"])
-                                ]
-                                == child_df[
-                                    relation_node.colabbr(edge_data["relation_key"])
-                                ],
+                                on=list(
+                                    relation_node.colabbrs(
+                                        edge_data["relation_key"]
+                                    )
+                                ),
                                 how="left",
                             )
                         else:

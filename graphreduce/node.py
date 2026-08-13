@@ -103,6 +103,34 @@ FEATURE_FAMILY_NAMES = {
     "context",
 }
 
+KeySpec = typing.Union[str, typing.Sequence[str]]
+
+
+def key_parts(key: KeySpec, name: str = "key") -> typing.Tuple[str, ...]:
+    """Return an ordered, validated tuple of columns for a key specification."""
+
+    if isinstance(key, str):
+        parts = (key,)
+    elif isinstance(key, (list, tuple)):
+        parts = tuple(key)
+    else:
+        raise TypeError(f"{name} must be a string, list, or tuple")
+
+    if not parts:
+        raise ValueError(f"{name} must contain at least one column")
+    if any(not isinstance(part, str) or not part for part in parts):
+        raise ValueError(f"{name} must contain non-empty string column names")
+    if len(set(parts)) != len(parts):
+        raise ValueError(f"{name} contains duplicate columns: {parts}")
+    return parts
+
+
+def normalize_key(key: KeySpec, name: str = "key") -> KeySpec:
+    """Canonicalize one-column keys to strings and composite keys to tuples."""
+
+    parts = key_parts(key, name=name)
+    return parts[0] if len(parts) == 1 else parts
+
 def _sample_is_numeric_object_series(series: pd.Series) -> bool:
     """
     Pandas represents Decimal-backed SQL numerics as object dtype. Treat those
@@ -200,7 +228,7 @@ def _sql_context_annotation_ops(
     table_df_sample: pd.DataFrame,
     stypes: typing.Dict[str, typing.Any],
     context_keys: typing.Sequence[str],
-    pk: typing.Optional[str],
+    pk: typing.Optional[KeySpec],
     max_numeric_columns: int,
     column_prefix: str = "",
 ) -> typing.List[sqlop]:
@@ -228,18 +256,28 @@ def _sql_context_annotation_ops(
         matches = [column for column in columns if column.lower().endswith(suffix)]
         return matches[0] if len(matches) == 1 else None
 
-    pk_alias = resolve_column(pk) if pk else None
+    pk_aliases = {
+        alias
+        for alias in (
+            resolve_column(pk_part) for pk_part in key_parts(pk, name="pk")
+        )
+        if alias is not None
+    } if pk else set()
     context_columns = []
     for context_key in context_keys:
         context_column = resolve_column(context_key)
-        if context_column and context_column != pk_alias and context_column not in context_columns:
+        if (
+            context_column
+            and context_column not in pk_aliases
+            and context_column not in context_columns
+        ):
             context_columns.append(context_column)
     if not context_columns:
         return []
 
     numeric_columns = []
     for col, stype in stypes.items():
-        if col in context_columns or col == pk_alias:
+        if col in context_columns or col in pk_aliases:
             continue
         if _column_name_looks_like_identifier(col.rsplit("_", 1)[-1]):
             continue
@@ -724,7 +762,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
     fpath: str
     fmt: str
-    pk: str
+    pk: KeySpec
     prefix: str
     date_key: str
     compute_layer: ComputeLayerEnum
@@ -747,7 +785,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         fpath: str = "",
         # If is SQL dialect "sql" is fine here.
         fmt: str = "",
-        pk: str = None,
+        pk: typing.Optional[KeySpec] = None,
         prefix: str = None,
         date_key: str = None,
         compute_layer: ComputeLayerEnum = None,
@@ -795,8 +833,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         Constructor
         """
         # For when this is already set on the class definition.
-        if not hasattr(self, "pk"):
-            self.pk = pk
+        configured_pk = self.pk if hasattr(self, "pk") else pk
+        self.pk = (
+            normalize_key(configured_pk, name="pk")
+            if configured_pk is not None
+            else None
+        )
         # For when this is already set on the class definition.
         if not hasattr(self, "prefix"):
             self.prefix = prefix
@@ -901,26 +943,25 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
     def is_ts_data(
         self,
-        reduce_key: str = None,
+        reduce_key: typing.Optional[KeySpec] = None,
     ) -> bool:
         """
         Determines if the data is timeseries.
         """
         if self.date_key:
+            reduce_columns = self.colabbrs(reduce_key)
             if (
                 self.compute_layer == ComputeLayerEnum.pandas
                 or self.compute_layer == ComputeLayerEnum.dask
             ):
-                grouped = self.df.groupby(self.colabbr(reduce_key)).agg(
-                    {self.colabbr(self.pk): "count"}
-                )
+                grouped = self.df.groupby(list(reduce_columns)).size()
                 if len(self.df) and len(grouped) / len(self.df) < 0.9:
                     return True
             elif self.compute_layer == ComputeLayerEnum.spark:
                 _require_backend(pyspark, "spark", "spark")
                 grouped = (
-                    self.df.groupBy(self.colabbr(reduce_key))
-                    .agg(F.count(self.colabbr(self.pk)))
+                    self.df.groupBy(*reduce_columns)
+                    .agg(F.count(F.lit(1)))
                     .count()
                 )
                 n = self.df.count()
@@ -937,12 +978,13 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 ComputeLayerEnum.duckdb,
             ]:
                 # run a group by and get the value.
+                reduce_key_sql = ", ".join(reduce_columns)
                 grp_qry = f"""
                 select count(*) as grouped_rows
                 from (
-                    select {self.prefix}_{reduce_key}, count({self.prefix}_{self.pk})
+                    select {reduce_key_sql}, count(*)
                     FROM {self._cur_data_ref}
-                    group by {self.prefix}_{reduce_key}
+                    group by {reduce_key_sql}
                 ) t
                 """
                 row_qry = f"""
@@ -958,9 +1000,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     return True
             elif self.compute_layer == ComputeLayerEnum.daft:
                 _require_backend(daft, "daft", "daft")
+                count_column = self.colabbrs(self.pk)[0]
                 grouped = (
-                    self.df.groupby(self.colabbr(reduce_key))
-                    .agg(self.df[self.colabbr(self.pk)].count())
+                    self.df.groupby(*reduce_columns)
+                    .agg(self.df[count_column].count())
                     .count_rows()
                 )
                 n = self.df.count_rows()
@@ -1122,7 +1165,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         """
         pass
 
-    def do_post_join_reduce(self, reduce_key: str):
+    def do_post_join_reduce(self, reduce_key: KeySpec):
         """
         Implementation for reduce operations
         after a join.
@@ -1131,7 +1174,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
     def auto_features(
         self,
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
         compute_layer: ComputeLayerEnum = ComputeLayerEnum.pandas,
     ):
@@ -1175,7 +1218,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
     def auto_labels(
         self,
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
         compute_layer: ComputeLayerEnum = ComputeLayerEnum.pandas,
     ):
@@ -1204,7 +1247,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             )
 
     def pandas_auto_features(
-        self, reduce_key: str, type_func_map: dict = {}
+        self, reduce_key: KeySpec, type_func_map: dict = {}
     ) -> pd.DataFrame:
         """
         Pandas implementation of dynamic propagation of features.
@@ -1214,6 +1257,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         definitions.
         """
         agg_funcs = {}
+        reduce_columns = self.colabbrs(reduce_key)
+        reduce_column_names = set(reduce_columns) | set(key_parts(reduce_key))
 
         ts_data = self.is_ts_data(reduce_key)
         if ts_data:
@@ -1222,7 +1267,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             # First sort the data by dates.
             self.df = self.df.sort_values(self.colabbr(self.date_key), ascending=True)
             self.df[f"prev_{self.colabbr(self.date_key)}"] = self.df.groupby(
-                self.colabbr(reduce_key)
+                list(reduce_columns)
             )[self.colabbr(self.date_key)].shift(1)
             # Get the time between the two different records.
             self.df[self.colabbr("time_between_records")] = self.df.apply(
@@ -1237,11 +1282,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self._stypes = infer_df_stype(self.df.sample(min(1000, len(self.df))))
         for col, stype in self._stypes.items():
             _type = str(stype)
-            if self._is_identifier(col) and col != reduce_key:
+            if col in reduce_column_names:
+                continue
+            if self._is_identifier(col):
                 # We only perform counts for identifiers.
                 agg_funcs[f"{col}_count"] = pd.NamedAgg(column=col, aggfunc="count")
-            elif self._is_identifier(col) and col == reduce_key:
-                continue
             elif type_func_map.get(_type):
                 for func in type_func_map[_type]:
                     if (
@@ -1261,7 +1306,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
         grouped = (
             self.prep_for_features()
-            .groupby(self.colabbr(reduce_key))
+            .groupby(list(reduce_columns))
             .agg(**agg_funcs)
             .reset_index()
         )
@@ -1309,25 +1354,20 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     & (feat_prepped[self.colabbr("time_since_cut")] <= d)
                 ]
                 days_group = (
-                    sub.groupby(self.colabbr(reduce_key))
-                    .agg(
-                        **{
-                            self.colabbr(f"{d}d_num_events"): pd.NamedAgg(
-                                aggfunc="count", column=self.colabbr(self.pk)
-                            )
-                        }
-                    )
+                    sub.groupby(list(reduce_columns))
+                    .size()
+                    .rename(self.colabbr(f"{d}d_num_events"))
                     .reset_index()
                 )
                 # join this back to the main dataset.
                 grouped = grouped.merge(
-                    days_group, on=self.colabbr(reduce_key), how="left"
+                    days_group, on=list(reduce_columns), how="left"
                 )
             logger.info(f"merged all ts groupings to {self}")
         return grouped
 
     def daft_auto_features(
-        self, reduce_key: str, type_func_map: dict = {}
+        self, reduce_key: KeySpec, type_func_map: dict = {}
     ) -> pd.DataFrame:
         """
         Daft implementation of dynamic propagation of features.
@@ -1353,7 +1393,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
     def dask_auto_features(
         self,
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
     ) -> dd.DataFrame:
         """
@@ -1364,7 +1404,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         definitions.
         """
         agg_funcs = {}
+        reduce_column_names = set(self.colabbrs(reduce_key)) | set(
+            key_parts(reduce_key)
+        )
         for col, stype in self._stypes.items():
+            if col in reduce_column_names:
+                continue
             _type = str(stype)
             if type_func_map.get(_type):
                 for func in type_func_map[_type]:
@@ -1372,14 +1417,14 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     agg_funcs[col_new] = pd.NamedAgg(column=col, aggfunc=func)
         return (
             self.prep_for_features()
-            .groupby(self.colabbr(reduce_key))
+            .groupby(list(self.colabbrs(reduce_key)))
             .agg(**agg_funcs)
             .reset_index()
         )
 
     def spark_auto_features(
         self,
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
     ) -> pyspark.sql.DataFrame:
         """
@@ -1393,27 +1438,27 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
         self._stypes = infer_df_stype(self.df.sample(0.5).limit(10).toPandas())
         agg_funcs = []
+        reduce_columns = self.colabbrs(reduce_key)
+        reduce_column_names = set(reduce_columns) | set(key_parts(reduce_key))
         ts_data = self.is_ts_data(reduce_key)
         if ts_data:
             logger.info(f"{self} is time-series data")
         for col, stype in self._stypes.items():
             _type = str(stype)
 
-            if self._is_identifier(col) and col != reduce_key:
+            if col in reduce_column_names:
+                continue
+            if self._is_identifier(col):
                 func = "count"
                 col_new = f"{col}_{func}"
                 agg_funcs.append(F.count(F.col(col)).alias(col_new))
-            elif self._is_identifier(col) and col == reduce_key:
-                continue
             elif type_func_map.get(_type):
                 for func in type_func_map[_type]:
                     if func == "nunique":
                         func = "count_distinct"
                     col_new = f"{col}_{func}"
                     agg_funcs.append(getattr(F, func)(F.col(col)).alias(col_new))
-        grouped = (
-            self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(*agg_funcs)
-        )
+        grouped = self.prep_for_features().groupby(*reduce_columns).agg(*agg_funcs)
         # If we have time-series data take the time
         # since the last event and the cut date.
         if ts_data:
@@ -1460,14 +1505,14 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     (feat_prepped[self.colabbr("time_since_cut")] >= 0)
                     & (feat_prepped[self.colabbr("time_since_cut")] <= (d * 86400))
                 )
-                days_group = sub.groupBy(self.colabbr(reduce_key)).agg(
-                    F.count(self.colabbr(self.pk)).alias(
+                days_group = sub.groupBy(*reduce_columns).agg(
+                    F.count(F.lit(1)).alias(
                         self.colabbr(f"{d}d_num_events")
                     )
                 )
                 # join this back to the main dataset.
                 grouped = grouped.join(
-                    days_group, on=self.colabbr(reduce_key), how="left"
+                    days_group, on=list(reduce_columns), how="left"
                 )
             logger.info(f"merged all ts groupings to {self}")
         if "cut_date" in grouped.columns:
@@ -1499,7 +1544,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
     def sql_auto_features(
         self,
         table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
         feature_families: typing.Optional[typing.Sequence[str]] = None,
     ) -> typing.List[sqlop]:
@@ -1560,6 +1605,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         temporal_numeric_cols: list[str] = []
         semantic_temporal_cols: list[str] = []
         generic_temporal_cols: list[str] = []
+        reduce_columns = self.colabbrs(reduce_key)
+        reduce_column_names = set(reduce_columns) | set(key_parts(reduce_key))
         # Always need to update this
         # because we never know if
         # the original columns comprise all
@@ -1572,7 +1619,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         ts_data = self.is_ts_data(reduce_key)
         if "temporal" in families and ts_data:
             for col, stype in self._stypes.items():
-                if col == reduce_key or self._is_identifier(col):
+                if col in reduce_column_names or self._is_identifier(col):
                     continue
                 if col == self.colabbr(self.date_key):
                     continue
@@ -1598,7 +1645,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         if "conditional" in families:
             for col, stype in self._stypes.items():
                 if (
-                    col == reduce_key
+                    col in reduce_column_names
                     or self._is_identifier(col)
                     or _is_collection_series(table_df_sample[col])
                 ):
@@ -1668,7 +1715,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 and _column_name_looks_like_categorical_identifier(col)
             ):
                 _type = "categorical"
-            if self._is_identifier(col) and col != reduce_key:
+            if col in reduce_column_names:
+                continue
+            if self._is_identifier(col):
                 # We only perform counts for identifiers.
                 func = "count"
                 col_new = f"{col}_{func}"
@@ -1680,9 +1729,6 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         )
                     )
                     counted = True
-            # Do nothing to the reduce_key itself.
-            elif self._is_identifier(col) and col == reduce_key:
-                continue
             elif type_func_map.get(_type) or _type in TEXT_STYPES:
                 if _is_auto_annotated_feature_col(col) and (
                     pd.api.types.is_numeric_dtype(table_df_sample[col])
@@ -2138,7 +2184,14 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     opval=f"COUNT(*) as {self.prefix}_num_episodes",
                 )
             )
-            pk_col = self.colabbr(self.pk) if self.pk else None
+            pk_columns = self.colabbrs(self.pk) if self.pk else ()
+            pk_col = pk_columns[0] if len(pk_columns) == 1 else None
+            if len(pk_columns) > 1:
+                logger.warning(
+                    "skipping composite distinct-primary-key episode features",
+                    node=str(self),
+                    pk=pk_columns,
+                )
             if pk_col and pk_col in table_df_sample.columns:
                 agg_funcs.append(
                     sqlop(
@@ -2187,7 +2240,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         if not len(agg_funcs):
             logger.info(f"No aggregations for {self}")
             return None
-        agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        agg = sqlop(optype=SQLOpType.agg, opval=self.key_sql(reduce_key))
         # Need the aggregation and time-based filtering.
         tfilt = self.prep_for_features() if self.prep_for_features() else []
 
@@ -2196,7 +2249,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
     def sql_auto_labels(
         self,
         table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
     ) -> pd.DataFrame:
         """
@@ -2219,12 +2272,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             )
                         )
         # Need the aggregation and time-based filtering.
-        agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        agg = sqlop(optype=SQLOpType.agg, opval=self.key_sql(reduce_key))
         tfilt = self.prep_for_labels() if self.prep_for_labels() else []
         return tfilt + agg_funcs + [agg]
 
     def pandas_auto_labels(
-        self, reduce_key: str, type_func_map: dict = {}
+        self, reduce_key: KeySpec, type_func_map: dict = {}
     ) -> pd.DataFrame:
         """
         Pandas implementation of auto labeling based on
@@ -2245,14 +2298,14 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         agg_funcs[col_new] = pd.NamedAgg(column=col, aggfunc=func)
         return (
             self.prep_for_labels()
-            .groupby(self.colabbr(reduce_key))
+            .groupby(list(self.colabbrs(reduce_key)))
             .agg(**agg_funcs)
             .reset_index()
         )
 
     def daft_auto_labels(
         self,
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
     ) -> pd.DataFrame:
         """
@@ -2274,7 +2327,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
     def dask_auto_labels(
         self,
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
     ) -> dd.DataFrame:
         """
@@ -2291,14 +2344,14 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         agg_funcs[col_new] = pd.NamedAgg(column=col, aggfunc=func)
         return (
             self.prep_for_labels()
-            .groupby(self.colabbr(reduce_key))
+            .groupby(list(self.colabbrs(reduce_key)))
             .agg(**agg_funcs)
             .reset_index()
         )
 
     def spark_auto_labels(
         self,
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
     ) -> pyspark.sql.DataFrame:
         """
@@ -2316,7 +2369,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             func = "count_distinct"
                         col_new = f"{col}_{func}_label"
                         agg_funcs.append(getattr(F, func)(F.col(col)).alias(col_new))
-        return self.prep_for_labels().groupby(self.colabbr(reduce_key)).agg(*agg_funcs)
+        return self.prep_for_labels().groupby(*self.colabbrs(reduce_key)).agg(
+            *agg_funcs
+        )
 
     @abc.abstractmethod
     def do_reduce(self, reduce_key):
@@ -2332,7 +2387,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
     @abc.abstractmethod
     def do_labels(
         self,
-        reduce_key: typing.Optional[str] = None,
+        reduce_key: typing.Optional[KeySpec] = None,
     ):
         """
         Generate labels
@@ -2340,10 +2395,25 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         pass
 
     def colabbr(self, col: str) -> str:
+        if not isinstance(col, str):
+            raise TypeError(
+                "colabbr() accepts one column name; use colabbrs() for a "
+                "composite key"
+            )
         prefix = f"{self.prefix}_"
         if col.startswith(prefix):
             return col
         return f"{prefix}{col}"
+
+    def colabbrs(self, key: KeySpec) -> typing.Tuple[str, ...]:
+        """Prefix every ordered component of a scalar or composite key."""
+
+        return tuple(self.colabbr(part) for part in key_parts(key))
+
+    def key_sql(self, key: KeySpec) -> str:
+        """Render a scalar or composite key for SQL SELECT/GROUP BY clauses."""
+
+        return ", ".join(self.colabbrs(key))
 
     def compute_period_minutes(
         self,
@@ -2803,7 +2873,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self,
         op: typing.Union[str, callable],
         field: str,
-        reduce_key: typing.Optional[str] = None,
+        reduce_key: typing.Optional[KeySpec] = None,
     ) -> typing.Union[
         pd.DataFrame, dd.DataFrame, pyspark.sql.dataframe.DataFrame, typing.List[sqlop]
     ]:
@@ -2822,10 +2892,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 and self.colabbr(field) in self.df.columns
             ):
                 if self.reduce:
+                    reduce_columns = list(self.colabbrs(reduce_key))
                     if callable(op):
                         return (
                             self.prep_for_labels()
-                            .groupby(self.colabbr(reduce_key))
+                            .groupby(reduce_columns)
                             .agg(
                                 **{
                                     self.colabbr(field + "_label"): pd.NamedAgg(
@@ -2839,7 +2910,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         if op == "bool":
                             grp = (
                                 self.prep_for_labels()
-                                .groupby(self.colabbr(reduce_key))
+                                .groupby(reduce_columns)
                                 .agg(
                                     **{
                                         self.colabbr(field + "_label"): pd.NamedAgg(
@@ -2855,7 +2926,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             return grp
                         return (
                             self.prep_for_labels()
-                            .groupby(self.colabbr(reduce_key))
+                            .groupby(reduce_columns)
                             .agg(
                                 **{
                                     self.colabbr(field + "_label"): pd.NamedAgg(
@@ -2877,7 +2948,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             self.colabbr(field)
                         ].apply(lambda x: getattr(x, op)())
                     return label_df[
-                        [self.colabbr(self.pk), self.colabbr(field) + "_label"]
+                        [
+                            *self.colabbrs(self.pk),
+                            self.colabbr(field) + "_label",
+                        ]
                     ]
 
             elif (
@@ -2887,7 +2961,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 if self.reduce:
                     return (
                         self.prep_for_labels()
-                        .groupBy(self.colabbr(reduce_key))
+                        .groupBy(*self.colabbrs(reduce_key))
                         .agg(
                             getattr(F, op)(F.col(self.colabbr(field))).alias(
                                 f"{self.colabbr(field)}_label"
@@ -2904,7 +2978,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     aggcol = daft.col(self.colabbr(field))
                     return (
                         self.prep_for_labels()
-                        .groupby(self.colabbr(reduce_key))
+                        .groupby(*self.colabbrs(reduce_key))
                         .agg(
                             getattr(aggcol, op)().alias(f"{self.colabbr(field)}_label")
                         )
@@ -2926,7 +3000,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 if op == "bool":
                     label_query = self.prep_for_labels() + [
                         sqlop(
-                            optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"
+                            optype=SQLOpType.agg,
+                            opval=self.key_sql(reduce_key),
                         ),
                         sqlop(
                             optype=SQLOpType.aggfunc,
@@ -2936,7 +3011,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 else:
                     label_query = self.prep_for_labels() + [
                         sqlop(
-                            optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"
+                            optype=SQLOpType.agg,
+                            opval=self.key_sql(reduce_key),
                         ),
                         sqlop(
                             optype=SQLOpType.aggfunc,
@@ -3014,10 +3090,10 @@ class DynamicNode(GraphReduceNode):
     def do_post_join_filters(self):
         pass
 
-    def do_reduce(self, reduce_key: str):
+    def do_reduce(self, reduce_key: KeySpec):
         pass
 
-    def do_labels(self, reduce_key: str):
+    def do_labels(self, reduce_key: KeySpec):
         pass
 
 
@@ -3251,7 +3327,7 @@ class SQLNode(GraphReduceNode):
         self,
         # If not set will default to
         # the primary key of the table.
-        lookup_key: str = None,
+        lookup_key: typing.Optional[KeySpec] = None,
         # If not set will default
         # to instance attr.
         date_key: str = None,
@@ -3261,9 +3337,10 @@ class SQLNode(GraphReduceNode):
         id, date_key
         1,2022-01-01.
         """
+        lookup_key = self.pk if lookup_key is None else lookup_key
         sql = f"""
         CREATE VIEW {view_name} AS
-        SELECT {self.prefix}_{self.pk}, {self.prefix}_{self.date_key}
+        SELECT {self.key_sql(lookup_key)}, {self.colabbr(self.date_key)}
         FROM {self._cur_data_ref}
         """
         pass
@@ -3618,7 +3695,7 @@ class SQLNode(GraphReduceNode):
         Example:
         return [
             sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_dupes')}"),
-            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+            sqlop(optype=SQLOpType.agg, opval=self.key_sql(reduce_key))
         ]
         """
         if self.do_reduce_ops:
@@ -3646,7 +3723,7 @@ class SQLNode(GraphReduceNode):
                 return self.do_post_join_annotate_ops
         return None
 
-    def do_labels(self, reduce_key: str) -> typing.Union[sqlop, typing.List[sqlop]]:
+    def do_labels(self, reduce_key: KeySpec) -> typing.Union[sqlop, typing.List[sqlop]]:
         if self.do_labels_ops:
             return self.do_labels_ops
         return None
@@ -3881,7 +3958,7 @@ class RedshiftNode(SQLNode):
     def _sql_auto_features(
         self,
         table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
     ) -> typing.List[sqlop]:
         """
@@ -3900,6 +3977,8 @@ class RedshiftNode(SQLNode):
         # the original columns comprise all
         # of the columns currently in the df.
         self._stypes = infer_df_stype(table_df_sample)
+        reduce_columns = self.colabbrs(reduce_key)
+        reduce_column_names = set(reduce_columns) | set(key_parts(reduce_key))
 
         # Physical types.
         ptypes = {col: str(t) for col, t in table_df_sample.dtypes.to_dict().items()}
@@ -3919,7 +3998,9 @@ class RedshiftNode(SQLNode):
                 and _column_name_looks_like_categorical_identifier(col)
             ):
                 _type = "categorical"
-            if self._is_identifier(col) and col != reduce_key:
+            if col in reduce_column_names:
+                continue
+            if self._is_identifier(col):
                 # We only perform counts for identifiers.
                 func = "count"
                 col_new = f"{col}_{func}"
@@ -3932,8 +4013,6 @@ class RedshiftNode(SQLNode):
                     )
                     counted = True
 
-            elif self._is_identifier(col) and col == reduce_key:
-                continue
             elif type_func_map.get(_type):
                 if ptypes[col] == "bool":
                     col_new = f"{col}_sum"
@@ -4044,7 +4123,7 @@ class RedshiftNode(SQLNode):
         if not len(agg_funcs):
             logger.info(f"No aggregations for {self}")
             return None
-        agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        agg = sqlop(optype=SQLOpType.agg, opval=self.key_sql(reduce_key))
         # Need the aggregation and time-based filtering.
         tfilt = self.prep_for_features() if self.prep_for_features() else []
 
@@ -4053,7 +4132,7 @@ class RedshiftNode(SQLNode):
     def sql_auto_labels(
         self,
         table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
-        reduce_key: str,
+        reduce_key: KeySpec,
         type_func_map: dict = {},
     ) -> pd.DataFrame:
         """
@@ -4078,7 +4157,7 @@ class RedshiftNode(SQLNode):
                             )
                         )
         # Need the aggregation and time-based filtering.
-        agg = sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
+        agg = sqlop(optype=SQLOpType.agg, opval=self.key_sql(reduce_key))
         tfilt = self.prep_for_labels() if self.prep_for_labels() else []
         return tfilt + agg_funcs + [agg]
 
