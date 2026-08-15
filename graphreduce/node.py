@@ -59,6 +59,11 @@ from graphreduce.common import (
 )
 from graphreduce.constants import FUNCTION_COMBOS
 from graphreduce.stypes import infer_df_stype
+from graphreduce.feature_schema import (
+    FeatureManifest,
+    NameSpec,
+    profile_feature_schema,
+)
 
 
 logger = get_logger("Node")
@@ -961,6 +966,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self._logical_types = {}
 
         self._stypes = {}
+        self.feature_manifest: typing.Optional[FeatureManifest] = None
 
         if not self.date_key:
             logger.warning(f"no `date_key` set for {self}")
@@ -1003,6 +1009,71 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         return (
             f"<GraphReduceNode: fpath={self.fpath} fmt={self.fmt} prefix={self.prefix}>"
         )
+
+    def infer_feature_manifest(
+        self,
+        table_df_sample: typing.Optional[pd.DataFrame] = None,
+        *,
+        foreign_keys: NameSpec = None,
+        target_columns: NameSpec = None,
+        excluded_columns: NameSpec = None,
+        unsafe_columns: NameSpec = None,
+        apply_columns: bool = False,
+        **profile_options: typing.Any,
+    ) -> FeatureManifest:
+        """Profile source columns and optionally apply the safe graph schema.
+
+        Profiling decisions must be fitted on a training sample.  When no
+        sample is supplied SQL nodes use their current inference sampler.
+        """
+
+        sample = (
+            table_df_sample
+            if table_df_sample is not None
+            else self.get_inference_sample()
+        )
+        sample_columns = set(sample.columns)
+
+        def resolve(names: NameSpec) -> typing.Tuple[str, ...]:
+            if names is None:
+                return ()
+            raw_names = (names,) if isinstance(names, str) else tuple(names)
+            resolved = []
+            for name in raw_names:
+                if name in sample_columns:
+                    resolved.append(name)
+                elif self.colabbr(name) in sample_columns:
+                    resolved.append(self.colabbr(name))
+                else:
+                    resolved.append(name)
+            return tuple(resolved)
+
+        manifest = profile_feature_schema(
+            sample,
+            primary_keys=resolve(key_parts(self.pk) if self.pk else ()),
+            foreign_keys=resolve(foreign_keys),
+            date_keys=resolve((self.date_key,) if self.date_key else ()),
+            target_columns=resolve(target_columns),
+            excluded_columns=resolve(excluded_columns),
+            unsafe_columns=resolve(unsafe_columns),
+            source=self.fpath,
+            **profile_options,
+        )
+        self.feature_manifest = manifest
+        if apply_columns:
+            key_parts_configured = key_parts(self.pk) if self.pk else ()
+            sample_is_prefixed = bool(key_parts_configured) and all(
+                key not in sample_columns and self.colabbr(key) in sample_columns
+                for key in key_parts_configured
+            )
+            prefix = f"{self.prefix}_"
+            self.columns = [
+                column[len(prefix):]
+                if sample_is_prefixed and column.startswith(prefix)
+                else column
+                for column in manifest.graph_columns
+            ]
+        return manifest
 
     def __str__(self):
         """

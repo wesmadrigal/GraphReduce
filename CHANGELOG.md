@@ -4,6 +4,25 @@ Notable changes to GraphReduce are documented here. The package build appends
 this file to the README shown on PyPI, and the same notes should be copied into
 the corresponding GitHub Release.
 
+## [1.10.1] - 2026-08-15
+
+### Added
+
+- Added training-sample schema profiling with typed, model-agnostic feature
+  manifests for structural, numerical, boolean, categorical, timestamp, and
+  text columns.
+- Added explicit cutoff-safety declarations for unavailable or future-derived
+  source columns.
+- Added `GraphReduceNode.infer_feature_manifest()` to profile a node and
+  optionally apply its safe source-column plan.
+
+### Changed
+
+- Exposed feature manifests and schema profiling through the top-level
+  `graphreduce` package API.
+- Documented how typed manifests compose with the existing automatic
+  categorical indicators and category-gated numeric reductions.
+
 ## [1.10.0] - 2026-08-13
 
 ### Added
