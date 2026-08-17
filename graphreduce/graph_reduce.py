@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import datetime
 import functools
+import math
 import operator
 import typing
 import uuid
@@ -628,6 +629,7 @@ class GraphReduce(nx.DiGraph):
         Hydrate the nodes in the graph with parent
         attributes in `attrs`
         """
+        compute_period_days = self.compute_period_days()
         for node in self.nodes():
             logger.info(f"hydrating attributes for {node.__class__.__name__}")
             for attr in attrs:
@@ -641,6 +643,38 @@ class GraphReduce(nx.DiGraph):
                             setattr(node, attr, getattr(self, attr))
                     elif attr == "_sql_client":
                         setattr(node, "client", getattr(self, attr))
+
+            node._is_graph_parent = node is self.parent_node
+            periods = list(getattr(node, "ts_periods", []) or [])
+            if compute_period_days > 365 and compute_period_days not in periods:
+                periods.append(compute_period_days)
+                periods.sort()
+            node.ts_periods = periods
+
+    def compute_period_days(self) -> int:
+        """Return the graph compute horizon as a whole number of days."""
+
+        days_per_unit = {
+            PeriodUnit.second: 1 / 86400,
+            PeriodUnit.minute: 1 / 1440,
+            PeriodUnit.hour: 1 / 24,
+            PeriodUnit.day: 1,
+            PeriodUnit.week: 7,
+            PeriodUnit.month: 365 / 12,
+            PeriodUnit.year: 365,
+        }
+        try:
+            days = float(self.compute_period_val) * days_per_unit[
+                self.compute_period_unit
+            ]
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(
+                "compute_period_val and compute_period_unit must define a valid "
+                "compute horizon"
+            )
+        if days <= 0:
+            raise ValueError("compute period must be greater than zero")
+        return int(math.ceil(days))
 
     def hydrate_graph_data(
         self,

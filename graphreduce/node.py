@@ -972,7 +972,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             logger.warning(f"no `date_key` set for {self}")
 
         self._catalog_client = catalog_client
-        self.ts_periods = ts_periods
+        self.ts_periods = list(ts_periods or [])
         self.type_func_map = type_func_map
         self.categorical_cardinality_threshold = categorical_cardinality_threshold
         self.categorical_top_k = categorical_top_k
@@ -3829,7 +3829,7 @@ class SQLNode(GraphReduceNode):
         table_df_sample: pd.DataFrame,
     ) -> typing.List[sqlop]:
         self._stypes = infer_df_stype(table_df_sample)
-        return _sql_auto_annotate_ops(
+        ops = _sql_auto_annotate_ops(
             table_df_sample=table_df_sample,
             stypes=self._stypes,
             cardinality_threshold=self.categorical_cardinality_threshold,
@@ -3854,6 +3854,70 @@ class SQLNode(GraphReduceNode):
             context_pk=self.pk,
             context_max_numeric_columns=self.feature_family_max_columns,
         )
+        return self._append_parent_age_annotation(ops)
+
+    def _parent_age_annotation_op(self) -> typing.Optional[sqlop]:
+        """Build the point-in-time age feature for a dated graph parent."""
+
+        if (
+            not getattr(self, "_is_graph_parent", False)
+            or not self.date_key
+            or self.cut_date is None
+        ):
+            return None
+
+        date_col = self.colabbr(self.date_key)
+        cut_date = str(self.cut_date).replace("'", "''")
+        timestamp = f"TIMESTAMP '{cut_date}'"
+
+        if self.compute_layer == ComputeLayerEnum.sqlite:
+            expression = (
+                f"CAST(julianday('{cut_date}') - julianday({date_col}) AS INTEGER)"
+            )
+        elif self.compute_layer in {
+            ComputeLayerEnum.duckdb,
+            ComputeLayerEnum.athena,
+            ComputeLayerEnum.trino,
+        }:
+            expression = f"date_diff('day', {date_col}, {timestamp})"
+        elif self.compute_layer in {
+            ComputeLayerEnum.postgres,
+            ComputeLayerEnum.redshift,
+        }:
+            expression = (
+                f"FLOOR(EXTRACT(EPOCH FROM ({timestamp} - {date_col})) / 86400)"
+            )
+        elif self.compute_layer == ComputeLayerEnum.snowflake:
+            expression = f"DATEDIFF(DAY, {date_col}, {timestamp})"
+        elif self.compute_layer == ComputeLayerEnum.mysql:
+            expression = f"TIMESTAMPDIFF(DAY, {date_col}, '{cut_date}')"
+        elif self.compute_layer == ComputeLayerEnum.databricks:
+            expression = f"datediff({timestamp}, {date_col})"
+        else:
+            raise NotImplementedError(
+                "parent age annotation is not implemented for "
+                f"{self.compute_layer}"
+            )
+
+        return sqlop(
+            optype=SQLOpType.select,
+            opval=f"{expression} as {self.prefix}__gr_parent_age_days",
+        )
+
+    def _append_parent_age_annotation(
+        self, ops: typing.Optional[typing.List[sqlop]]
+    ) -> typing.List[sqlop]:
+        """Append parent age without dropping existing annotation operations."""
+
+        result = list(ops or [])
+        age_op = self._parent_age_annotation_op()
+        if age_op is None:
+            return result
+        if not result:
+            result.append(sqlop(optype=SQLOpType.select, opval="*"))
+        if age_op not in result:
+            result.append(age_op)
+        return result
 
     def do_annotate(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         """
@@ -3861,7 +3925,7 @@ class SQLNode(GraphReduceNode):
         casting columns as different types.
         """
         if self.do_annotate_ops:
-            return self.do_annotate_ops
+            return self._append_parent_age_annotation(self.do_annotate_ops)
         semantic_requested = (
             "semantic" in self.feature_families and bool(self.annotation_expressions)
         )
@@ -3874,7 +3938,8 @@ class SQLNode(GraphReduceNode):
                 return self.sql_auto_annotate(sample)
             except Exception as exc:
                 logger.warning(f"skipped sql_auto_annotate for {self}: {exc}")
-        return None
+        parent_age_ops = self._append_parent_age_annotation([])
+        return parent_age_ops or None
 
     def do_normalize(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         return None
