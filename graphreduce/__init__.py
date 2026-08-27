@@ -5,7 +5,7 @@ from graphreduce.feature_schema import (
     profile_feature_schema,
 )
 
-__version__ = '1.10.2'
+__version__ = '1.10.3'
 
 __all__ = [
     "FeatureColumn",

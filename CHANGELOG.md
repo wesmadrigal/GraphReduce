@@ -4,6 +4,20 @@ Notable changes to GraphReduce are documented here. The package build appends
 this file to the README shown on PyPI, and the same notes should be copied into
 the corresponding GitHub Release.
 
+## [1.10.3] - 2026-08-27
+
+### Added
+
+- Added optional graph-wide SQL auto-feature configuration for feature
+  families, family budgets, time-series periods, categorical cardinality and
+  top-value limits, text features, and inferred annotation limits.
+
+### Changed
+
+- Graph-level feature settings now propagate to every node during graph
+  hydration when explicitly supplied, while omitted settings preserve each
+  node's existing configuration.
+
 ## [1.10.2] - 2026-08-17
 
 ### Added
