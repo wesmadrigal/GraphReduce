@@ -4,6 +4,18 @@ Notable changes to GraphReduce are documented here. The package build appends
 this file to the README shown on PyPI, and the same notes should be copied into
 the corresponding GitHub Release.
 
+## [1.10.2] - 2026-08-17
+
+### Added
+
+- Added an automatic point-in-time age feature for graph parent nodes that
+  define a date key.
+
+### Changed
+
+- Extended node time-series periods with the graph compute horizon, expressed
+  in whole days, whenever that horizon exceeds one year.
+
 ## [1.10.1] - 2026-08-15
 
 ### Added

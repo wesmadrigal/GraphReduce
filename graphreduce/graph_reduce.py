@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import datetime
 import functools
+import math
 import operator
 import typing
 import uuid
@@ -31,6 +32,7 @@ except ImportError:  # pragma: no cover - optional dependency
 # internal
 from graphreduce.node import (
     DynamicNode,
+    FEATURE_FAMILY_NAMES,
     GraphReduceNode,
     KeySpec,
     key_parts,
@@ -140,6 +142,17 @@ class GraphReduce(nx.DiGraph):
         date_node: typing.Optional[GraphReduceNode] = None,
         train: bool = True,
         *args,
+        # Optional graph-wide overrides for node auto-feature settings.
+        feature_families: typing.Optional[typing.Sequence[str]] = None,
+        feature_family_max_columns: typing.Optional[int] = None,
+        ts_periods: typing.Optional[typing.Sequence[int]] = None,
+        categorical_cardinality_threshold: typing.Optional[int] = None,
+        categorical_top_k: typing.Optional[int] = None,
+        auto_text_features: typing.Optional[bool] = None,
+        auto_annotate_features: typing.Optional[bool] = None,
+        auto_annotate_max_categorical_columns: typing.Optional[int] = None,
+        auto_annotate_max_gated_numeric_cols: typing.Optional[int] = None,
+        auto_annotate_gated_numeric_top_k: typing.Optional[int] = None,
         **kwargs,
     ):
         """
@@ -168,6 +181,16 @@ class GraphReduce(nx.DiGraph):
             debug: bool whether to run debug logging
             date_filters_on_agg: bool whether or not to automatically filter by dates during custom defined aggregations
             train: bool whether the graph is being built for training. If false, date-node joins are skipped.
+            feature_families: optional graph-wide override for node SQL auto-feature families
+            feature_family_max_columns: optional graph-wide source-column / condition budget for feature families
+            ts_periods: optional graph-wide override for node time-series lookback periods
+            categorical_cardinality_threshold: optional graph-wide categorical cardinality threshold
+            categorical_top_k: optional graph-wide top-value budget for categorical features
+            auto_text_features: optional graph-wide switch for automatic text summaries
+            auto_annotate_features: optional graph-wide switch for inferred annotations
+            auto_annotate_max_categorical_columns: optional graph-wide categorical annotation-column budget
+            auto_annotate_max_gated_numeric_cols: optional graph-wide gated numeric-column budget
+            auto_annotate_gated_numeric_top_k: optional graph-wide category budget for gated numeric annotations
         """
         super(GraphReduce, self).__init__(*args, **kwargs)
 
@@ -196,6 +219,52 @@ class GraphReduce(nx.DiGraph):
         self.feature_stype_map = feature_stype_map
         self.date_filters_on_agg = date_filters_on_agg
         self.train = train
+
+        if isinstance(feature_families, str):
+            feature_families = (feature_families,)
+        if feature_families is not None:
+            unknown_families = set(feature_families) - FEATURE_FAMILY_NAMES
+            if unknown_families:
+                raise ValueError(
+                    f"Unknown feature families {sorted(unknown_families)}; "
+                    f"expected one of {sorted(FEATURE_FAMILY_NAMES)}"
+                )
+            feature_families = tuple(dict.fromkeys(feature_families))
+
+        self.feature_families = feature_families
+        self.feature_family_max_columns = (
+            None
+            if feature_family_max_columns is None
+            else max(0, int(feature_family_max_columns))
+        )
+        self.ts_periods = None if ts_periods is None else list(ts_periods)
+        self.categorical_cardinality_threshold = categorical_cardinality_threshold
+        self.categorical_top_k = categorical_top_k
+        self.auto_text_features = auto_text_features
+        self.auto_annotate_features = auto_annotate_features
+        self.auto_annotate_max_categorical_columns = (
+            auto_annotate_max_categorical_columns
+        )
+        self.auto_annotate_max_gated_numeric_cols = (
+            auto_annotate_max_gated_numeric_cols
+        )
+        self.auto_annotate_gated_numeric_top_k = auto_annotate_gated_numeric_top_k
+        self._node_feature_overrides = {
+            name: value
+            for name, value in {
+                "feature_families": self.feature_families,
+                "feature_family_max_columns": self.feature_family_max_columns,
+                "ts_periods": self.ts_periods,
+                "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
+                "categorical_top_k": self.categorical_top_k,
+                "auto_text_features": self.auto_text_features,
+                "auto_annotate_features": self.auto_annotate_features,
+                "auto_annotate_max_categorical_columns": self.auto_annotate_max_categorical_columns,
+                "auto_annotate_max_gated_numeric_cols": self.auto_annotate_max_gated_numeric_cols,
+                "auto_annotate_gated_numeric_top_k": self.auto_annotate_gated_numeric_top_k,
+            }.items()
+            if value is not None
+        }
 
         # SQL dialect parameters.
         self._lazy_execution = lazy_execution
@@ -295,6 +364,16 @@ class GraphReduce(nx.DiGraph):
             "feature_typefunc_map": self.feature_typefunc_map,
             "feature_stype_map": self.feature_stype_map,
             "date_filters_on_agg": self.date_filters_on_agg,
+            "feature_families": self.feature_families,
+            "feature_family_max_columns": self.feature_family_max_columns,
+            "ts_periods": self.ts_periods,
+            "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
+            "categorical_top_k": self.categorical_top_k,
+            "auto_text_features": self.auto_text_features,
+            "auto_annotate_features": self.auto_annotate_features,
+            "auto_annotate_max_categorical_columns": self.auto_annotate_max_categorical_columns,
+            "auto_annotate_max_gated_numeric_cols": self.auto_annotate_max_gated_numeric_cols,
+            "auto_annotate_gated_numeric_top_k": self.auto_annotate_gated_numeric_top_k,
             "train": self.train,
             "debug": self.debug,
             "lazy_execution": self._lazy_execution,
@@ -628,6 +707,7 @@ class GraphReduce(nx.DiGraph):
         Hydrate the nodes in the graph with parent
         attributes in `attrs`
         """
+        compute_period_days = self.compute_period_days()
         for node in self.nodes():
             logger.info(f"hydrating attributes for {node.__class__.__name__}")
             for attr in attrs:
@@ -641,6 +721,41 @@ class GraphReduce(nx.DiGraph):
                             setattr(node, attr, getattr(self, attr))
                     elif attr == "_sql_client":
                         setattr(node, "client", getattr(self, attr))
+
+            for attr, value in self._node_feature_overrides.items():
+                setattr(node, attr, copy.deepcopy(value))
+
+            node._is_graph_parent = node is self.parent_node
+            periods = list(getattr(node, "ts_periods", []) or [])
+            if compute_period_days > 365 and compute_period_days not in periods:
+                periods.append(compute_period_days)
+                periods.sort()
+            node.ts_periods = periods
+
+    def compute_period_days(self) -> int:
+        """Return the graph compute horizon as a whole number of days."""
+
+        days_per_unit = {
+            PeriodUnit.second: 1 / 86400,
+            PeriodUnit.minute: 1 / 1440,
+            PeriodUnit.hour: 1 / 24,
+            PeriodUnit.day: 1,
+            PeriodUnit.week: 7,
+            PeriodUnit.month: 365 / 12,
+            PeriodUnit.year: 365,
+        }
+        try:
+            days = float(self.compute_period_val) * days_per_unit[
+                self.compute_period_unit
+            ]
+        except (KeyError, TypeError, ValueError):
+            raise ValueError(
+                "compute_period_val and compute_period_unit must define a valid "
+                "compute horizon"
+            )
+        if days <= 0:
+            raise ValueError("compute period must be greater than zero")
+        return int(math.ceil(days))
 
     def hydrate_graph_data(
         self,

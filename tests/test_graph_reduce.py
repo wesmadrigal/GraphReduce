@@ -249,6 +249,231 @@ def test_sql_auto_annotate_creates_generic_categorical_text_and_gated_numeric_op
     assert any("evt_notes__gr_has_url" in op for op in select_sql)
 
 
+def test_graph_parent_date_key_auto_annotates_age_days():
+    conn = sqlite3.connect(":memory:")
+    rows = pd.DataFrame(
+        {
+            "user_id": [1, 2],
+            "created_at": ["2020-01-01", "2020-01-06"],
+        }
+    )
+    rows.to_sql("users", conn, index=False)
+    parent = SQLNode(
+        fpath="users",
+        pk="id",
+        prefix="user",
+        date_key="created_at",
+        columns=["user_id", "created_at"],
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph = GraphReduce(
+        parent_node=parent,
+        cut_date=datetime.datetime(2020, 1, 11),
+        compute_layer=ComputeLayerEnum.sqlite,
+        sql_client=conn,
+    )
+    graph.add_node(parent)
+    graph.hydrate_graph_attrs()
+
+    loaded = pd.read_sql_query(parent.build_query(parent.do_data()), conn)
+    loaded.to_sql("prefixed_users", conn, index=False)
+    parent._cur_data_ref = "prefixed_users"
+    annotated = pd.read_sql_query(parent.build_query(parent.do_annotate()), conn)
+
+    assert annotated["user__gr_parent_age_days"].tolist() == [10, 5]
+    conn.close()
+
+
+def test_graph_compute_horizon_is_added_to_each_nodes_ts_periods():
+    parent_periods = [7, 30, 365]
+    child_periods = [30, 365, 730]
+    parent = SQLNode(
+        fpath="users",
+        pk="id",
+        prefix="user",
+        ts_periods=parent_periods,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    child = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        ts_periods=child_periods,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph = GraphReduce(
+        parent_node=parent,
+        compute_period_val=520,
+        compute_period_unit=PeriodUnit.week,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph.add_node(parent)
+    graph.add_node(child)
+    graph.hydrate_graph_attrs()
+
+    assert parent.ts_periods == [7, 30, 365, 3640]
+    assert child.ts_periods == [30, 365, 730, 3640]
+    assert parent_periods == [7, 30, 365]
+    assert child_periods == [30, 365, 730]
+
+
+def test_graph_compute_horizon_at_most_one_year_does_not_expand_ts_periods():
+    parent = SQLNode(
+        fpath="users",
+        pk="id",
+        prefix="user",
+        ts_periods=[7, 30, 365],
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph = GraphReduce(
+        parent_node=parent,
+        compute_period_val=365,
+        compute_period_unit=PeriodUnit.day,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph.add_node(parent)
+    graph.hydrate_graph_attrs()
+
+    assert parent.ts_periods == [7, 30, 365]
+
+
+def test_graph_feature_settings_override_every_node_when_provided():
+    parent = SQLNode(
+        fpath="users",
+        pk="id",
+        prefix="user",
+        feature_families=("base",),
+        feature_family_max_columns=2,
+        ts_periods=[7],
+        categorical_cardinality_threshold=3,
+        categorical_top_k=1,
+        auto_text_features=True,
+        auto_annotate_features=False,
+        auto_annotate_max_categorical_columns=2,
+        auto_annotate_max_gated_numeric_cols=1,
+        auto_annotate_gated_numeric_top_k=1,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    child = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        feature_families=("episode",),
+        feature_family_max_columns=3,
+        ts_periods=[30],
+        categorical_top_k=2,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph = GraphReduce(
+        parent_node=parent,
+        compute_layer=ComputeLayerEnum.sqlite,
+        feature_families=("temporal", "conditional", "temporal"),
+        feature_family_max_columns=8,
+        ts_periods=(1, 30, 90),
+        categorical_cardinality_threshold=12,
+        categorical_top_k=5,
+        auto_text_features=False,
+        auto_annotate_features=True,
+        auto_annotate_max_categorical_columns=7,
+        auto_annotate_max_gated_numeric_cols=4,
+        auto_annotate_gated_numeric_top_k=3,
+    )
+    graph.add_node(parent)
+    graph.add_node(child)
+
+    graph.hydrate_graph_attrs()
+
+    for node in (parent, child):
+        assert node.feature_families == ("temporal", "conditional")
+        assert node.feature_family_max_columns == 8
+        assert node.ts_periods == [1, 30, 90]
+        assert node.categorical_cardinality_threshold == 12
+        assert node.categorical_top_k == 5
+        assert node.auto_text_features is False
+        assert node.auto_annotate_features is True
+        assert node.auto_annotate_max_categorical_columns == 7
+        assert node.auto_annotate_max_gated_numeric_cols == 4
+        assert node.auto_annotate_gated_numeric_top_k == 3
+
+    assert parent.ts_periods is not child.ts_periods
+
+
+def test_graph_omitted_feature_settings_preserve_node_configuration():
+    parent = SQLNode(
+        fpath="users",
+        pk="id",
+        prefix="user",
+        feature_families=("base", "episode"),
+        feature_family_max_columns=2,
+        ts_periods=[7],
+        categorical_top_k=1,
+        auto_text_features=False,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    child = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        feature_families=("base", "temporal"),
+        feature_family_max_columns=5,
+        ts_periods=[30, 90],
+        categorical_top_k=4,
+        auto_text_features=True,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph = GraphReduce(
+        parent_node=parent,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph.add_node(parent)
+    graph.add_node(child)
+
+    graph.hydrate_graph_attrs()
+
+    assert parent.feature_families == ("base", "episode")
+    assert parent.feature_family_max_columns == 2
+    assert parent.ts_periods == [7]
+    assert parent.categorical_top_k == 1
+    assert parent.auto_text_features is False
+    assert child.feature_families == ("base", "temporal")
+    assert child.feature_family_max_columns == 5
+    assert child.ts_periods == [30, 90]
+    assert child.categorical_top_k == 4
+    assert child.auto_text_features is True
+
+
+def test_graph_feature_settings_accept_explicit_zero_and_empty_overrides():
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        feature_family_max_columns=5,
+        ts_periods=[7, 30],
+        categorical_top_k=4,
+        compute_layer=ComputeLayerEnum.sqlite,
+    )
+    graph = GraphReduce(
+        parent_node=node,
+        compute_layer=ComputeLayerEnum.sqlite,
+        feature_family_max_columns=0,
+        ts_periods=(),
+        categorical_top_k=0,
+    )
+    graph.add_node(node)
+
+    graph.hydrate_graph_attrs()
+
+    assert node.feature_family_max_columns == 0
+    assert node.ts_periods == []
+    assert node.categorical_top_k == 0
+
+
+def test_graph_rejects_unknown_feature_family_override():
+    with pytest.raises(ValueError, match="Unknown feature families"):
+        GraphReduce(feature_families=("base", "unknown"))
+
+
 def test_sql_auto_annotate_outputs_feed_existing_sql_auto_features():
     conn = sqlite3.connect(":memory:")
     rows = pd.DataFrame(

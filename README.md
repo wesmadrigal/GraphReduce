@@ -313,6 +313,30 @@ events = DuckdbNode(
 )
 ```
 
+The same schema-agnostic controls can optionally be set once on
+`GraphReduce` and pushed to every node in the compute graph:
+
+```python
+graph = GraphReduce(
+    parent_node=customers,
+    auto_features=True,
+    feature_families=("base", "temporal", "sequence", "conditional"),
+    ts_periods=(7, 30, 90, 365),
+    feature_family_max_columns=4,
+    categorical_cardinality_threshold=20,
+    categorical_top_k=5,
+    auto_text_features=False,
+)
+```
+
+Graph-level feature settings default to `None`. An omitted setting preserves
+each node's own configuration; an explicitly supplied setting overrides that
+attribute on every node when the graph is hydrated. This includes meaningful
+falsey values such as `False`, `0`, and `ts_periods=()`. Caller expressions
+and relationship semantics remain node-local: configure
+`annotation_expressions`, `annotation_expressions_only`, and `context_keys`
+on the nodes whose schemas define them.
+
 `GraphReduce` still needs `auto_features=True` and the graph must be executed
 through `do_transformations_sql()` for these SQL operations to be compiled.
 The families are additive: enabling `temporal` does not implicitly enable
