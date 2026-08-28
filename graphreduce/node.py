@@ -64,6 +64,7 @@ from graphreduce.feature_schema import (
     NameSpec,
     profile_feature_schema,
 )
+from graphreduce.predicates import EqualityPredicate
 
 
 logger = get_logger("Node")
@@ -554,6 +555,67 @@ def _sql_categorical_aggregate_ops(
     return ops
 
 
+def _automatic_base_predicate_specs(
+    table_df_sample: pd.DataFrame,
+    stypes: typing.Mapping[str, typing.Any],
+    *,
+    excluded_columns: typing.Set[str],
+    date_column: typing.Optional[str],
+    max_predicates: int,
+    categorical_top_k: int,
+) -> typing.List[typing.Tuple[str, str]]:
+    """Select a bounded set of frequent categorical equality predicates."""
+
+    if max_predicates <= 0:
+        return []
+
+    candidates = []
+    for column_index, (col, stype) in enumerate(stypes.items()):
+        if col in excluded_columns or col == date_column:
+            continue
+        series = table_df_sample[col]
+        if _is_collection_series(series):
+            continue
+        semantic_type = str(stype)
+        if (
+            semantic_type == "numerical"
+            and _column_name_looks_like_categorical_identifier(col)
+        ):
+            semantic_type = "categorical"
+        if semantic_type != "categorical" and str(series.dtype) not in {
+            "object",
+            "string",
+        }:
+            continue
+        if _series_looks_like_text(col, series, semantic_type):
+            continue
+
+        value_counts = series.dropna().value_counts()
+        value_counts = (
+            value_counts.head(categorical_top_k)
+            if categorical_top_k > 0
+            else value_counts.iloc[0:0]
+        )
+        for value_index, (value, count) in enumerate(value_counts.items()):
+            if pd.isna(value):
+                continue
+            candidates.append(
+                (
+                    -int(count),
+                    column_index,
+                    value_index,
+                    _safe_sql_alias_part(f"{col}_{value}"),
+                    f"{col} = {_sql_literal(value)}",
+                )
+            )
+
+    candidates.sort(key=lambda candidate: candidate[:3])
+    return [
+        (alias, condition)
+        for _, _, _, alias, condition in candidates[:max_predicates]
+    ]
+
+
 def _is_auto_annotated_feature_col(col: str) -> bool:
     return AUTO_ANNOTATED_MARKER in col
 
@@ -915,6 +977,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         feature_family_max_columns: int = 16,
         is_date_node: bool = False,
         context_keys: typing.Optional[typing.Sequence[str]] = None,
+        auto_base_predicate_max: int = 2,
+        base_predicate_windows: typing.Sequence[int] = (7, 14, 30, 60),
+        base_predicates: typing.Optional[typing.Sequence[EqualityPredicate]] = None,
         execution_namespace: typing.Optional[str] = None,
     ):
         """
@@ -996,6 +1061,22 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self.annotation_expressions_only = annotation_expressions_only
         self.context_keys = tuple(context_keys or ())
         self.feature_family_max_columns = max(0, int(feature_family_max_columns))
+        self.auto_base_predicate_max = max(0, int(auto_base_predicate_max))
+        self.base_predicate_windows = list(
+            dict.fromkeys(
+                int(period)
+                for period in base_predicate_windows
+                if int(period) > 0
+            )
+        )
+        self.base_predicates = (
+            None if base_predicates is None else tuple(base_predicates)
+        )
+        if self.base_predicates is not None and not all(
+            isinstance(predicate, EqualityPredicate)
+            for predicate in self.base_predicates
+        ):
+            raise TypeError("base_predicates must contain EqualityPredicate values")
 
         self.is_date_node = is_date_node
 
@@ -1754,6 +1835,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 f"expected one of {sorted(FEATURE_FAMILY_NAMES)}"
             )
         conditional_specs: list[tuple[str, str]] = []
+        base_predicate_specs: list[tuple[str, str]] = []
         semantic_conditional_specs: list[tuple[str, str]] = []
         generic_conditional_specs: list[tuple[str, str]] = []
         temporal_numeric_cols: list[str] = []
@@ -1771,6 +1853,34 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         ptypes = {col: str(t) for col, t in table_df_sample.dtypes.to_dict().items()}
 
         ts_data = self.is_ts_data(reduce_key)
+        if "base" in families and ts_data:
+            if self.base_predicates is not None:
+                for predicate in self.base_predicates[
+                    : self.auto_base_predicate_max
+                ]:
+                    column = (
+                        predicate.column
+                        if predicate.column in table_df_sample.columns
+                        else self.colabbr(predicate.column)
+                    )
+                    if column not in table_df_sample.columns:
+                        raise KeyError(
+                            f"base predicate column {predicate.column!r} is absent "
+                            f"from node {self.prefix!r}"
+                        )
+                    alias = predicate.feature_alias(column)
+                    base_predicate_specs.append(
+                        (alias, f"{column} = {_sql_literal(predicate.value)}")
+                    )
+            else:
+                base_predicate_specs = _automatic_base_predicate_specs(
+                    table_df_sample,
+                    self._stypes,
+                    excluded_columns=reduce_column_names,
+                    date_column=self.colabbr(self.date_key) if self.date_key else None,
+                    max_predicates=self.auto_base_predicate_max,
+                    categorical_top_k=self.categorical_top_k,
+                )
         if "temporal" in families and ts_data:
             for col, stype in self._stypes.items():
                 if col in reduce_column_names or self._is_identifier(col):
@@ -2146,6 +2256,94 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     )
                 )
 
+        if "base" in families and ts_data and base_predicate_specs:
+            periods = sorted(set(self.base_predicate_windows))
+            if hasattr(self, "date_node") and self.date_node:
+                base_ref_ts = f"{self.date_node.prefix}_{self.date_node.date_key}"
+                base_ref_agg = f"MAX({base_ref_ts})"
+                dynamic_base_ref = True
+            else:
+                base_ref_ts = f"'{str(self.cut_date)}'"
+                base_ref_agg = (
+                    base_ref_ts
+                    if self.__class__.__name__ == "SQLNode"
+                    else f"TIMESTAMP '{str(self.cut_date)}'"
+                )
+                dynamic_base_ref = False
+            date_col = self.colabbr(self.date_key)
+
+            def base_threshold(period: int) -> str:
+                if dynamic_base_ref:
+                    return self._date_subtract_days(base_ref_ts, period)
+                return f"'{self.cut_date - datetime.timedelta(days=period)}'"
+
+            for alias, condition in base_predicate_specs:
+                for period in periods:
+                    count_op = sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            "SUM(CASE WHEN "
+                            f"({date_col} >= {base_threshold(period)}) AND "
+                            f"({condition}) THEN 1 ELSE 0 END) as "
+                            f"{alias}_count_{period}d"
+                        ),
+                    )
+                    if count_op not in agg_funcs:
+                        agg_funcs.append(count_op)
+
+                for lower, upper in zip(periods, periods[1:]):
+                    lag_op = sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            "SUM(CASE WHEN "
+                            f"({date_col} < {base_threshold(lower)}) AND "
+                            f"({date_col} >= {base_threshold(upper)}) AND "
+                            f"({condition}) THEN 1 ELSE 0 END) as "
+                            f"{alias}_lag_{lower}_{upper}d"
+                        ),
+                    )
+                    if lag_op not in agg_funcs:
+                        agg_funcs.append(lag_op)
+
+                last_match = f"MAX(CASE WHEN {condition} THEN {date_col} END)"
+                if self.__class__.__name__ == "SQLNode":
+                    recency_expr = (
+                        f"(julianday({base_ref_agg}) - "
+                        f"julianday({last_match})) * 86400"
+                    )
+                elif self.__class__.__name__ in {"DuckdbNode", "AthenaNode"}:
+                    recency_expr = (
+                        f"date_diff('second', {last_match}, {base_ref_agg})"
+                    )
+                elif self.__class__.__name__ in {"PostgresNode", "RedshiftNode"}:
+                    recency_expr = (
+                        f"EXTRACT(EPOCH FROM ({base_ref_agg} - {last_match}))"
+                    )
+                elif self.__class__.__name__ in {
+                    "SnowflakeNode",
+                    "DatabricksNode",
+                    "MySQLNode",
+                }:
+                    recency_expr = (
+                        f"TIMESTAMPDIFF(SECOND, {last_match}, {base_ref_agg})"
+                    )
+                elif self.__class__.__name__ == "TrinoNode":
+                    recency_expr = (
+                        "date_diff('second', "
+                        f"TRY_CAST({last_match} AS TIMESTAMP), {base_ref_agg})"
+                    )
+                else:
+                    raise NotImplementedError(
+                        "base predicate recency not implemented for "
+                        f"{self.__class__.__name__}"
+                    )
+                recency_op = sqlop(
+                    optype=SQLOpType.aggfunc,
+                    opval=f"{recency_expr} as {alias}_seconds_since_last",
+                )
+                if recency_op not in agg_funcs:
+                    agg_funcs.append(recency_op)
+
         if "sequence" in families and ts_data:
             # Preserve trajectory information that lifetime counts and a
             # single recency value cannot express. These features remain
@@ -2286,12 +2484,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                 "THEN 1 ELSE 0 END)",
                             ),
                         ]:
-                            agg_funcs.append(
-                                sqlop(
-                                    optype=SQLOpType.aggfunc,
-                                    opval=f"{expression} as {alias}_{suffix}_{period}d",
-                                )
+                            op = sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{expression} as {alias}_{suffix}_{period}d",
                             )
+                            if op not in agg_funcs:
+                                agg_funcs.append(op)
                     for period1, period2 in zip(self.ts_periods, self.ts_periods[1:]):
                         change = (
                             f"{window_counts[period1]} * 1.0 / "

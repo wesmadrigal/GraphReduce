@@ -148,6 +148,8 @@ class GraphReduce(nx.DiGraph):
         ts_periods: typing.Optional[typing.Sequence[int]] = None,
         categorical_cardinality_threshold: typing.Optional[int] = None,
         categorical_top_k: typing.Optional[int] = None,
+        auto_base_predicate_max: typing.Optional[int] = None,
+        base_predicate_windows: typing.Optional[typing.Sequence[int]] = None,
         auto_text_features: typing.Optional[bool] = None,
         auto_annotate_features: typing.Optional[bool] = None,
         auto_annotate_max_categorical_columns: typing.Optional[int] = None,
@@ -186,6 +188,8 @@ class GraphReduce(nx.DiGraph):
             ts_periods: optional graph-wide override for node time-series lookback periods
             categorical_cardinality_threshold: optional graph-wide categorical cardinality threshold
             categorical_top_k: optional graph-wide top-value budget for categorical features
+            auto_base_predicate_max: optional graph-wide cap on automatically selected base predicates per node
+            base_predicate_windows: optional graph-wide windows for bounded base predicate trajectories
             auto_text_features: optional graph-wide switch for automatic text summaries
             auto_annotate_features: optional graph-wide switch for inferred annotations
             auto_annotate_max_categorical_columns: optional graph-wide categorical annotation-column budget
@@ -240,6 +244,20 @@ class GraphReduce(nx.DiGraph):
         self.ts_periods = None if ts_periods is None else list(ts_periods)
         self.categorical_cardinality_threshold = categorical_cardinality_threshold
         self.categorical_top_k = categorical_top_k
+        self.auto_base_predicate_max = (
+            None
+            if auto_base_predicate_max is None
+            else max(0, int(auto_base_predicate_max))
+        )
+        self.base_predicate_windows = (
+            None
+            if base_predicate_windows is None
+            else [
+                int(period)
+                for period in dict.fromkeys(base_predicate_windows)
+                if int(period) > 0
+            ]
+        )
         self.auto_text_features = auto_text_features
         self.auto_annotate_features = auto_annotate_features
         self.auto_annotate_max_categorical_columns = (
@@ -257,6 +275,8 @@ class GraphReduce(nx.DiGraph):
                 "ts_periods": self.ts_periods,
                 "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
                 "categorical_top_k": self.categorical_top_k,
+                "auto_base_predicate_max": self.auto_base_predicate_max,
+                "base_predicate_windows": self.base_predicate_windows,
                 "auto_text_features": self.auto_text_features,
                 "auto_annotate_features": self.auto_annotate_features,
                 "auto_annotate_max_categorical_columns": self.auto_annotate_max_categorical_columns,
@@ -369,6 +389,8 @@ class GraphReduce(nx.DiGraph):
             "ts_periods": self.ts_periods,
             "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
             "categorical_top_k": self.categorical_top_k,
+            "auto_base_predicate_max": self.auto_base_predicate_max,
+            "base_predicate_windows": self.base_predicate_windows,
             "auto_text_features": self.auto_text_features,
             "auto_annotate_features": self.auto_annotate_features,
             "auto_annotate_max_categorical_columns": self.auto_annotate_max_categorical_columns,
@@ -583,7 +605,9 @@ class GraphReduce(nx.DiGraph):
                 + datetime.timedelta(minutes=node.label_period_minutes())
             )
 
-        for period in getattr(node, "ts_periods", []) or []:
+        rebound_periods = set(getattr(node, "ts_periods", []) or [])
+        rebound_periods.update(getattr(node, "base_predicate_windows", []) or [])
+        for period in sorted(rebound_periods):
             replacements[
                 str(original_cut_date - datetime.timedelta(days=period))
             ] = str(current_cut_date - datetime.timedelta(days=period))

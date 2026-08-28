@@ -15,6 +15,7 @@ from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode, DuckdbNode, 
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, StorageFormatEnum, ProviderEnum, SQLOpType
 from graphreduce.models import sqlop
+from graphreduce.predicates import EqualityPredicate
 
 
 data_path = '/'.join(os.path.abspath(__file__).split('/')[0:-1]) + '/data/cust_data'
@@ -373,6 +374,8 @@ def test_graph_feature_settings_override_every_node_when_provided():
         ts_periods=(1, 30, 90),
         categorical_cardinality_threshold=12,
         categorical_top_k=5,
+        auto_base_predicate_max=2,
+        base_predicate_windows=(7, 14, 30, 60),
         auto_text_features=False,
         auto_annotate_features=True,
         auto_annotate_max_categorical_columns=7,
@@ -390,6 +393,8 @@ def test_graph_feature_settings_override_every_node_when_provided():
         assert node.ts_periods == [1, 30, 90]
         assert node.categorical_cardinality_threshold == 12
         assert node.categorical_top_k == 5
+        assert node.auto_base_predicate_max == 2
+        assert node.base_predicate_windows == [7, 14, 30, 60]
         assert node.auto_text_features is False
         assert node.auto_annotate_features is True
         assert node.auto_annotate_max_categorical_columns == 7
@@ -753,6 +758,139 @@ def test_sql_auto_sequence_family_generates_rates_and_activity_span():
     result = pd.read_sql_query(node.build_query(feature_ops), conn)
     assert result.loc[0, "evt_activity_rate_7d"] > 0
     assert result.loc[0, "evt_active_span_seconds"] > 0
+    conn.close()
+
+
+def test_sql_auto_base_generates_two_bounded_categorical_trajectories():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3, 4, 5, 6],
+            "evt_user_id": [1, 1, 1, 1, 1, 1],
+            "evt_status": ["invited", "invited", "invited", "yes", "yes", "no"],
+            "evt_ts": pd.to_datetime(
+                [
+                    "2024-01-09",
+                    "2024-01-05",
+                    "2023-12-20",
+                    "2024-01-08",
+                    "2024-01-01",
+                    "2024-01-02",
+                ]
+            ),
+        }
+    )
+    sample.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("base",),
+        auto_base_predicate_max=2,
+        base_predicate_windows=[7, 14, 30, 60],
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    feature_sql = [op.opval for op in feature_ops if op.optype == SQLOpType.aggfunc]
+
+    assert any("evt_status_invited_count_7d" in op for op in feature_sql)
+    assert any("evt_status_yes_count_7d" in op for op in feature_sql)
+    assert any("evt_status_invited_lag_14_30d" in op for op in feature_sql)
+    assert any("evt_status_invited_seconds_since_last" in op for op in feature_sql)
+    assert not any("evt_status_no_count_7d" in op for op in feature_sql)
+
+    result = pd.read_sql_query(node.build_query(feature_ops), conn)
+    assert result.loc[0, "evt_status_invited_count_7d"] == 2
+    assert result.loc[0, "evt_status_invited_count_30d"] == 3
+    assert result.loc[0, "evt_status_invited_lag_14_30d"] == 1
+    assert result.loc[0, "evt_status_invited_seconds_since_last"] == pytest.approx(
+        86400
+    )
+    conn.close()
+
+
+def test_sql_auto_base_predicate_budget_can_be_disabled():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2],
+            "evt_user_id": [1, 1],
+            "evt_status": ["invited", "yes"],
+            "evt_ts": pd.to_datetime(["2024-01-01", "2024-01-02"]),
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 3),
+        feature_families=("base",),
+        auto_base_predicate_max=0,
+    )
+    sample.to_sql("events", conn, index=False)
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    feature_sql = [op.opval for op in feature_ops if op.optype == SQLOpType.aggfunc]
+    assert not any("status_invited_count_7d" in op for op in feature_sql)
+    conn.close()
+
+
+def test_sql_auto_base_uses_explicit_predicates_over_sample_frequency():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": range(1, 7),
+            "evt_user_id": [1] * 6,
+            "evt_status": ["yes", "yes", "yes", "yes", "yes", "invited"],
+            "evt_ts": pd.to_datetime(
+                ["2024-01-09", "2024-01-08", "2024-01-07", "2024-01-06", "2024-01-05", "2024-01-04"]
+            ),
+        }
+    )
+    sample.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("base",),
+        auto_base_predicate_max=1,
+        base_predicate_windows=(7,),
+        base_predicates=(EqualityPredicate("status", "invited"),),
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    feature_sql = [op.opval for op in feature_ops if op.optype == SQLOpType.aggfunc]
+
+    assert any("evt_status_invited_count_7d" in op for op in feature_sql)
+    assert not any("evt_status_yes_count_7d" in op for op in feature_sql)
+    result = pd.read_sql_query(node.build_query(feature_ops), conn)
+    assert result.loc[0, "evt_status_invited_count_7d"] == 1
     conn.close()
 
 

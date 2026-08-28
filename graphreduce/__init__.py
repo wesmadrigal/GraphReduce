@@ -4,6 +4,7 @@ from graphreduce.feature_schema import (
     FeatureRole,
     profile_feature_schema,
 )
+from graphreduce.predicates import EqualityPredicate
 
 __version__ = '1.10.3'
 
@@ -12,4 +13,5 @@ __all__ = [
     "FeatureManifest",
     "FeatureRole",
     "profile_feature_schema",
+    "EqualityPredicate",
 ]
