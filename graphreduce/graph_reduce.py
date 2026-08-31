@@ -45,6 +45,89 @@ from graphreduce.models import sqlop
 logger = get_logger("GraphReduce")
 
 
+def _infer_ts_periods_from_cadence(
+    *,
+    duration_seconds: typing.Any,
+    num_events: typing.Any,
+    compute_horizon_days: typing.Any = None,
+) -> list[int]:
+    """Derive compact lookback windows from cadence across the compute horizon.
+
+    The observed duration anchors the cadence-specific windows, while the
+    graph's actual compute horizon supplies the broad windows.  This keeps
+    inferred periods useful when a relationship's history is short but the
+    prediction job intentionally looks farther back.
+    """
+    try:
+        duration_days = float(duration_seconds) / 86400.0
+        events = float(num_events)
+    except (TypeError, ValueError):
+        return []
+    if not math.isfinite(duration_days) or not math.isfinite(events):
+        return []
+    if duration_days <= 0 or events <= 0:
+        return []
+    duration = max(1, int(round(duration_days)))
+    try:
+        configured_horizon = float(compute_horizon_days)
+    except (TypeError, ValueError):
+        configured_horizon = math.nan
+    if math.isfinite(configured_horizon) and configured_horizon > 0:
+        horizon = max(duration, int(math.ceil(configured_horizon)))
+    else:
+        horizon = max(duration, int(round(duration * 2.0)))
+    # Keep a useful minimum of short-, medium-, and long-range windows even
+    # for relationships with relatively short histories.  The target is still
+    # capped so inferred periods do not cause unbounded feature multiplication.
+    target = 5 + sum(duration >= limit for limit in (90, 180, 365, 730))
+    target += sum(
+        duration >= limit and events >= count
+        for limit, count in ((90, 24), (180, 48), (365, 96))
+    )
+    target = max(5, min(target, 10))
+    cadence_ratios = [1 / 6, 0.5, 1.0, 2.0, 1 / 3, 0.75, 1.5, 0.25, 5 / 6, 1.25]
+    horizon_ratios = [1 / 16, 1 / 8, 1 / 4, 1 / 2, 1.0]
+
+    def normalize(value: typing.Any) -> int:
+        value = max(1, min(horizon, int(round(float(value)))))
+        if value >= 180:
+            value = int(round(value / 30) * 30)
+        elif value >= 30:
+            value = int(round(value / 10) * 10)
+        elif value >= 10:
+            value = int(round(value / 5) * 5)
+        return max(1, min(horizon, value))
+
+    candidates = [normalize(horizon * ratio) for ratio in horizon_ratios]
+    candidates.extend(normalize(duration * ratio) for ratio in cadence_ratios)
+    candidates.extend((duration, horizon))
+    periods = sorted(set(candidates))
+
+    # Rounding and short horizons can collapse several ratios to the same
+    # integer day. Fill from a dense short-window grid so the minimum target
+    # is honored whenever the horizon contains enough distinct day windows.
+    if len(periods) < target:
+        fallback = (1, 2, 3, 4, 5, 7, 14, 30, 60, 90, 180, 365, 730)
+        periods_set = set(periods)
+        for value in fallback:
+            periods_set.add(normalize(value))
+            if len(periods_set) >= target:
+                break
+        periods = sorted(periods_set)
+    if len(periods) <= target:
+        return periods
+
+    # Always retain the cadence anchor and the configured horizon, then fill
+    # the remaining slots at evenly spaced positions across the range.
+    required = {normalize(duration), normalize(horizon)}
+    remaining = [period for period in periods if period not in required]
+    slots = max(0, target - len(required))
+    if slots:
+        indices = [round(i * (len(remaining) - 1) / (slots - 1)) for i in range(slots)] if slots > 1 else [len(remaining) // 2]
+        required.update(remaining[index] for index in sorted(set(indices)))
+    return sorted(required)[:target]
+
+
 SPARK_DF_TYPES = tuple()
 if pyspark is not None:  # pragma: no branch
     SPARK_DF_TYPES = tuple(
@@ -146,6 +229,7 @@ class GraphReduce(nx.DiGraph):
         feature_families: typing.Optional[typing.Sequence[str]] = None,
         feature_family_max_columns: typing.Optional[int] = None,
         ts_periods: typing.Optional[typing.Sequence[int]] = None,
+        infer_ts_periods: bool = False,
         categorical_cardinality_threshold: typing.Optional[int] = None,
         categorical_top_k: typing.Optional[int] = None,
         auto_base_predicate_max: typing.Optional[int] = None,
@@ -153,6 +237,7 @@ class GraphReduce(nx.DiGraph):
         auto_text_features: typing.Optional[bool] = None,
         auto_annotate_features: typing.Optional[bool] = None,
         auto_annotate_max_categorical_columns: typing.Optional[int] = None,
+        auto_annotate_max_text_columns: typing.Optional[int] = None,
         auto_annotate_max_gated_numeric_cols: typing.Optional[int] = None,
         auto_annotate_gated_numeric_top_k: typing.Optional[int] = None,
         **kwargs,
@@ -186,6 +271,7 @@ class GraphReduce(nx.DiGraph):
             feature_families: optional graph-wide override for node SQL auto-feature families
             feature_family_max_columns: optional graph-wide source-column / condition budget for feature families
             ts_periods: optional graph-wide override for node time-series lookback periods
+            infer_ts_periods: infer relationship-specific lookback periods from observed cadence
             categorical_cardinality_threshold: optional graph-wide categorical cardinality threshold
             categorical_top_k: optional graph-wide top-value budget for categorical features
             auto_base_predicate_max: optional graph-wide cap on automatically selected base predicates per node
@@ -193,6 +279,7 @@ class GraphReduce(nx.DiGraph):
             auto_text_features: optional graph-wide switch for automatic text summaries
             auto_annotate_features: optional graph-wide switch for inferred annotations
             auto_annotate_max_categorical_columns: optional graph-wide categorical annotation-column budget
+            auto_annotate_max_text_columns: optional graph-wide text annotation-column budget
             auto_annotate_max_gated_numeric_cols: optional graph-wide gated numeric-column budget
             auto_annotate_gated_numeric_top_k: optional graph-wide category budget for gated numeric annotations
         """
@@ -242,6 +329,7 @@ class GraphReduce(nx.DiGraph):
             else max(0, int(feature_family_max_columns))
         )
         self.ts_periods = None if ts_periods is None else list(ts_periods)
+        self.infer_ts_periods = bool(infer_ts_periods)
         self.categorical_cardinality_threshold = categorical_cardinality_threshold
         self.categorical_top_k = categorical_top_k
         self.auto_base_predicate_max = (
@@ -263,6 +351,11 @@ class GraphReduce(nx.DiGraph):
         self.auto_annotate_max_categorical_columns = (
             auto_annotate_max_categorical_columns
         )
+        self.auto_annotate_max_text_columns = (
+            None
+            if auto_annotate_max_text_columns is None
+            else max(0, int(auto_annotate_max_text_columns))
+        )
         self.auto_annotate_max_gated_numeric_cols = (
             auto_annotate_max_gated_numeric_cols
         )
@@ -280,6 +373,7 @@ class GraphReduce(nx.DiGraph):
                 "auto_text_features": self.auto_text_features,
                 "auto_annotate_features": self.auto_annotate_features,
                 "auto_annotate_max_categorical_columns": self.auto_annotate_max_categorical_columns,
+                "auto_annotate_max_text_columns": self.auto_annotate_max_text_columns,
                 "auto_annotate_max_gated_numeric_cols": self.auto_annotate_max_gated_numeric_cols,
                 "auto_annotate_gated_numeric_top_k": self.auto_annotate_gated_numeric_top_k,
             }.items()
@@ -387,6 +481,7 @@ class GraphReduce(nx.DiGraph):
             "feature_families": self.feature_families,
             "feature_family_max_columns": self.feature_family_max_columns,
             "ts_periods": self.ts_periods,
+            "infer_ts_periods": self.infer_ts_periods,
             "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
             "categorical_top_k": self.categorical_top_k,
             "auto_base_predicate_max": self.auto_base_predicate_max,
@@ -394,6 +489,7 @@ class GraphReduce(nx.DiGraph):
             "auto_text_features": self.auto_text_features,
             "auto_annotate_features": self.auto_annotate_features,
             "auto_annotate_max_categorical_columns": self.auto_annotate_max_categorical_columns,
+            "auto_annotate_max_text_columns": self.auto_annotate_max_text_columns,
             "auto_annotate_max_gated_numeric_cols": self.auto_annotate_max_gated_numeric_cols,
             "auto_annotate_gated_numeric_top_k": self.auto_annotate_gated_numeric_top_k,
             "train": self.train,
@@ -1429,6 +1525,107 @@ class GraphReduce(nx.DiGraph):
         if len(dupes):
             raise Exception(f"duplicate prefix on the following nodes: {dupes}")
 
+    def _infer_node_ts_periods(self, node: GraphReduceNode) -> None:
+        """Infer a node's lookback windows from its materialized event history."""
+        if not self.infer_ts_periods or getattr(node, "is_date_node", False):
+            return
+        if not getattr(node, "date_key", None) or not getattr(node, "_cur_data_ref", None):
+            return
+        if self.dry_run:
+            return
+
+        date_col = node.render_identifier(node.colabbr(node.date_key))
+        source_ref = node.get_current_ref()
+        query = (
+            f"SELECT MIN({date_col}) AS first_ts, "
+            f"MAX({date_col}) AS last_ts, COUNT(*) AS num_events "
+            f"FROM {source_ref} WHERE {date_col} IS NOT NULL"
+        )
+        try:
+            stats = node.execute_query(query, ret_df=True)
+            if stats is None or stats.empty:
+                return
+            row = stats.iloc[0]
+            first_ts = pd.to_datetime(row.get("first_ts"), errors="coerce")
+            last_ts = pd.to_datetime(row.get("last_ts"), errors="coerce")
+            if pd.isna(first_ts) or pd.isna(last_ts):
+                return
+            duration_seconds = (last_ts - first_ts).total_seconds()
+            periods = _infer_ts_periods_from_cadence(
+                duration_seconds=duration_seconds,
+                num_events=row.get("num_events"),
+                compute_horizon_days=self.compute_period_days(),
+            )
+            if periods:
+                node.ts_periods = periods
+                logger.info(
+                    "inferred ts_periods",
+                    node=getattr(node, "prefix", node.__class__.__name__),
+                    periods=periods,
+                    compute_horizon_days=self.compute_period_days(),
+                )
+        except Exception as exc:  # pragma: no cover - backend-specific failures
+            logger.warning(
+                "ts_period_inference_failed",
+                node=getattr(node, "prefix", node.__class__.__name__),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    def _infer_relation_ts_periods(
+        self,
+        parent_node: GraphReduceNode,
+        relation_node: GraphReduceNode,
+        relation_key: KeySpec,
+    ) -> None:
+        """Infer lookbacks for one relationship from per-key event cadence."""
+        if not self.infer_ts_periods or self.dry_run:
+            return
+        if not getattr(relation_node, "date_key", None) or not getattr(
+            relation_node, "_cur_data_ref", None
+        ):
+            return
+        try:
+            date_col = relation_node.render_identifier(
+                relation_node.colabbr(relation_node.date_key)
+            )
+            key_cols = relation_node.colabbrs(relation_key)
+            key_sql = ", ".join(relation_node.render_identifier(col) for col in key_cols)
+            stats = relation_node.execute_query(
+                f"SELECT {key_sql}, MIN({date_col}) AS first_ts, "
+                f"MAX({date_col}) AS last_ts, COUNT(*) AS num_events "
+                f"FROM {relation_node.get_current_ref()} "
+                f"WHERE {date_col} IS NOT NULL GROUP BY {key_sql}",
+                ret_df=True,
+            )
+            if stats is None or stats.empty:
+                return
+            first = pd.to_datetime(stats["first_ts"], errors="coerce")
+            last = pd.to_datetime(stats["last_ts"], errors="coerce")
+            durations = (last - first).dt.total_seconds().dropna()
+            if durations.empty:
+                return
+            periods = _infer_ts_periods_from_cadence(
+                duration_seconds=durations.mean(),
+                num_events=pd.to_numeric(stats["num_events"], errors="coerce").mean(),
+                compute_horizon_days=self.compute_period_days(),
+            )
+            if periods:
+                relation_node.ts_periods = periods
+                logger.info(
+                    "inferred relationship ts_periods",
+                    parent=getattr(parent_node, "prefix", parent_node.__class__.__name__),
+                    relation=getattr(relation_node, "prefix", relation_node.__class__.__name__),
+                    relation_key=relation_key,
+                    periods=periods,
+                    compute_horizon_days=self.compute_period_days(),
+                )
+        except Exception as exc:  # pragma: no cover - backend-specific failures
+            logger.warning(
+                "relationship_ts_period_inference_failed",
+                relation=getattr(relation_node, "prefix", relation_node.__class__.__name__),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
     def do_transformations_sql(self, dry: bool = False):
         """
         Perform all graph transformations
@@ -1486,6 +1683,7 @@ class GraphReduce(nx.DiGraph):
                 schema=self._checkpoint_schema,
                 dry=self.dry_run,
             )
+            self._infer_node_ts_periods(node)
             # Now append the reference SQL.
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
@@ -1730,6 +1928,11 @@ class GraphReduce(nx.DiGraph):
             planned_reduce = None
             reduce_method_ops = None
             if edge_data["reduce"] and not relation_node.is_date_node:
+                self._infer_relation_ts_periods(
+                    parent_node,
+                    relation_node,
+                    edge_data["relation_key"],
+                )
                 planned_reduce = self._consume_planned_record(
                     relation_node,
                     "do_reduce",

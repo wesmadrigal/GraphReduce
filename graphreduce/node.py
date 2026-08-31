@@ -238,6 +238,14 @@ def _should_skip_numeric_sql_agg(
 ) -> bool:
     if semantic_type != "numerical" or func not in NUMERIC_VALUE_AUTO_AGGS:
         return False
+    # An all-null SQL sample can be materialized by pandas as float64 even
+    # when the backing relation is VARCHAR.  Treating that placeholder dtype
+    # as authoritative persists invalid operations such as AVG(varchar),
+    # which then fail when the feature plan is replayed on a fuller frame.
+    # With no observed values there is no evidence that numeric aggregation
+    # is safe (or useful), so omit value aggregates for this sample.
+    if series.dropna().empty:
+        return True
     if pd.api.types.is_numeric_dtype(series):
         return False
     return not _sample_is_numeric_object_series(series)
@@ -633,6 +641,7 @@ def _sql_auto_annotate_ops(
     cardinality_threshold: int,
     top_k: int,
     max_categorical_columns: int,
+    max_text_columns: typing.Optional[int],
     max_gated_numeric_cols: int,
     gated_numeric_top_k: int,
     auto_text_features: bool,
@@ -717,6 +726,7 @@ def _sql_auto_annotate_ops(
         return ops if len(ops) > 1 else []
 
     numeric_cols = []
+    text_columns_seen = 0
     for col, stype in stypes.items():
         series = table_df_sample[col]
         semantic_type = str(stype)
@@ -750,6 +760,9 @@ def _sql_auto_annotate_ops(
             continue
 
         if auto_text_features and _series_looks_like_text(col, series, semantic_type):
+            if max_text_columns is not None and text_columns_seen >= max_text_columns:
+                continue
+            text_columns_seen += 1
             alias_col = _safe_sql_alias_part(col)
             coalesced = f"COALESCE({col}, '')"
             trimmed = f"TRIM({coalesced})"
@@ -967,6 +980,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         auto_text_features: bool = True,
         auto_annotate_features: bool = False,
         auto_annotate_max_categorical_columns: int = 20,
+        auto_annotate_max_text_columns: typing.Optional[int] = None,
         auto_annotate_max_gated_numeric_cols: int = 8,
         auto_annotate_gated_numeric_top_k: int = 5,
         feature_families: typing.Optional[typing.Sequence[str]] = None,
@@ -1044,6 +1058,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self.auto_text_features = auto_text_features
         self.auto_annotate_features = auto_annotate_features
         self.auto_annotate_max_categorical_columns = auto_annotate_max_categorical_columns
+        self.auto_annotate_max_text_columns = (
+            None
+            if auto_annotate_max_text_columns is None
+            else max(0, int(auto_annotate_max_text_columns))
+        )
         self.auto_annotate_max_gated_numeric_cols = auto_annotate_max_gated_numeric_cols
         self.auto_annotate_gated_numeric_top_k = auto_annotate_gated_numeric_top_k
         if feature_families is None:
@@ -4033,6 +4052,7 @@ class SQLNode(GraphReduceNode):
             cardinality_threshold=self.categorical_cardinality_threshold,
             top_k=self.categorical_top_k,
             max_categorical_columns=self.auto_annotate_max_categorical_columns,
+            max_text_columns=self.auto_annotate_max_text_columns,
             max_gated_numeric_cols=self.auto_annotate_max_gated_numeric_cols,
             gated_numeric_top_k=self.auto_annotate_gated_numeric_top_k,
             auto_text_features=self.auto_text_features,

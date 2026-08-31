@@ -12,7 +12,7 @@ from icecream import ic
 import duckdb
 
 from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode, DuckdbNode, AthenaNode, RedshiftNode
-from graphreduce.graph_reduce import GraphReduce
+from graphreduce.graph_reduce import GraphReduce, _infer_ts_periods_from_cadence
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, StorageFormatEnum, ProviderEnum, SQLOpType
 from graphreduce.models import sqlop
 from graphreduce.predicates import EqualityPredicate
@@ -88,6 +88,47 @@ def test_sql_auto_features_skips_numeric_aggs_for_string_backed_numerical_stype(
 
     assert "sum(tran_amount) as tran_amount_sum" in agg_sql
     assert not any("tran_source_name" in op for op in agg_sql)
+
+
+def test_sql_auto_features_skips_numeric_aggs_for_all_null_sql_sample(monkeypatch):
+    sample = pd.DataFrame(
+        {
+            "comment_post_id": [1, 1, 2],
+            "comment_id": [10, 11, 12],
+            # SQL VARCHAR columns containing only NULL in an inference window
+            # are commonly materialized by pandas with a numeric placeholder
+            # dtype. The backing column is still not valid input to AVG/SUM.
+            "comment_user_display_name": pd.Series(
+                [None, None, None], dtype="float64"
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        "graphreduce.node.infer_df_stype",
+        lambda _df: {
+            "comment_post_id": "categorical",
+            "comment_id": "categorical",
+            "comment_user_display_name": "numerical",
+        },
+    )
+    node = DuckdbNode(
+        fpath="comments",
+        pk="id",
+        prefix="comment",
+        compute_layer=ComputeLayerEnum.duckdb,
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="post_id",
+        type_func_map={
+            "numerical": ["median", "mean", "sum", "min", "max"],
+            "categorical": ["count"],
+        },
+    )
+    agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+
+    assert not any("comment_user_display_name" in op for op in agg_sql)
 
 
 def test_sql_auto_features_treats_zip_like_numerical_stype_as_categorical(monkeypatch):
@@ -250,6 +291,35 @@ def test_sql_auto_annotate_creates_generic_categorical_text_and_gated_numeric_op
     assert any("evt_notes__gr_has_url" in op for op in select_sql)
 
 
+def test_sql_auto_annotate_limits_text_columns_when_configured():
+    sample = pd.DataFrame(
+        {
+            "evt_first_notes": [
+                "A sufficiently long note containing several words for detection.",
+                "Another sufficiently long note containing useful text content.",
+            ],
+            "evt_second_notes": [
+                "A second sufficiently long note containing several words too.",
+                "More text content in the second note for detection purposes.",
+            ],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        auto_annotate_features=True,
+        auto_annotate_max_text_columns=1,
+    )
+
+    ops = node.sql_auto_annotate(sample)
+    select_sql = [op.opval for op in ops if op.optype == SQLOpType.select]
+
+    assert any("evt_first_notes__gr_length" in op for op in select_sql)
+    assert not any("evt_second_notes__gr_length" in op for op in select_sql)
+
+
 def test_graph_parent_date_key_auto_annotates_age_days():
     conn = sqlite3.connect(":memory:")
     rows = pd.DataFrame(
@@ -337,6 +407,40 @@ def test_graph_compute_horizon_at_most_one_year_does_not_expand_ts_periods():
     graph.hydrate_graph_attrs()
 
     assert parent.ts_periods == [7, 30, 365]
+
+
+def test_inferred_ts_periods_span_configured_compute_horizon():
+    periods = _infer_ts_periods_from_cadence(
+        duration_seconds=45 * 86400,
+        num_events=100,
+        compute_horizon_days=365,
+    )
+
+    assert len(periods) <= 10
+    assert periods == sorted(periods)
+    assert periods[-1] == 365
+    assert any(35 <= period <= 55 for period in periods)
+
+
+def test_inferred_ts_periods_have_minimum_five_windows_when_horizon_allows():
+    periods = _infer_ts_periods_from_cadence(
+        duration_seconds=1 * 86400,
+        num_events=2,
+        compute_horizon_days=30,
+    )
+
+    assert len(periods) >= 5
+    assert len(periods) <= 10
+    assert periods[-1] == 30
+
+
+def test_inferred_ts_periods_fall_back_to_duration_when_horizon_missing():
+    periods = _infer_ts_periods_from_cadence(
+        duration_seconds=30 * 86400,
+        num_events=10,
+    )
+
+    assert periods[-1] == 60
 
 
 def test_graph_feature_settings_override_every_node_when_provided():
