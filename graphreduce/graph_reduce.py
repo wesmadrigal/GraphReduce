@@ -228,6 +228,8 @@ class GraphReduce(nx.DiGraph):
         # Optional graph-wide overrides for node auto-feature settings.
         feature_families: typing.Optional[typing.Sequence[str]] = None,
         feature_family_max_columns: typing.Optional[int] = None,
+        feature_family_max_features_per_column: typing.Optional[int] = None,
+        feature_propagation_max_functions_per_column: typing.Optional[int] = None,
         ts_periods: typing.Optional[typing.Sequence[int]] = None,
         infer_ts_periods: bool = False,
         categorical_cardinality_threshold: typing.Optional[int] = None,
@@ -270,6 +272,8 @@ class GraphReduce(nx.DiGraph):
             train: bool whether the graph is being built for training. If false, date-node joins are skipped.
             feature_families: optional graph-wide override for node SQL auto-feature families
             feature_family_max_columns: optional graph-wide source-column / condition budget for feature families
+            feature_family_max_features_per_column: optional graph-wide cap on derived features emitted by each selected source column within a family
+            feature_propagation_max_functions_per_column: optional graph-wide cap on aggregate functions emitted when an already-derived feature propagates through another reduction
             ts_periods: optional graph-wide override for node time-series lookback periods
             infer_ts_periods: infer relationship-specific lookback periods from observed cadence
             categorical_cardinality_threshold: optional graph-wide categorical cardinality threshold
@@ -328,6 +332,16 @@ class GraphReduce(nx.DiGraph):
             if feature_family_max_columns is None
             else max(0, int(feature_family_max_columns))
         )
+        self.feature_family_max_features_per_column = (
+            None
+            if feature_family_max_features_per_column is None
+            else max(0, int(feature_family_max_features_per_column))
+        )
+        self.feature_propagation_max_functions_per_column = (
+            None
+            if feature_propagation_max_functions_per_column is None
+            else max(0, int(feature_propagation_max_functions_per_column))
+        )
         self.ts_periods = None if ts_periods is None else list(ts_periods)
         self.infer_ts_periods = bool(infer_ts_periods)
         self.categorical_cardinality_threshold = categorical_cardinality_threshold
@@ -365,6 +379,8 @@ class GraphReduce(nx.DiGraph):
             for name, value in {
                 "feature_families": self.feature_families,
                 "feature_family_max_columns": self.feature_family_max_columns,
+                "feature_family_max_features_per_column": self.feature_family_max_features_per_column,
+                "feature_propagation_max_functions_per_column": self.feature_propagation_max_functions_per_column,
                 "ts_periods": self.ts_periods,
                 "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
                 "categorical_top_k": self.categorical_top_k,
@@ -480,6 +496,8 @@ class GraphReduce(nx.DiGraph):
             "date_filters_on_agg": self.date_filters_on_agg,
             "feature_families": self.feature_families,
             "feature_family_max_columns": self.feature_family_max_columns,
+            "feature_family_max_features_per_column": self.feature_family_max_features_per_column,
+            "feature_propagation_max_functions_per_column": self.feature_propagation_max_functions_per_column,
             "ts_periods": self.ts_periods,
             "infer_ts_periods": self.infer_ts_periods,
             "categorical_cardinality_threshold": self.categorical_cardinality_threshold,

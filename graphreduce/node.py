@@ -425,6 +425,39 @@ def _column_name_looks_like_identifier(col: str) -> bool:
     )
 
 
+def _propagated_aggregate_function(col: str) -> typing.Optional[str]:
+    """Infer the aggregate at the end of an auto-generated feature lineage."""
+
+    lowered = col.lower()
+    if re.search(r"_avg_trend_\d+v\d+d$", lowered):
+        return "avg"
+    match = re.search(
+        r"_(avg|sum|min|max|count|nunique|observations|share|variance|any)"
+        r"(?:_(?:\d+d|\d+v\d+d))?$",
+        lowered,
+    )
+    if match is None:
+        return None
+    function = match.group(1)
+    if function in {"nunique", "observations"}:
+        return "count"
+    if function in {"share", "variance"}:
+        return "avg"
+    if function == "any":
+        return "max"
+    return function
+
+
+def _canonical_propagation_function(function: str) -> str:
+    return {
+        "count": "sum",
+        "avg": "avg",
+        "sum": "sum",
+        "min": "min",
+        "max": "max",
+    }.get(function, function)
+
+
 def _column_name_looks_like_categorical_identifier(col: str) -> bool:
     name_parts = set(re.split(r"[^0-9a-zA-Z]+", col.lower()))
     compact = re.sub(r"[^0-9a-zA-Z]+", "", col.lower())
@@ -571,7 +604,7 @@ def _automatic_base_predicate_specs(
     date_column: typing.Optional[str],
     max_predicates: int,
     categorical_top_k: int,
-) -> typing.List[typing.Tuple[str, str]]:
+) -> typing.List[typing.Tuple[str, str, str]]:
     """Select a bounded set of frequent categorical equality predicates."""
 
     if max_predicates <= 0:
@@ -614,13 +647,14 @@ def _automatic_base_predicate_specs(
                     value_index,
                     _safe_sql_alias_part(f"{col}_{value}"),
                     f"{col} = {_sql_literal(value)}",
+                    col,
                 )
             )
 
     candidates.sort(key=lambda candidate: candidate[:3])
     return [
-        (alias, condition)
-        for _, _, _, alias, condition in candidates[:max_predicates]
+        (alias, condition, column)
+        for _, _, _, alias, condition, column in candidates[:max_predicates]
     ]
 
 
@@ -989,6 +1023,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         ] = None,
         annotation_expressions_only: bool = False,
         feature_family_max_columns: int = 16,
+        feature_family_max_features_per_column: typing.Optional[int] = None,
+        feature_propagation_max_functions_per_column: typing.Optional[int] = None,
         is_date_node: bool = False,
         context_keys: typing.Optional[typing.Sequence[str]] = None,
         auto_base_predicate_max: int = 2,
@@ -1080,6 +1116,16 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self.annotation_expressions_only = annotation_expressions_only
         self.context_keys = tuple(context_keys or ())
         self.feature_family_max_columns = max(0, int(feature_family_max_columns))
+        self.feature_family_max_features_per_column = (
+            None
+            if feature_family_max_features_per_column is None
+            else max(0, int(feature_family_max_features_per_column))
+        )
+        self.feature_propagation_max_functions_per_column = (
+            None
+            if feature_propagation_max_functions_per_column is None
+            else max(0, int(feature_propagation_max_functions_per_column))
+        )
         self.auto_base_predicate_max = max(0, int(auto_base_predicate_max))
         self.base_predicate_windows = list(
             dict.fromkeys(
@@ -1692,6 +1738,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
         self._stypes = infer_df_stype(self.df.sample(0.5).limit(10).toPandas())
         agg_funcs = []
+
         reduce_columns = self.colabbrs(reduce_key)
         reduce_column_names = set(reduce_columns) | set(key_parts(reduce_key))
         ts_data = self.is_ts_data(reduce_key)
@@ -1831,7 +1878,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             annotations compiled through ``annotation_expressions``.
           - ``conditional``: point-in-time counts, shares, presence, and changes
             for categorical values and boolean annotations.
-          - ``temporal``: windowed numeric sum/average/min/max aggregates.
+          - ``base``: lifetime aggregates, relationship diversity/repetition,
+            and exposure-normalized activity for dated relationships.
+          - ``temporal``: windowed numeric aggregates, variance and trends,
+            relationship diversity/repetition, and per-day activity.
           - ``sequence``: normalized activity rates, activity shares, burst
             ratios, and active-span features over configured periods.
           - ``episode``: row and distinct-primary-key counts, including windows.
@@ -1839,6 +1889,28 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             caller-configured ``context_keys`` before child rows are reduced.
         """
         agg_funcs = []
+        source_feature_counts: typing.Dict[typing.Tuple[str, str], int] = {}
+
+        def append_source_ops(
+            ops: typing.Iterable[sqlop], *, family: str, column: str
+        ) -> int:
+            """Append one source column's bounded family expansion."""
+
+            candidates = list(ops)
+            limit = self.feature_family_max_features_per_column
+            if limit is not None:
+                key = (family, column)
+                remaining = max(0, limit - source_feature_counts.get(key, 0))
+                candidates = candidates[:remaining]
+            added = 0
+            for op in candidates:
+                if op not in agg_funcs:
+                    agg_funcs.append(op)
+                    added += 1
+            key = (family, column)
+            source_feature_counts[key] = source_feature_counts.get(key, 0) + added
+            return added
+
         selected_families = (
             self.feature_families
             if feature_families is None
@@ -1853,10 +1925,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 f"Unknown feature families {sorted(unknown_families)}; "
                 f"expected one of {sorted(FEATURE_FAMILY_NAMES)}"
             )
-        conditional_specs: list[tuple[str, str]] = []
-        base_predicate_specs: list[tuple[str, str]] = []
-        semantic_conditional_specs: list[tuple[str, str]] = []
-        generic_conditional_specs: list[tuple[str, str]] = []
+        conditional_specs: list[tuple[str, str, str]] = []
+        base_predicate_specs: list[tuple[str, str, str]] = []
+        semantic_conditional_specs: list[tuple[str, str, str]] = []
+        generic_conditional_specs: list[tuple[str, str, str]] = []
+        relationship_identifier_cols: list[str] = []
         temporal_numeric_cols: list[str] = []
         semantic_temporal_cols: list[str] = []
         generic_temporal_cols: list[str] = []
@@ -1872,6 +1945,28 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         ptypes = {col: str(t) for col, t in table_df_sample.dtypes.to_dict().items()}
 
         ts_data = self.is_ts_data(reduce_key)
+        if {"base", "temporal"}.intersection(families):
+            # Primary keys are normally unique per child row, so their distinct
+            # counts and repeat ratios merely restate the row count.  Other
+            # identifiers describe the breadth and repetition of the actual
+            # relationship (items, peers, sessions, categories, and so on).
+            primary_key_names = set()
+            if self.pk:
+                primary_key_names.update(key_parts(self.pk, name="pk"))
+                primary_key_names.update(self.colabbrs(self.pk))
+            relationship_identifier_cols = [
+                col
+                for col in self._stypes
+                if col not in reduce_column_names
+                and col not in primary_key_names
+                and self._is_identifier(col)
+                and len(table_df_sample[col].dropna()) > 0
+                and (
+                    table_df_sample[col].dropna().nunique()
+                    / len(table_df_sample[col].dropna())
+                    < 0.98
+                )
+            ][: self.feature_family_max_columns]
         if "base" in families and ts_data:
             if self.base_predicates is not None:
                 for predicate in self.base_predicates[
@@ -1889,7 +1984,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         )
                     alias = predicate.feature_alias(column)
                     base_predicate_specs.append(
-                        (alias, f"{column} = {_sql_literal(predicate.value)}")
+                        (
+                            alias,
+                            f"{column} = {_sql_literal(predicate.value)}",
+                            column,
+                        )
                     )
             else:
                 base_predicate_specs = _automatic_base_predicate_specs(
@@ -1907,7 +2006,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 if col == self.colabbr(self.date_key):
                     continue
                 if _is_auto_annotated_feature_col(col) or (
-                    str(stype) == "numerical"
+                    (
+                        str(stype) == "numerical"
+                        or pd.api.types.is_bool_dtype(table_df_sample[col])
+                    )
                     and (
                         pd.api.types.is_numeric_dtype(table_df_sample[col])
                         or _sample_is_numeric_object_series(table_df_sample[col])
@@ -1942,6 +2044,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     semantic_conditional_specs.append((
                         _safe_sql_alias_part(col),
                         f"{col} = 1",
+                        col,
                     ))
                     continue
                 semantic_type = str(stype)
@@ -1967,23 +2070,35 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         continue
                     alias = _safe_sql_alias_part(f"{col}_{value}")
                     generic_conditional_specs.append(
-                        (alias, f"{col} = {_sql_literal(value)}")
+                        (alias, f"{col} = {_sql_literal(value)}", col)
                     )
-            conditional_specs = semantic_conditional_specs[
+            # The family budget is a source-column budget, not a condition
+            # budget. Keep all bounded top-value conditions for each selected
+            # column so a single high-cardinality column cannot crowd out the
+            # remaining utility-ranked source columns.
+            selected_conditional_columns: list[str] = []
+            for *_, source_column in (
+                *semantic_conditional_specs,
+                *generic_conditional_specs,
+            ):
+                if source_column not in selected_conditional_columns:
+                    selected_conditional_columns.append(source_column)
+            selected_conditional_columns = selected_conditional_columns[
                 : self.feature_family_max_columns
             ]
-            remaining_conditional = max(
-                0, self.feature_family_max_columns - len(conditional_specs)
-            )
-            conditional_specs += generic_conditional_specs[:remaining_conditional]
+            selected_conditional_set = set(selected_conditional_columns)
+            conditional_specs = [
+                spec
+                for spec in (
+                    *semantic_conditional_specs,
+                    *generic_conditional_specs,
+                )
+                if spec[2] in selected_conditional_set
+            ]
         # Add only 1 count column.
         counted = False
         for col, stype in self._stypes.items():
-            # Get the last function applied (if any)
-            if col.lower().split("_")[-1] in ["avg", "sum", "count", "min", "max"]:
-                last_function = col.lower().split("_")[-1]
-            else:
-                last_function = None
+            last_function = _propagated_aggregate_function(col)
             # Check if it is a label first.
             if "_label" in col:
                 label_func_map = {
@@ -2017,50 +2132,91 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     pd.api.types.is_numeric_dtype(table_df_sample[col])
                     or _sample_is_numeric_object_series(table_df_sample[col])
                 ):
+                    source_ops = []
                     for func in ["sum", "avg", "min", "max"]:
                         col_new = f"{col}_{func}"
-                        op = sqlop(
-                            optype=SQLOpType.aggfunc,
-                            opval=f"{func}({col}) as {col_new}",
+                        source_ops.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{func}({col}) as {col_new}",
+                            )
                         )
-                        if op not in agg_funcs:
-                            agg_funcs.append(op)
+                    append_source_ops(source_ops, family="base", column=col)
                     continue
 
                 # If the physical data type is
                 # a boolean override functionality
-                # that might have been applied and
-                # just call `sum`.
+                # that might have been applied. Preserve both the occurrence
+                # count and the exposure-normalized positive share.
                 if ptypes[col] == "bool":
-                    col_new = f"{col}_sum"
-                    op = sqlop(
-                        optype=SQLOpType.aggfunc,
-                        opval=f"sum(case when {col} then 1 else 0 end) as {col_new}",
+                    append_source_ops(
+                        (
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=f"{expression} as {col}_{suffix}",
+                            )
+                            for suffix, expression in [
+                                (
+                                    "sum",
+                                    f"SUM(CASE WHEN {col} THEN 1 ELSE 0 END)",
+                                ),
+                                (
+                                    "share",
+                                    f"AVG(CASE WHEN {col} THEN 1.0 ELSE 0.0 END)",
+                                ),
+                            ]
+                        ),
+                        family="base",
+                        column=col,
                     )
-                    if op not in agg_funcs:
-                        agg_funcs.append(op)
                     continue
 
                 if self.auto_text_features and _series_looks_like_text(
                     col, table_df_sample[col], _type
                 ):
-                    for op in _sql_text_aggregate_ops(col):
-                        if op not in agg_funcs:
-                            agg_funcs.append(op)
+                    append_source_ops(
+                        _sql_text_aggregate_ops(col), family="base", column=col
+                    )
                     continue
 
                 if _type == "categorical":
-                    for op in _sql_categorical_aggregate_ops(
-                        col=col,
-                        series=table_df_sample[col],
-                        cardinality_threshold=self.categorical_cardinality_threshold,
-                        top_k=self.categorical_top_k,
-                    ):
-                        if op not in agg_funcs:
-                            agg_funcs.append(op)
+                    append_source_ops(
+                        _sql_categorical_aggregate_ops(
+                            col=col,
+                            series=table_df_sample[col],
+                            cardinality_threshold=self.categorical_cardinality_threshold,
+                            top_k=self.categorical_top_k,
+                        ),
+                        family="base",
+                        column=col,
+                    )
                     continue
 
-                for func in type_func_map.get(_type, []):
+                configured_functions = list(type_func_map.get(_type, []))
+                propagation_limit = (
+                    self.feature_propagation_max_functions_per_column
+                )
+                if last_function and propagation_limit is not None:
+                    canonical = _canonical_propagation_function(last_function)
+
+                    def normalized_function(function: str) -> typing.Optional[str]:
+                        return self.FUNCTION_MAPPING.get(function, function)
+
+                    configured_functions = [
+                        function
+                        for function in configured_functions
+                        if normalized_function(function)
+                        in FUNCTION_COMBOS[last_function]
+                    ]
+                    configured_functions.sort(
+                        key=lambda function: (
+                            normalized_function(function) != canonical,
+                            type_func_map.get(_type, []).index(function),
+                        )
+                    )
+                    configured_functions = configured_functions[:propagation_limit]
+
+                for func in configured_functions:
                     # There should be a better top-level mapping
                     # but for now this will do.  SQL engines typically
                     # don't have 'median' and 'mean'.  'mean' is typically
@@ -2118,8 +2274,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                     optype=SQLOpType.aggfunc,
                                     opval=f"{func}" + f"({col}) as {col_new}",
                                 )
-                                if op not in agg_funcs:
-                                    agg_funcs.append(op)
+                                added = append_source_ops(
+                                    [op], family="base", column=col
+                                )
 
                             else:
                                 col_new = f"{col}_avg"
@@ -2127,19 +2284,104 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                     optype=SQLOpType.aggfunc,
                                     opval=f"{func}" + f"({col}) as {col_new}",
                                 )
-                                if op not in agg_funcs:
-                                    agg_funcs.append(op)
+                                added = append_source_ops(
+                                    [op], family="base", column=col
+                                )
                         else:
                             col_new = f"{col}_{func}"
                             op = sqlop(
                                 optype=SQLOpType.aggfunc,
                                 opval=f"{func}" + f"({col}) as {col_new}",
                             )
-                            if op not in agg_funcs:
-                                agg_funcs.append(op)
+                            added = append_source_ops(
+                                [op], family="base", column=col
+                            )
 
-                        if func == "count":
+                        if func == "count" and added:
                             counted = True
+
+        if "base" in families:
+            for col in relationship_identifier_cols:
+                safe_col = _safe_sql_alias_part(col)
+                count_expr = f"COUNT({col})"
+                distinct_expr = f"COUNT(DISTINCT {col})"
+                append_source_ops(
+                    (
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=f"{expression} as {safe_col}_{suffix}",
+                        )
+                        for suffix, expression in [
+                            ("nunique", distinct_expr),
+                            (
+                                "repeat_ratio",
+                                f"({count_expr} - {distinct_expr}) * 1.0 / "
+                                f"NULLIF({count_expr}, 0)",
+                            ),
+                        ]
+                    ),
+                    family="base",
+                    column=col,
+                )
+
+            if ts_data:
+                date_col = self.colabbr(self.date_key)
+                first_event = f"MIN({date_col})"
+                if hasattr(self, "date_node") and self.date_node:
+                    reference = (
+                        f"MAX({self.date_node.prefix}_{self.date_node.date_key})"
+                    )
+                else:
+                    reference = f"'{str(self.cut_date)}'"
+
+                if self.__class__.__name__ in {"SQLNode", "SQLiteNode"}:
+                    observed_seconds = (
+                        f"(julianday({reference}) - julianday({first_event})) "
+                        "* 86400.0"
+                    )
+                elif self.__class__.__name__ in {
+                    "DuckdbNode",
+                    "AthenaNode",
+                    "TrinoNode",
+                }:
+                    observed_seconds = (
+                        f"date_diff('second', {first_event}, {reference})"
+                    )
+                elif self.__class__.__name__ in {"PostgresNode", "RedshiftNode"}:
+                    observed_seconds = (
+                        f"EXTRACT(EPOCH FROM ({reference} - {first_event}))"
+                    )
+                elif self.__class__.__name__ in {
+                    "SnowflakeNode",
+                    "DatabricksNode",
+                    "MySQLNode",
+                }:
+                    observed_seconds = (
+                        f"TIMESTAMPDIFF(SECOND, {first_event}, {reference})"
+                    )
+                else:
+                    observed_seconds = None
+
+                if observed_seconds is not None:
+                    agg_funcs.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=(
+                                f"{observed_seconds} as "
+                                f"{self.prefix}_observed_history_seconds"
+                            ),
+                        )
+                    )
+                    agg_funcs.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=(
+                                "COUNT(*) * 1.0 / NULLIF(("
+                                f"{observed_seconds} / 86400.0) + 1, 0) as "
+                                f"{self.prefix}_events_per_observed_day"
+                            ),
+                        )
+                    )
 
         # If we have time-series data we want to
         # do historical counts over the last periods.
@@ -2296,7 +2538,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     return self._date_subtract_days(base_ref_ts, period)
                 return f"'{self.cut_date - datetime.timedelta(days=period)}'"
 
-            for alias, condition in base_predicate_specs:
+            for alias, condition, _source_column in base_predicate_specs:
                 for period in periods:
                     count_op = sqlop(
                         optype=SQLOpType.aggfunc,
@@ -2471,71 +2713,170 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 dynamic_ref = False
             date_col = self.colabbr(self.date_key)
 
-            def window_condition(period: int) -> str:
+            def window_threshold(period: int) -> str:
                 if dynamic_ref:
-                    threshold = self._date_subtract_days(ref_ts, period)
-                else:
-                    threshold = f"'{self.cut_date - datetime.timedelta(days=period)}'"
-                return f"{date_col} >= {threshold}"
+                    return self._date_subtract_days(ref_ts, period)
+                return f"'{self.cut_date - datetime.timedelta(days=period)}'"
+
+            def window_condition(period: int) -> str:
+                return f"{date_col} >= {window_threshold(period)}"
 
             if "conditional" in families:
-                for alias, condition in conditional_specs:
-                    window_counts: dict[int, str] = {}
-                    for period in self.ts_periods:
-                        window = window_condition(period)
-                        count_expr = (
-                            f"SUM(CASE WHEN ({window}) AND ({condition}) "
-                            f"THEN 1 ELSE 0 END)"
-                        )
-                        denominator = (
-                            f"SUM(CASE WHEN {window} THEN 1 ELSE 0 END)"
-                        )
-                        window_counts[period] = count_expr
-                        for suffix, expression in [
-                            ("count", count_expr),
-                            (
-                                "share",
-                                f"{count_expr} * 1.0 / NULLIF({denominator}, 0)",
-                            ),
-                            (
-                                "any",
-                                f"MAX(CASE WHEN ({window}) AND ({condition}) "
-                                "THEN 1 ELSE 0 END)",
-                            ),
-                        ]:
-                            op = sqlop(
-                                optype=SQLOpType.aggfunc,
-                                opval=f"{expression} as {alias}_{suffix}_{period}d",
+                # Generate in signal-priority order across every condition and
+                # lookback before moving to the next statistic. A per-column
+                # cap therefore preserves breadth across category values and
+                # the full compute horizon instead of keeping only the first
+                # value or shortest window.
+                specs_by_column: typing.Dict[
+                    str, typing.List[typing.Tuple[str, str]]
+                ] = {}
+                for alias, condition, source_column in conditional_specs:
+                    specs_by_column.setdefault(source_column, []).append(
+                        (alias, condition)
+                    )
+                for source_column, specs in specs_by_column.items():
+                    source_ops: list[sqlop] = []
+                    for suffix in ("share", "count", "any"):
+                        for period in self.ts_periods:
+                            window = window_condition(period)
+                            denominator = (
+                                f"SUM(CASE WHEN {window} THEN 1 ELSE 0 END)"
                             )
-                            if op not in agg_funcs:
-                                agg_funcs.append(op)
-                    for period1, period2 in zip(self.ts_periods, self.ts_periods[1:]):
-                        change = (
-                            f"{window_counts[period1]} * 1.0 / "
-                            f"NULLIF({window_counts[period2]}, 0)"
-                        )
-                        agg_funcs.append(
-                            sqlop(
-                                optype=SQLOpType.aggfunc,
-                                opval=f"{change} as {alias}_d{period1}v{period2}_change",
+                            for alias, condition in specs:
+                                count_expr = (
+                                    f"SUM(CASE WHEN ({window}) AND ({condition}) "
+                                    "THEN 1 ELSE 0 END)"
+                                )
+                                expression = {
+                                    "count": count_expr,
+                                    "share": (
+                                        f"{count_expr} * 1.0 / "
+                                        f"NULLIF({denominator}, 0)"
+                                    ),
+                                    "any": (
+                                        f"MAX(CASE WHEN ({window}) AND "
+                                        f"({condition}) THEN 1 ELSE 0 END)"
+                                    ),
+                                }[suffix]
+                                source_ops.append(
+                                    sqlop(
+                                        optype=SQLOpType.aggfunc,
+                                        opval=(
+                                            f"{expression} as "
+                                            f"{alias}_{suffix}_{period}d"
+                                        ),
+                                    )
+                                )
+                    for period1, period2 in zip(
+                        self.ts_periods, self.ts_periods[1:]
+                    ):
+                        window1 = window_condition(period1)
+                        window2 = window_condition(period2)
+                        for alias, condition in specs:
+                            count1 = (
+                                f"SUM(CASE WHEN ({window1}) AND ({condition}) "
+                                "THEN 1 ELSE 0 END)"
                             )
-                        )
+                            count2 = (
+                                f"SUM(CASE WHEN ({window2}) AND ({condition}) "
+                                "THEN 1 ELSE 0 END)"
+                            )
+                            source_ops.append(
+                                sqlop(
+                                    optype=SQLOpType.aggfunc,
+                                    opval=(
+                                        f"{count1} * 1.0 / NULLIF({count2}, 0) "
+                                        f"as {alias}_d{period1}v{period2}_change"
+                                    ),
+                                )
+                            )
+                    append_source_ops(
+                        source_ops,
+                        family="conditional",
+                        column=source_column,
+                    )
 
             if "temporal" in families:
+                for period in self.ts_periods:
+                    window = window_condition(period)
+                    event_count = f"SUM(CASE WHEN {window} THEN 1 ELSE 0 END)"
+                    agg_funcs.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=(
+                                f"{event_count} * 1.0 / NULLIF({period}, 0) as "
+                                f"{self.prefix}_event_rate_{period}d"
+                            ),
+                        )
+                    )
+
+                    for col in relationship_identifier_cols:
+                        safe_col = _safe_sql_alias_part(col)
+                        count_expr = (
+                            f"COUNT(CASE WHEN {window} THEN {col} END)"
+                        )
+                        distinct_expr = (
+                            f"COUNT(DISTINCT CASE WHEN {window} THEN {col} END)"
+                        )
+                        for suffix, expression in [
+                            ("nunique", distinct_expr),
+                            (
+                                "repeat_ratio",
+                                f"({count_expr} - {distinct_expr}) * 1.0 / "
+                                f"NULLIF({count_expr}, 0)",
+                            ),
+                        ]:
+                            append_source_ops(
+                                [
+                                    sqlop(
+                                        optype=SQLOpType.aggfunc,
+                                        opval=(
+                                            f"{expression} as "
+                                            f"{safe_col}_{suffix}_{period}d"
+                                        ),
+                                    )
+                                ],
+                                family="temporal",
+                                column=col,
+                            )
+
                 for col in temporal_numeric_cols:
                     safe_col = _safe_sql_alias_part(col)
-                    for period in self.ts_periods:
-                        window = window_condition(period)
-                        for suffix, function in [
-                            ("sum", "SUM"),
-                            ("avg", "AVG"),
-                            ("min", "MIN"),
-                            ("max", "MAX"),
-                        ]:
-                            expression = (
-                                f"{function}(CASE WHEN {window} THEN {col} END)"
-                            )
-                            agg_funcs.append(
+                    source_ops: list[sqlop] = []
+                    is_boolean = pd.api.types.is_bool_dtype(table_df_sample[col])
+                    numeric_value = (
+                        f"CASE WHEN {col} THEN 1.0 ELSE 0.0 END"
+                        if is_boolean
+                        else col
+                    )
+                    # Preserve all lookback scales before adding lower-priority
+                    # summaries. This makes small per-column caps span the
+                    # actual compute horizon instead of truncating to only the
+                    # shortest periods.
+                    for suffix, function in [
+                        ("avg", "AVG"),
+                        ("observations", "COUNT"),
+                        ("variance", None),
+                        ("sum", "SUM"),
+                        ("min", "MIN"),
+                        ("max", "MAX"),
+                    ]:
+                        for period in self.ts_periods:
+                            window = window_condition(period)
+                            value = f"CASE WHEN {window} THEN {numeric_value} END"
+                            if suffix == "variance":
+                                mean = f"AVG({value})"
+                                second_moment = (
+                                    "AVG(CASE WHEN "
+                                    f"{window} THEN ({numeric_value}) * "
+                                    f"({numeric_value}) END)"
+                                )
+                                expression = (
+                                    f"({second_moment} - ({mean} * {mean}))"
+                                )
+                            else:
+                                expression = f"{function}({value})"
+                            source_ops.append(
                                 sqlop(
                                     optype=SQLOpType.aggfunc,
                                     opval=(
@@ -2544,6 +2885,34 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                     ),
                                 )
                             )
+
+                    for recent_period, prior_period in zip(
+                        self.ts_periods, self.ts_periods[1:]
+                    ):
+                        if prior_period <= recent_period:
+                            continue
+                        recent_window = window_condition(recent_period)
+                        prior_window = window_condition(prior_period)
+                        recent_avg = (
+                            "AVG(CASE WHEN "
+                            f"{recent_window} THEN {numeric_value} END)"
+                        )
+                        prior_avg = (
+                            "AVG(CASE WHEN "
+                            f"({date_col} < {window_threshold(recent_period)}) "
+                            f"AND ({prior_window}) THEN {numeric_value} END)"
+                        )
+                        source_ops.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=(
+                                    f"({recent_avg} - {prior_avg}) as "
+                                    f"{safe_col}_avg_trend_"
+                                    f"{recent_period}v{prior_period}d"
+                                ),
+                            )
+                        )
+                    append_source_ops(source_ops, family="temporal", column=col)
 
         if "episode" in families:
             # These denominators make conditional rates interpretable and are

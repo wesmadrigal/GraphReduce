@@ -4,6 +4,73 @@ Notable changes to GraphReduce are documented here. The package build appends
 this file to the README shown on PyPI, and the same notes should be copied into
 the corresponding GitHub Release.
 
+## [1.10.14] - 2026-09-01
+
+### Changed
+
+- Removed the unused `abstract.jwrotator` runtime dependency. GraphReduce has
+  no imports from that package; removing it also keeps downstream optional
+  integrations free of an unnecessary GPL dependency.
+
+## [1.10.13] - 2026-09-01
+
+### Fixed
+
+- Normalize Boolean temporal values to numeric `0.0`/`1.0` expressions before
+  generating windowed averages, variances, sums, and trends. This prevents
+  DuckDB from receiving invalid operations such as `AVG(BOOLEAN)` while
+  retaining Boolean activity signal.
+
+## [1.10.12] - 2026-08-31
+
+### Added
+
+- Added the optional graph- and node-level
+  `feature_propagation_max_functions_per_column` budget. It prevents an
+  already-derived feature from branching into every compatible aggregate at
+  each additional graph hop.
+- Propagation budgets prioritize the aggregation that preserves the feature's
+  semantics: max-to-max, min-to-min, sum-to-sum, count-to-sum, and
+  average/share-to-average.
+
+## [1.10.11] - 2026-08-31
+
+### Added
+
+- Added the optional graph- and node-level
+  `feature_family_max_features_per_column` budget for SQL automatic features.
+  It independently caps each selected source column's derived expansion while
+  leaving source-column selection under `feature_family_max_columns`.
+- Conditional-family source budgets now count distinct source columns rather
+  than individual category predicates. Bounded conditional and temporal
+  expansions are ordered to retain category and lookback breadth under a cap.
+
+## [1.10.10] - 2026-08-31
+
+### Added
+
+- Added bounded lifetime relationship diversity and repeat-ratio features to
+  the SQL `base` family, excluding primary keys and effectively unique sample
+  identifiers that merely restate row counts.
+- Added observed-history age, lifetime event intensity, and boolean positive
+  shares to the SQL `base` family.
+- Added windowed relationship diversity, repeat ratios, per-day activity,
+  observation counts, variance, and recent-versus-prior trends to the SQL
+  `temporal` family.
+- Added SQLite and DuckDB coverage for fixed and per-entity dynamic cutoffs,
+  including historical outcomes whose availability timestamp is used as the
+  leakage-safe node date key.
+
+## [1.10.9] - 2026-08-31
+
+### Fixed
+
+- Prevented SQL automatic feature inference from emitting numeric value
+  aggregates for columns whose inference samples contain no observed values.
+  This avoids persisting invalid operations such as `AVG(VARCHAR)` when an
+  all-null SQL string sample is represented by pandas with a numeric
+  placeholder dtype.
+
 ## [1.10.3] - 2026-08-27
 
 ### Added

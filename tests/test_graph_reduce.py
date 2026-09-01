@@ -450,6 +450,8 @@ def test_graph_feature_settings_override_every_node_when_provided():
         prefix="user",
         feature_families=("base",),
         feature_family_max_columns=2,
+        feature_family_max_features_per_column=4,
+        feature_propagation_max_functions_per_column=2,
         ts_periods=[7],
         categorical_cardinality_threshold=3,
         categorical_top_k=1,
@@ -475,6 +477,8 @@ def test_graph_feature_settings_override_every_node_when_provided():
         compute_layer=ComputeLayerEnum.sqlite,
         feature_families=("temporal", "conditional", "temporal"),
         feature_family_max_columns=8,
+        feature_family_max_features_per_column=6,
+        feature_propagation_max_functions_per_column=1,
         ts_periods=(1, 30, 90),
         categorical_cardinality_threshold=12,
         categorical_top_k=5,
@@ -494,6 +498,8 @@ def test_graph_feature_settings_override_every_node_when_provided():
     for node in (parent, child):
         assert node.feature_families == ("temporal", "conditional")
         assert node.feature_family_max_columns == 8
+        assert node.feature_family_max_features_per_column == 6
+        assert node.feature_propagation_max_functions_per_column == 1
         assert node.ts_periods == [1, 30, 90]
         assert node.categorical_cardinality_threshold == 12
         assert node.categorical_top_k == 5
@@ -515,6 +521,8 @@ def test_graph_omitted_feature_settings_preserve_node_configuration():
         prefix="user",
         feature_families=("base", "episode"),
         feature_family_max_columns=2,
+        feature_family_max_features_per_column=3,
+        feature_propagation_max_functions_per_column=2,
         ts_periods=[7],
         categorical_top_k=1,
         auto_text_features=False,
@@ -542,11 +550,15 @@ def test_graph_omitted_feature_settings_preserve_node_configuration():
 
     assert parent.feature_families == ("base", "episode")
     assert parent.feature_family_max_columns == 2
+    assert parent.feature_family_max_features_per_column == 3
+    assert parent.feature_propagation_max_functions_per_column == 2
     assert parent.ts_periods == [7]
     assert parent.categorical_top_k == 1
     assert parent.auto_text_features is False
     assert child.feature_families == ("base", "temporal")
     assert child.feature_family_max_columns == 5
+    assert child.feature_family_max_features_per_column is None
+    assert child.feature_propagation_max_functions_per_column is None
     assert child.ts_periods == [30, 90]
     assert child.categorical_top_k == 4
     assert child.auto_text_features is True
@@ -558,6 +570,8 @@ def test_graph_feature_settings_accept_explicit_zero_and_empty_overrides():
         pk="id",
         prefix="evt",
         feature_family_max_columns=5,
+        feature_family_max_features_per_column=5,
+        feature_propagation_max_functions_per_column=5,
         ts_periods=[7, 30],
         categorical_top_k=4,
         compute_layer=ComputeLayerEnum.sqlite,
@@ -566,6 +580,8 @@ def test_graph_feature_settings_accept_explicit_zero_and_empty_overrides():
         parent_node=node,
         compute_layer=ComputeLayerEnum.sqlite,
         feature_family_max_columns=0,
+        feature_family_max_features_per_column=0,
+        feature_propagation_max_functions_per_column=0,
         ts_periods=(),
         categorical_top_k=0,
     )
@@ -574,6 +590,8 @@ def test_graph_feature_settings_accept_explicit_zero_and_empty_overrides():
     graph.hydrate_graph_attrs()
 
     assert node.feature_family_max_columns == 0
+    assert node.feature_family_max_features_per_column == 0
+    assert node.feature_propagation_max_functions_per_column == 0
     assert node.ts_periods == []
     assert node.categorical_top_k == 0
 
@@ -714,6 +732,419 @@ def test_sql_auto_feature_families_generate_temporal_conditionals_and_episodes()
     assert user_1["evt_gr_is_invited_count_7d"] == 1
     assert user_1["evt_gr_is_invited_share_7d"] == 0.5
     assert user_1["evt_num_episodes_7d"] == 2
+    conn.close()
+
+
+def test_sql_auto_base_adds_bounded_relationship_diversity_and_exposure_rates():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3, 4],
+            "evt_user_id": [1, 1, 1, 2],
+            "evt_item_id": [10, 10, 11, 12],
+            "evt_session_id": [100, 101, 101, 102],
+            "evt_ts": pd.to_datetime(
+                ["2024-01-01", "2024-01-05", "2024-01-09", "2024-01-08"]
+            ),
+        }
+    )
+    sample.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("base",),
+        feature_family_max_columns=1,
+        auto_base_predicate_max=0,
+        ts_periods=[7],
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    feature_sql = [op.opval for op in feature_ops if op.optype == SQLOpType.aggfunc]
+
+    assert any("evt_item_id_nunique" in op for op in feature_sql)
+    assert any("evt_item_id_repeat_ratio" in op for op in feature_sql)
+    assert not any("evt_session_id_nunique" in op for op in feature_sql)
+    assert not any("evt_id_nunique" in op for op in feature_sql)
+    assert any("evt_observed_history_seconds" in op for op in feature_sql)
+    assert any("evt_events_per_observed_day" in op for op in feature_sql)
+
+    result = pd.read_sql_query(node.build_query(feature_ops), conn)
+    user_1 = result[result["evt_user_id"] == 1].iloc[0]
+    assert user_1["evt_item_id_nunique"] == 2
+    assert user_1["evt_item_id_repeat_ratio"] == pytest.approx(1 / 3)
+    assert user_1["evt_observed_history_seconds"] == pytest.approx(9 * 86400)
+    assert user_1["evt_events_per_observed_day"] == pytest.approx(0.3)
+    conn.close()
+
+
+def test_sql_auto_temporal_adds_windowed_diversity_variance_and_trends():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3, 4, 5],
+            "evt_user_id": [1, 1, 1, 1, 2],
+            "evt_item_id": [10, 10, 11, 12, 13],
+            "evt_value": [8.0, 6.0, 2.0, 100.0, 5.0],
+            "evt_ts": pd.to_datetime(
+                [
+                    "2024-01-09",
+                    "2024-01-08",
+                    "2024-01-05",
+                    "2023-12-20",
+                    "2024-01-09",
+                ]
+            ),
+        }
+    )
+    sample.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("temporal",),
+        feature_family_max_columns=2,
+        ts_periods=[3, 7],
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["mean", "sum", "min", "max"]},
+    )
+    result = pd.read_sql_query(node.build_query(feature_ops), conn)
+    user_1 = result[result["evt_user_id"] == 1].iloc[0]
+
+    assert user_1["evt_event_rate_3d"] == pytest.approx(2 / 3)
+    assert user_1["evt_item_id_nunique_7d"] == 2
+    assert user_1["evt_item_id_repeat_ratio_7d"] == pytest.approx(1 / 3)
+    assert user_1["evt_value_variance_3d"] == pytest.approx(1.0)
+    assert user_1["evt_value_avg_trend_3v7d"] == pytest.approx(5.0)
+    conn.close()
+
+
+def test_sql_auto_features_caps_each_selected_source_column_per_family():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3, 4, 5, 6],
+            "evt_user_id": [1, 1, 1, 2, 2, 2],
+            "evt_value": [1.0, 2.0, 4.0, 10.0, 20.0, 40.0],
+            "evt_channel": ["web", "app", "store", "web", "app", "store"],
+            "evt_status": ["new", "won", "lost", "new", "won", "lost"],
+            "evt_ts": pd.date_range("2024-01-01", periods=6),
+        }
+    )
+    sample.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("base", "temporal", "conditional"),
+        feature_family_max_columns=2,
+        feature_family_max_features_per_column=3,
+        categorical_top_k=3,
+        auto_base_predicate_max=0,
+        ts_periods=[1, 3, 7, 30],
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={
+            "numerical": ["mean", "sum", "min", "max"],
+            "categorical": ["count", "nunique"],
+        },
+    )
+    aliases = [
+        op.opval.rsplit(" as ", 1)[-1].lower()
+        for op in feature_ops
+        if op.optype == SQLOpType.aggfunc and " as " in op.opval.lower()
+    ]
+
+    temporal_value = [
+        alias
+        for alias in aliases
+        if alias.startswith("evt_value_") and alias.endswith("d")
+    ]
+    conditional_channel = [
+        alias
+        for alias in aliases
+        if alias.startswith("evt_channel_") and alias.endswith("d")
+    ]
+    conditional_status = [
+        alias
+        for alias in aliases
+        if alias.startswith("evt_status_") and alias.endswith("d")
+    ]
+    assert len(temporal_value) == 3
+    assert len(conditional_channel) == 3
+    assert len(conditional_status) == 3
+    assert all("_avg_" in alias for alias in temporal_value)
+    conn.close()
+
+
+@pytest.mark.parametrize(
+    ("input_column", "expected_alias"),
+    [
+        ("evt_amount_max", "evt_amount_max_max"),
+        ("evt_amount_min", "evt_amount_min_min"),
+        ("evt_amount_sum", "evt_amount_sum_sum"),
+        ("evt_amount_count", "evt_amount_count_sum"),
+        ("evt_amount_avg", "evt_amount_avg_avg"),
+    ],
+)
+def test_sql_auto_features_keeps_one_canonical_propagation_function(
+    input_column, expected_alias
+):
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "mid_parent_id": [1, 1, 2],
+            input_column: [1.0, 2.0, 3.0],
+        }
+    )
+    sample.to_sql("intermediate", conn, index=False)
+    node = SQLNode(
+        fpath="intermediate",
+        pk="parent_id",
+        prefix="mid",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        feature_families=("base",),
+        feature_family_max_features_per_column=32,
+        feature_propagation_max_functions_per_column=1,
+    )
+    node._cur_data_ref = "intermediate"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="parent_id",
+        type_func_map={"numerical": ["mean", "sum", "min", "max"]},
+    )
+    propagated_aliases = [
+        op.opval.rsplit(" as ", 1)[-1]
+        for op in feature_ops
+        if op.optype == SQLOpType.aggfunc and input_column in op.opval
+    ]
+
+    assert propagated_aliases == [expected_alias]
+    conn.close()
+
+
+def test_duckdb_executes_relationship_and_temporal_signal_sql():
+    conn = duckdb.connect()
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3, 4],
+            "evt_user_id": [1, 1, 1, 2],
+            "evt_item_id": [10, 10, 11, 12],
+            "evt_value": [8.0, 6.0, 2.0, 5.0],
+            "evt_ts": pd.to_datetime(
+                ["2024-01-09", "2024-01-08", "2024-01-05", "2024-01-09"]
+            ),
+        }
+    )
+    conn.register("events", sample)
+    node = DuckdbNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.duckdb,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("base", "temporal"),
+        feature_family_max_columns=2,
+        auto_base_predicate_max=0,
+        ts_periods=[3, 7],
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["mean", "sum", "min", "max"]},
+    )
+    result = conn.sql(node.build_query(feature_ops)).to_df()
+    user_1 = result[result["evt_user_id"] == 1].iloc[0]
+
+    assert user_1["evt_item_id_nunique"] == 2
+    assert user_1["evt_item_id_repeat_ratio_7d"] == pytest.approx(1 / 3)
+    assert user_1["evt_value_variance_3d"] == pytest.approx(1.0)
+    assert user_1["evt_value_avg_trend_3v7d"] == pytest.approx(5.0)
+    conn.close()
+
+
+def test_duckdb_temporal_features_normalize_boolean_values_to_numbers():
+    conn = duckdb.connect()
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3, 4],
+            "evt_user_id": [1, 1, 1, 2],
+            "evt_clicked": [True, False, True, False],
+            "evt_ts": pd.to_datetime(
+                ["2024-01-09", "2024-01-08", "2024-01-05", "2024-01-09"]
+            ),
+        }
+    )
+    conn.register("events", sample)
+    node = DuckdbNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.duckdb,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("base", "temporal"),
+        feature_family_max_columns=1,
+        auto_base_predicate_max=0,
+        ts_periods=[3, 7],
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["mean", "sum", "min", "max"]},
+    )
+    result = conn.sql(node.build_query(feature_ops)).to_df()
+    user_1 = result[result["evt_user_id"] == 1].iloc[0]
+
+    assert user_1["evt_clicked_avg_3d"] == pytest.approx(0.5)
+    assert user_1["evt_clicked_observations_3d"] == 2
+    assert user_1["evt_clicked_variance_3d"] == pytest.approx(0.25)
+    assert user_1["evt_clicked_sum_3d"] == pytest.approx(1.0)
+    assert user_1["evt_clicked_avg_trend_3v7d"] == pytest.approx(-0.5)
+    conn.close()
+
+
+def test_historical_outcomes_use_available_at_as_a_leakage_safe_date_key():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "hist_label_id": [1, 2, 3, 4, 5],
+            "hist_user_id": [1, 1, 1, 1, 2],
+            "hist_outcome": [1, 0, 1, 1, 0],
+            "hist_available_at": pd.to_datetime(
+                [
+                    "2024-01-05",
+                    "2024-01-08",
+                    "2024-01-10",
+                    "2024-01-12",
+                    "2024-01-08",
+                ]
+            ),
+        }
+    )
+    sample.to_sql("historical_labels", conn, index=False)
+    node = SQLNode(
+        fpath="historical_labels",
+        pk="label_id",
+        prefix="hist",
+        # Availability time, rather than outcome occurrence time, is the
+        # point-in-time contract for historical target features.
+        date_key="available_at",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        compute_period_val=365,
+        feature_families=("base", "temporal"),
+        feature_family_max_columns=2,
+        auto_base_predicate_max=0,
+        ts_periods=[3, 7],
+    )
+    node._cur_data_ref = "historical_labels"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["mean", "sum", "min", "max"]},
+    )
+    filters = [op.opval for op in feature_ops if op.optype == SQLOpType.where]
+    assert "hist_available_at < '2024-01-10 00:00:00'" in filters
+
+    result = pd.read_sql_query(node.build_query(feature_ops), conn)
+    user_1 = result[result["hist_user_id"] == 1].iloc[0]
+    assert user_1["hist_outcome_avg"] == pytest.approx(0.5)
+    assert user_1["hist_outcome_avg_7d"] == pytest.approx(0.5)
+    assert user_1["hist_outcome_variance_7d"] == pytest.approx(0.25)
+    assert user_1["hist_outcome_avg_trend_3v7d"] == pytest.approx(-1.0)
+    conn.close()
+
+
+def test_historical_outcomes_respect_dynamic_entity_cutoffs_in_duckdb():
+    conn = duckdb.connect()
+    sample = pd.DataFrame(
+        {
+            "hist_label_id": [1, 2, 3, 4],
+            "hist_user_id": [1, 1, 2, 2],
+            "hist_outcome": [1, 0, 0, 1],
+            "hist_available_at": pd.to_datetime(
+                ["2024-01-08", "2024-01-11", "2024-01-18", "2024-01-21"]
+            ),
+            "cut_cutoff": pd.to_datetime(
+                ["2024-01-10", "2024-01-10", "2024-01-20", "2024-01-20"]
+            ),
+        }
+    )
+    conn.register("historical_labels", sample)
+    date_node = DuckdbNode(
+        fpath="cutoffs",
+        pk="user_id",
+        prefix="cut",
+        date_key="cutoff",
+        client=conn,
+        compute_layer=ComputeLayerEnum.duckdb,
+        is_date_node=True,
+    )
+    node = DuckdbNode(
+        fpath="historical_labels",
+        pk="label_id",
+        prefix="hist",
+        date_key="available_at",
+        client=conn,
+        compute_layer=ComputeLayerEnum.duckdb,
+        compute_period_val=365,
+        feature_families=("base", "temporal"),
+        feature_family_max_columns=2,
+        auto_base_predicate_max=0,
+        ts_periods=[7],
+    )
+    node._cur_data_ref = "historical_labels"
+    node.date_node = date_node
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["mean", "sum", "min", "max"]},
+    )
+    filters = [op.opval for op in feature_ops if op.optype == SQLOpType.where]
+    assert "hist_available_at < cut_cutoff" in filters
+
+    result = conn.sql(node.build_query(feature_ops)).to_df().set_index("hist_user_id")
+    assert result.loc[1, "hist_outcome_avg"] == pytest.approx(1.0)
+    assert result.loc[2, "hist_outcome_avg"] == pytest.approx(0.0)
     conn.close()
 
 
