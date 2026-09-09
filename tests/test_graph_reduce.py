@@ -1387,6 +1387,55 @@ def test_sql_auto_base_predicate_budget_can_be_disabled():
     conn.close()
 
 
+def test_sql_auto_predicate_aliases_are_unique_after_value_sanitization():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "sear_id": [1, 2, 3, 4, 5, 6],
+            "sear_user_id": [1, 1, 1, 2, 2, 2],
+            "sear_searchquery": ["", "?", ".", "", "?", "."],
+            "sear_ts": pd.to_datetime(["2024-01-01"] * 6),
+        }
+    )
+    sample.to_sql("searches", conn, index=False)
+    node = SQLNode(
+        fpath="searches",
+        pk="id",
+        prefix="sear",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("base", "conditional"),
+        auto_base_predicate_max=3,
+        base_predicate_windows=(7,),
+        categorical_top_k=3,
+        ts_periods=[7],
+    )
+    node._cur_data_ref = "searches"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    aliases = [
+        op.opval.rsplit(" as ", 1)[-1].lower()
+        for op in feature_ops
+        if op.optype == SQLOpType.aggfunc and " as " in op.opval.lower()
+    ]
+
+    assert len(aliases) == len(set(aliases))
+    result = pd.read_sql_query(node.build_query(feature_ops), conn)
+    predicate_columns = [
+        column
+        for column in result.columns
+        if column.startswith("sear_searchquery") and column.endswith("_count_7d")
+    ]
+    assert len(predicate_columns) == 3
+    conn.close()
+
+
 def test_sql_auto_base_uses_explicit_predicates_over_sample_frequency():
     conn = sqlite3.connect(":memory:")
     sample = pd.DataFrame(

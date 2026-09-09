@@ -6,7 +6,7 @@ from graphreduce.feature_schema import (
 )
 from graphreduce.predicates import EqualityPredicate
 
-__version__ = '1.10.14'
+__version__ = '1.10.15'
 
 __all__ = [
     "FeatureColumn",

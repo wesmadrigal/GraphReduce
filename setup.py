@@ -15,7 +15,7 @@ if __name__ == "__main__":
 
     setuptools.setup(
         name="graphreduce",
-        version = "1.10.14",
+        version = "1.10.15",
         url="https://github.com/wesmadrigal/graphreduce",
         #packages=["graphreduce"],
         packages=setuptools.find_packages(

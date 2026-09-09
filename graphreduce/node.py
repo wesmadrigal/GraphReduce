@@ -278,6 +278,35 @@ def _safe_sql_alias_part(value: typing.Any, max_len: int = 40) -> str:
     return alias
 
 
+def _uniquify_predicate_specs(
+    specs: typing.Iterable[typing.Tuple[str, str, str]],
+) -> typing.List[typing.Tuple[str, str, str]]:
+    """Return predicate specs with stable, collision-free SQL aliases."""
+
+    unique_specs: typing.List[typing.Tuple[str, str, str]] = []
+    seen_predicates: typing.Set[typing.Tuple[str, str]] = set()
+    used_aliases: typing.Set[str] = set()
+    for alias, condition, column in specs:
+        predicate = (column, condition)
+        if predicate in seen_predicates:
+            continue
+        seen_predicates.add(predicate)
+
+        resolved_alias = alias
+        if resolved_alias.lower() in used_aliases:
+            digest = hashlib.md5(
+                f"{column}\0{condition}".encode("utf-8")
+            ).hexdigest()[:8]
+            resolved_alias = f"{alias}_{digest}"
+            collision_index = 2
+            while resolved_alias.lower() in used_aliases:
+                resolved_alias = f"{alias}_{digest}_{collision_index}"
+                collision_index += 1
+        used_aliases.add(resolved_alias.lower())
+        unique_specs.append((resolved_alias, condition, column))
+    return unique_specs
+
+
 def _balanced_sql_add(expressions: typing.Sequence[str]) -> str:
     """Build a shallow SQL addition tree for wide-row scoring expressions."""
 
@@ -1999,6 +2028,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     max_predicates=self.auto_base_predicate_max,
                     categorical_top_k=self.categorical_top_k,
                 )
+            base_predicate_specs = _uniquify_predicate_specs(base_predicate_specs)
         if "temporal" in families and ts_data:
             for col, stype in self._stypes.items():
                 if col in reduce_column_names or self._is_identifier(col):
@@ -2095,6 +2125,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 )
                 if spec[2] in selected_conditional_set
             ]
+            conditional_specs = _uniquify_predicate_specs(conditional_specs)
         # Add only 1 count column.
         counted = False
         for col, stype in self._stypes.items():
