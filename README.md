@@ -187,6 +187,22 @@ configured by the application.
 - [End-to-end examples](https://wesmadrigal.github.io/graphreduce/end_to_end_examples/):
   complete multi-table and multi-backend workflows.
 
+## Citation
+
+If GraphReduce contributes to your research or production work, please cite
+the project:
+
+```bibtex
+@software{madrigal_graphreduce_2026,
+  author  = {Madrigal, Wes},
+  title   = {GraphReduce: Relational Feature Engineering for Tabular Machine Learning},
+  year    = {2026},
+  url     = {https://github.com/wesmadrigal/GraphReduce}
+}
+```
+
+For reproducible research, cite the specific GitHub release or commit used.
+
 ## Project status
 
 GraphReduce is under active development. The public surface is broad, and
