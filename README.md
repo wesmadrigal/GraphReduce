@@ -159,6 +159,12 @@ For a runnable version backed by repository sample data, see
 
 ## Choose an execution path
 
+![One GraphReduce graph with interchangeable compute engines](./docs/assets/images/compute_engine_pluggability.png)
+
+The graph topology, time-window configuration, and intended output grain stay
+stable across engines. Backend-specific expressions, clients, storage access,
+and materialization behavior may still need engine-specific configuration.
+
 | Need | Node type | Entry point |
 | --- | --- | --- |
 | Automatic dataframe features | `DynamicNode` | `do_transformations()` |

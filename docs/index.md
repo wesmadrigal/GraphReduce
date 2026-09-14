@@ -89,6 +89,8 @@ pip install -e ".[dev]"
 
 ## Execution paths
 
+![One GraphReduce graph with interchangeable compute engines](assets/images/compute_engine_pluggability.png)
+
 | Workload | Node | Execute with |
 | --- | --- | --- |
 | Automatic dataframe features | `DynamicNode` | `GraphReduce.do_transformations()` |

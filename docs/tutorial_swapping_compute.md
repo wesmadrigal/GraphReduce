@@ -4,6 +4,12 @@ GraphReduce keeps the graph structure and node operations from the execution
 engine. Switching engines is easiest when the graph uses `DynamicNode` and
 automatic features; custom node methods remain backend-specific.
 
+![One GraphReduce graph with interchangeable compute engines](assets/images/compute_engine_pluggability.png)
+
+The graph topology, time-window configuration, and intended output grain form
+the portable contract. Engine-specific expressions, clients, storage access,
+and materialization behavior remain integration concerns.
+
 ## Backend map
 
 | Workload | `ComputeLayerEnum` | Typical node | Extra |
