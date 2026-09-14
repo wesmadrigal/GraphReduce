@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760">
+  <defs>
+    <style>
+      .title { font: 700 34px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .label { font: 600 14px Arial, sans-serif; fill: #102a43; }
+      .text { font: 13px Arial, sans-serif; fill: #243b53; }
+      .small { font: 12px Arial, sans-serif; fill: #486581; }
+      .white { fill: #ffffff; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 z" fill="#334e68" />
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="760" fill="#f8fbff" />
+  <text x="44" y="56" class="title">Where Most of the Time Is Spent</text>
+  <text x="44" y="82" class="subtitle">In tabular ML/AI, feature engineering is often dominated by data discovery and integration before modeling can begin.</text>
+
+  <rect x="40" y="112" width="1320" height="220" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="60" y="142" class="section">Typical pre-model workflow in a data lake / warehouse</text>
+
+  <rect x="72" y="172" width="220" height="118" rx="10" fill="#ffe8e8" stroke="#d64545"/>
+  <text x="88" y="198" class="label">1) Table discovery</text>
+  <text x="88" y="220" class="text">Find relevant entities across</text>
+  <text x="88" y="238" class="text">many schemas, marts, and teams</text>
+
+  <rect x="332" y="172" width="220" height="118" rx="10" fill="#fff1df" stroke="#c05621"/>
+  <text x="348" y="198" class="label">2) Relationship discovery</text>
+  <text x="348" y="220" class="text">Identify foreign keys, grain,</text>
+  <text x="348" y="238" class="text">and one-to-many cardinality</text>
+
+  <rect x="592" y="172" width="220" height="118" rx="10" fill="#fff9df" stroke="#b7791f"/>
+  <text x="608" y="198" class="label">3) Time semantics</text>
+  <text x="608" y="220" class="text">Define cut date, history windows,</text>
+  <text x="608" y="238" class="text">and label look-forward periods</text>
+
+  <rect x="852" y="172" width="220" height="118" rx="10" fill="#e8f6ff" stroke="#2b6cb0"/>
+  <text x="868" y="198" class="label">4) Integration engineering</text>
+  <text x="868" y="220" class="text">Join, reduce, aggregate, and</text>
+  <text x="868" y="238" class="text">track column lineage/prefixes</text>
+
+  <rect x="1112" y="172" width="220" height="118" rx="10" fill="#e9fff4" stroke="#2f855a"/>
+  <text x="1128" y="198" class="label">5) Feature vector output</text>
+  <text x="1128" y="220" class="text">Unified parent-grain table</text>
+  <text x="1128" y="238" class="text">finally ready for model .fit()</text>
+
+  <line x1="292" y1="230" x2="332" y2="230" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <line x1="552" y1="230" x2="592" y2="230" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <line x1="812" y1="230" x2="852" y2="230" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <line x1="1072" y1="230" x2="1112" y2="230" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+
+  <rect x="40" y="356" width="1320" height="340" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="60" y="388" class="section">Time allocation (typical tabular DS projects)</text>
+
+  <text x="70" y="430" class="label">Data discovery + integration + feature engineering</text>
+  <rect x="70" y="446" width="1120" height="58" rx="10" fill="#f56565"/>
+  <text x="90" y="482" class="white label">~80-90% of project effort</text>
+
+  <text x="70" y="550" class="label">Model training / tuning / evaluation</text>
+  <rect x="70" y="566" width="260" height="58" rx="10" fill="#48bb78"/>
+  <text x="90" y="602" class="white label">~10-20%</text>
+
+  <text x="380" y="583" class="small">Once data is integrated into a clean parent-grain feature matrix, modeling is usually straightforward.</text>
+  <text x="70" y="660" class="small">This is the bottleneck GraphReduce targets: codifying table graphs, FK edges, cardinality-aware rollups, point-in-time windows, and lineage-preserving joins.</text>
+</svg>
