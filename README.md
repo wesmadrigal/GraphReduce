@@ -19,9 +19,9 @@ as important as scale:
 - **Multiple execution engines.** Use dataframe backends or compile the graph
   into SQL.
 
-[Documentation](https://wesmadrigal.github.io/graphreduce/) ·
-[Quickstart](https://wesmadrigal.github.io/graphreduce/tutorial_index/) ·
-[Examples](https://wesmadrigal.github.io/graphreduce/end_to_end_examples/)
+[Documentation](https://wesmadrigal.github.io/GraphReduce/) ·
+[Quickstart](https://wesmadrigal.github.io/GraphReduce/tutorial_index/) ·
+[Examples](https://wesmadrigal.github.io/GraphReduce/end_to_end_examples/)
 
 ![GraphReduce modeling and feature rollup](./docs/graphreduce_modeling_overview.svg)
 
@@ -155,7 +155,7 @@ the label window receives a null label. Convert that null to zero only when “n
 event” has that meaning for your target.
 
 For a runnable version backed by repository sample data, see
-[Hello World](https://wesmadrigal.github.io/graphreduce/end_to_end_examples/hello_world/).
+[Hello World](https://wesmadrigal.github.io/GraphReduce/end_to_end_examples/hello_world/).
 
 ## Choose an execution path
 
@@ -173,18 +173,18 @@ configured by the application.
 
 ## Where to go next
 
-- [Fundamentals](https://wesmadrigal.github.io/graphreduce/fundamentals/):
+- [Fundamentals](https://wesmadrigal.github.io/GraphReduce/fundamentals/):
   execution order, cardinality, and time semantics.
-- [Abstractions](https://wesmadrigal.github.io/graphreduce/abstractions/): the
+- [Abstractions](https://wesmadrigal.github.io/GraphReduce/abstractions/): the
   responsibilities of graphs, nodes, and edges.
-- [Configuration](https://wesmadrigal.github.io/graphreduce/configuration/):
+- [Configuration](https://wesmadrigal.github.io/GraphReduce/configuration/):
   common graph, node, edge, and execution settings.
-- [Quickstart](https://wesmadrigal.github.io/graphreduce/tutorial_index/): a
+- [Quickstart](https://wesmadrigal.github.io/GraphReduce/tutorial_index/): a
   runnable two-table walkthrough using repository sample data.
-- [SQL auto-feature families](https://wesmadrigal.github.io/graphreduce/sql_auto_feature_families/):
+- [SQL auto-feature families](https://wesmadrigal.github.io/GraphReduce/sql_auto_feature_families/):
   schema-aware, temporal, conditional, sequence, episode, semantic, and
   context features.
-- [End-to-end examples](https://wesmadrigal.github.io/graphreduce/end_to_end_examples/):
+- [End-to-end examples](https://wesmadrigal.github.io/GraphReduce/end_to_end_examples/):
   complete multi-table and multi-backend workflows.
 
 ## Citation
