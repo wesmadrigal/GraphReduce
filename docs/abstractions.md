@@ -1,168 +1,178 @@
-# Abstractions
+# Core Abstractions
 
-## Core abstractions
-* `GraphReduce` - the top-level graph orchestration class that manages node/edge relationships and executes feature and label computation across the full table graph.
-* `GraphReduceNode` - the base table/file node abstraction for dataframe-style compute, where you define filtering, annotation, normalization, reduction, and labeling behavior.
-* `SQLNode` - a SQL-oriented node abstraction that enables query-based feature engineering on SQL dialects/backends instead of dataframe-only APIs.
+GraphReduce has a deliberately small object model: tables are nodes,
+relationships are edges, and one graph coordinates execution.
 
-## Node abstraction
-We represent files and tables as nodes.  A node could be a csv file
-on your laptop, a parquet file in s3, or a Snowflake table in the cloud.
+## `GraphReduce`
 
-We parameterize the data location, a string prefix so we know where the data originates,
-a primary key, a date key (if any), a compute layer (e.g., `pandas`, `dask`), and
-some other optional parameters to intantiate these.
+`GraphReduce` extends `networkx.DiGraph`. It stores the table graph and owns
+configuration that must be consistent across nodes:
 
-### GraphReduceNode
-The base `GraphReduceNode` requires the following abstract methods be defined
+- `parent_node`: the intended output entity and row grain;
+- `compute_layer`: the execution backend;
+- `cut_date`: the point in time at which features are evaluated;
+- `compute_period_*`: the historical feature window;
+- `label_period_*`: the future target window;
+- `label_node`, `label_field`, and `label_operation`: optional automatic label
+  configuration; and
+- `auto_features`: whether GraphReduce should synthesize relation features.
 
-* `do_filters` - all filter operations for this node go here (e.g., `df.filter...`)
+The normal entry points are:
 
-* `do_annotate` - all annotations go here (e.g., `df['zip'] = df.zipfull.apply(lambda x: x.split('-')[0])`)
+```python
+graph.do_transformations()       # dataframe execution
+graph.do_transformations_sql()   # SQL execution
+```
 
-* `do_post_join_annotate` - annotations that require data from a child be joined in (e.g., need a delta between dates from two tables)
+For dataframe execution, the final materialized result is
+`graph.parent_node.df`.
 
-* `do_normalize` - all anomaly filtering, data normalization, etc. go here (e.g., `df['val_norm'] = df['val'].apply(lambda x: x/df['val'].max())`)
+## Node types
 
-* `do_post_join_filters` - all filters requiring data from more than 1 table go here
+Every node represents one source relation and requires a unique `prefix`.
 
-* `do_reduce` - all aggregation operations for features (e.g., `df.groupby(key).agg(...)`)
+| Node | Use it when |
+| --- | --- |
+| `DynamicNode` | Default loading and automatic dataframe features are sufficient |
+| `GraphReduceNode` subclass | A dataframe source needs custom operations |
+| `SQLNode` | Operations should be represented as composable SQL |
+| Backend SQL subclass | The backend needs specialized behavior, such as `DuckdbNode` or `AthenaNode` |
 
-* `do_labels` - any label-specific aggregation operations (e.g., `df.groupby(key).agg(had_order = 1)`)
+Common node settings include:
 
+- `fpath`: a file path or SQL relation, depending on the node type;
+- `fmt`: source format such as `csv`, `parquet`, or `sql`;
+- `pk`: a primary key string or composite-key sequence;
+- `prefix`: column-lineage prefix, unique within the graph;
+- `date_key`: the timestamp used for time filtering; and
+- `compute_layer`: a value from `ComputeLayerEnum`.
 
-### DynamicNode
-A dynamic node is any node that is instantiated without defined methods.  These are typically used for doing automated feature engineering.
+### `DynamicNode`
 
-### SQLNode
-A SQL node is an abstraction for SQL dialects and backends.  This allows us to
-go beyond the dataframe API that a typical `GraphReduceNode` or `DynamicNode` 
-is built for and leverage a number of SQL backends.  There is more detail
-about how to use these in [the SQL backends tutorial](tutorial_sql_dialects.md).
+Use `DynamicNode` for schema-driven dataframe features:
 
+```python
+from graphreduce.enum import ComputeLayerEnum
+from graphreduce.node import DynamicNode
 
-## Edge
-An edge is a relationship between two nodes.  This is typically a foreign key.  For 
-example if we had a `customers` table and `orders` table we would add an edge between the 
-`customers` node and the `orders` node:
-
-```Python
-gr.add_entity_edge(
-    parent_node=customer_node,
-    relation_node=orders_node,
-    parent_key='id',
-    relation_key='customer_id',
-    reduce=True
+orders = DynamicNode(
+    fpath="orders.parquet",
+    fmt="parquet",
+    pk="id",
+    prefix="ord",
+    date_key="created_at",
+    compute_layer=ComputeLayerEnum.pandas,
 )
 ```
 
-The `reduce` parameter tells `graphreduce` whether or not to execute 
-aggregation operations.  In some cases a user may want to maintain
-an aggregation operation but avoid executing it for a particular compute graph.
+### Custom `GraphReduceNode`
 
+A custom subclass owns seven operation hooks. Methods work with `self.df`; they
+do not receive a dataframe argument.
 
-## GraphReduce Graph
-The top-level `GraphReduce` class inherits directly from `networkx.DiGraph`
-to take advantage of many graph algorithms implemented in `networkx`.  The instances
-house to shared parameters for the entire graph of computation across all nodes and edges.
+```python
+import pandas as pd
 
-Things such as the node to which to aggregate the data, the date for splitting the data, the compute layer (e.g., `pandas`, `dask`), the amount of history to include (365 days), the label period, whether or not to automate feature engineering, the label/target node and label/target column, etc.  All of these parameters
-get pushed down through the graph so we can do things like point in time correctness, etc.
-
-Since we inherit from `networkx` the API for adding nodes is unchanged:
-```Python
-import datetime
-from graphreduce.graph_reduce import GraphReduce
-from grpahreduce.enum import PeriodUnit, ComputeLayerEnum
-
-gr = GraphReduce(
-    name='test',
-    parent_node=customer_node,
-    fmt='parquet',
-    compute_layer=ComputeLayerEnum.spark,
-    cut_date=datetime.datetime(2024, 7, 1),
-    compute_period_val=365,
-    compute_period_unit=PeriodUnit.day
-    auto_features=False,
-    label_node=order_node,
-    label_operation='sum',
-    label_field='order_total',
-    label_period_val=60,
-    label_period_unit=PeriodUnit.day,
-    spark_sqlctx=sqlCtx
-)
-
-gr.add_node(customer_node)
-gr.add_node(order_node)
-gr.add_node(notification_node)
-gr.add_node(...)
-...
-```
-
-## Examples
-
-### `GraphReduceNode` example
-Use a custom node when you want explicit control over filtering, feature reduction, and labels:
-
-```Python
 from graphreduce.node import GraphReduceNode
 
+
 class OrderNode(GraphReduceNode):
-    def do_filters(self, df): return df
-    def do_annotate(self, df): return df
-    def do_post_join_annotate(self, df): return df
-    def do_normalize(self, df): return df
-    def do_post_join_filters(self, df): return df
-    def do_reduce(self, df): return df.groupby('customer_id').agg(total=('amount', 'sum')).reset_index()
-    def do_labels(self, df): return df.groupby('customer_id').agg(had_order=('id', 'count')).reset_index()
+    def do_filters(self):
+        self.df = self.df[self.df[self.colabbr("amount")] >= 0]
+
+    def do_annotate(self):
+        pass
+
+    def do_normalize(self):
+        pass
+
+    def do_reduce(self, reduce_key):
+        key = self.colabbr(reduce_key)
+        return self.prep_for_features().groupby(key).agg(
+            **{
+                self.colabbr("amount_sum"): pd.NamedAgg(
+                    column=self.colabbr("amount"), aggfunc="sum"
+                )
+            }
+        )
+
+    def do_labels(self, reduce_key):
+        pass
+
+    def do_post_join_annotate(self):
+        pass
+
+    def do_post_join_filters(self):
+        pass
 ```
 
-### `SQLNode` example
-Use `SQLNode` when you want SQL-native execution against a backend/dialect:
+The key helpers are:
 
-```Python
+- `colabbr("amount")` returns the prefixed physical column name;
+- `prep_for_features()` applies the node's historical window; and
+- `prep_for_labels()` applies the node's future label window.
+
+### `SQLNode`
+
+SQL methods return `sqlop` objects rather than mutating `self.df`. GraphReduce
+compiles those operations and manages intermediate backend references.
+
+```python
+from graphreduce.enum import ComputeLayerEnum, SQLOpType
+from graphreduce.models import sqlop
 from graphreduce.node import SQLNode
-from graphreduce.enum import SQLOpType
 
-orders = SQLNode(
-    fpath='orders',
-    prefix='ord',
-    pk='id',
-    dialect='postgresql'
-)
 
-orders.build_query(
-    optype=SQLOpType.select,
-    cols=['customer_id', 'amount']
+class OrderSQLNode(SQLNode):
+    def do_reduce(self, reduce_key):
+        key = self.colabbr(reduce_key)
+        return [
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval=f"sum({self.colabbr('amount')}) as {self.colabbr('amount_sum')}",
+            ),
+            sqlop(optype=SQLOpType.agg, opval=key),
+        ]
+```
+
+See [SQL backends and dynamic queries](tutorial_sql_backends_dynamic_queries.md)
+for complete examples.
+
+## Edges
+
+An entity edge records the direction, join keys, and reduction behavior:
+
+```python
+graph.add_entity_edge(
+    parent_node=customers,
+    relation_node=orders,
+    parent_key="id",
+    relation_key="customer_id",
+    reduce=True,
 )
 ```
 
-### `GraphReduce` example
-Use `GraphReduce` to connect nodes and run the graph-wide feature computation:
+The direction is meaningful: the relation is processed and joined into its
+parent. With `reduce=True`, GraphReduce aggregates the relation to its foreign
+key before the join.
 
-```Python
-from graphreduce.graph_reduce import GraphReduce
+Both keys may be ordered tuples for composite relationships. Their lengths
+must match.
 
-gr = GraphReduce(
-    name='customer_features',
-    parent_node=customer_node,
-    compute_layer=ComputeLayerEnum.pandas,
-    auto_features=True
-)
+## Prefixes and physical columns
 
-gr.add_node(customer_node)
-gr.add_node(orders_node)
-gr.add_entity_edge(
-    parent_node=customer_node,
-    relation_node=orders_node,
-    parent_key='id',
-    relation_key='customer_id',
-    reduce=True
-)
-```
+Nodes prefix columns as data enters the graph. An `orders.amount` source column
+on a node with `prefix="ord"` becomes `ord_amount`. Always use `colabbr()` in
+custom operations instead of hard-coding the transformed name.
 
-See also:
+Prefixes must be unique across all graph nodes. They provide lineage and avoid
+ambiguous columns after repeated joins.
 
-* [Custom node tutorial](tutorial_custom_graph.md)
-* [SQL dialect tutorial](tutorial_sql_dialects.md)
-* [Tutorial index](tutorial_index.md)
+## Put configuration at the right level
+
+- Put table-specific behavior and schema meaning on the node.
+- Put relationship cardinality and join keys on the edge.
+- Put shared execution, time-window, label, and graph-wide automatic-feature
+  settings on `GraphReduce`.
+
+This separation is the core design constraint behind the library.

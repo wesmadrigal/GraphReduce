@@ -23,10 +23,13 @@ It mirrors the `test_multi_node_customer` flow:
 
 Run from the repository root so `tests/data/cust_data` resolves correctly.
 
-Install GraphReduce core (no backend extras needed for this example):
+Clone the repository and install it in editable mode (no backend extra is
+needed):
 
 ```bash
-pip install graphreduce
+git clone https://github.com/wesmadrigal/graphreduce.git
+cd graphreduce
+pip install -e ".[dev]"
 ```
 
 ## Complete Example
@@ -71,7 +74,6 @@ gr = GraphReduce(
     fmt="csv",
     compute_layer=ComputeLayerEnum.pandas,
     auto_features=True,
-    auto_labels=True,
     cut_date=datetime.datetime(2023, 6, 30),
     compute_period_unit=PeriodUnit.day,
     compute_period_val=365,
@@ -113,21 +115,21 @@ print("columns:", len(gr.parent_node.df.columns))
 print(gr.parent_node.df.shape)
 ```
 
-## What To Expect
+## What to expect
 
 * The final dataframe is materialized on `gr.parent_node.df`.
 * With this sample dataset, you should see `4` rows (one per customer in `cust.csv`).
 * Output columns include original parent columns plus generated feature/label columns.
 
-## Run Interactive
+## Run interactively
 
 This example can also run through the local interactive runner and stream logs
 in the docs UI. It uses the pandas backend, so no optional backend extras are
 required.
 
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="hello_world">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="hello_world">
   <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
     <button data-run-btn>Run Hello World</button>
   </div>
@@ -136,7 +138,8 @@ required.
 </div>
 
 ```bash
-pip install graphreduce
+pip install -e ".[dev]"
+pip install -r docs/requirements.txt
 pip install -r docs/api/requirements.txt
 python docs/api/modal_stream_server.py
 mkdocs serve

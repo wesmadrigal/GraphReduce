@@ -1,5 +1,9 @@
 # Multi-Backend Example: Same Graph, Multiple Compute Layers
 
+[![Multi-backend cust+notifications graphreduce flow](multi_backend_cust_notifications_overview.svg)](multi_backend_cust_notifications_overview.svg)
+
+Open full-size: [SVG](multi_backend_cust_notifications_overview.svg)
+
 This section mirrors the RelBench task organization, but focuses on **one
 identical graph spec** across multiple compute backends:
 

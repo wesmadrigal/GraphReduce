@@ -1,128 +1,102 @@
-# SQL backends and dialects
+# SQL Operations and Dialects
 
-To use SQL dialects we need to use `SQLNode` instances
-or a subclass of `SQLNode`.  The following are implemented
-and available for use out of the box:
+GraphReduce represents SQL as small `sqlop` objects. A `SQLNode` combines those
+objects with its current source reference, and `build_query()` renders an
+executable statement for the selected compute layer.
 
-All of the SQL backends listed below are fully supported.
+## Operation types
 
-* Databricks SQL
-* SQLite
-* Redshift
-* AWS Athena
-* Snowflake
-* DuckDB
+Common `SQLOpType` values include:
 
+| Type | SQL role |
+| --- | --- |
+| `select` | Projection or derived column |
+| `where` | Filter predicate |
+| `aggfunc` | Aggregate expression in the projection |
+| `agg` | `GROUP BY` expression |
+| `having` | Post-aggregation filter |
+| `order` | Sort expression |
+| `window` | Window expression |
 
-## SQL operations
-We provide an abstraction for defining individual
-SQL operations so that they become stackable.  Graphreduce
-compiles all of the SQL operations at runtime and pushes
-down to the provider.  
+## Build a query
 
-The parent class `SQLNode` defines a method `build_query`,
-which takes an arbitrary number of `sqlop` instances
-and builds the query.  This abstraction allows for individual
-select statements, where clauses, group bys, etc. to be defined
-individually and at runtime `build_query` compiles them into
-an executable statement.
+```python
+import sqlite3
 
-An example `sqlop` would be a simple select:
-```Python
+from graphreduce.enum import ComputeLayerEnum, SQLOpType
 from graphreduce.models import sqlop
-from graphreduce.enum import SQLOpType
+from graphreduce.node import SQLNode
 
-sel = sqlop(optype=SQLOpType, opval="*")
-```
+connection = sqlite3.connect(":memory:")
 
-This select just says to `select *`.  We can stack a number
-of these and have `build_query` compile them for us.  We will
-continue with the `cust.csv` data but now it is stored in `sqlite`.
-
-```Python
-cust = SQLNode(fpath='cust',
-                prefix='cust',
-                client=conn, 
-                compute_layer=ComputeLayerEnum.sqlite, 
-                columns=['id','name'])
-
-print(cust.build_query(
-    ops=[
-        sqlop(optype=SQLOpType.select, opval='id'),
-        sqlop(optype=SQLOpType.select, opval='name')
-    ]
-))
-
-SELECT id,name
-    FROM cust
-WHERE true
-        
-```
-
-Since we parameterized the `SQLNode` instance with the `cust`
-table, our instance already knows which table to select from
-during every `sqlop` instance.  The `sqlop` tries to be the
-smallest unit of operation in SQL, allowing for stacking
-as many of them as you want.
-
-You can also chain the graphreduce methods and dynamically build up
-SQL like this:
-
-```Python
-# Define the order node
-class OrderNode(SQLNode):
-    def do_filters(self) -> typing.List[sqlop]:
-        return [
-            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr(self.date_key)} > '2022-12-01'")
-        ]
-    
-    def do_annotate(self) -> typing.List[sqlop]:
-        pass
-    
-    def do_normalize(self):
-        pass
-    
-    def do_reduce(self, reduce_key):
-        return [
-            # Shouldn't this just be a select?
-            sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_orders')}"),
-            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
-        ]
-    
-    
-    def do_labels(self, reduce_key):
-        return [
-            sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_orders_label')}"),
-            sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}")
-        ]
-
-# Instantiate
-order = OrderNode(
-    fpath='orders',
-    prefix='ord',
-    client=conn,
+orders = SQLNode(
+    fpath="orders",
+    prefix="ord",
+    pk="id",
+    date_key="ts",
     compute_layer=ComputeLayerEnum.sqlite,
-    columns=['id','customer_id','ts','amount'],
-    date_key='ts'
+    client=connection,
+    columns=["id", "customer_id", "ts", "amount"],
 )
 
-# build a query
-print(order.build_query(
-    ops=order.do_filters() + order.do_reduce('customer_id')
-))
+ops = [
+    sqlop(optype=SQLOpType.where, opval="ord_ts >= '2023-01-01'"),
+    sqlop(
+        optype=SQLOpType.aggfunc,
+        opval="sum(ord_amount) as ord_amount_sum",
+    ),
+    sqlop(optype=SQLOpType.agg, opval="ord_customer_id"),
+]
 
-SELECT ord_customer_id,
-        count(*) as ord_num_orders
-        FROM orders
-        WHERE ord_ts > '2022-12-01'
-        GROUP BY ord_customer_id
+print(orders.build_query(ops))
 ```
 
-## More examples
-There are more examples on [github](https://github.com/wesmadrigal/GraphReduce)
+The node knows its source relation and prefixes. The operations specify only
+the changes needed for this stage.
 
-* [example 1](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex1.ipynb)
-* [example 2](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex2.ipynb)
-* [example 3](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex3.ipynb)
-* [example 4 automated feature engineering](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex4.ipynb)
-* [example 5 automated feature engineering con't](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/sql_dialects_ex4.ipynb)
+## Put operations on a node
+
+For reusable behavior, subclass `SQLNode`:
+
+```python
+class OrderNode(SQLNode):
+    def do_filters(self):
+        return [
+            sqlop(
+                optype=SQLOpType.where,
+                opval=f"{self.colabbr('amount')} >= 0",
+            )
+        ]
+
+    def do_reduce(self, reduce_key):
+        return [
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval=(
+                    f"sum({self.colabbr('amount')}) "
+                    f"as {self.colabbr('amount_sum')}"
+                ),
+            ),
+            sqlop(optype=SQLOpType.agg, opval=self.key_sql(reduce_key)),
+        ]
+```
+
+`do_transformations_sql()` calls these methods while traversing the graph,
+compiles the returned operations, and creates intermediate references.
+
+## Dialect selection matters
+
+Choose the enum value for the actual engine—such as `sqlite`, `duckdb`,
+`snowflake`, `redshift`, `athena`, `postgres`, `mysql`, `trino`, or
+`databricks`. GraphReduce uses it for date arithmetic, quoting, temporary
+objects, and other syntax differences.
+
+Portable custom SQL should use simple expressions and GraphReduce helpers such
+as `colabbr()` and `key_sql()`. Backend-specific functions may still require a
+specialized node implementation.
+
+Continue with:
+
+- [SQL backends and dynamic query construction](tutorial_sql_backends_dynamic_queries.md)
+- [SQL auto-feature families](sql_auto_feature_families.md)
+- [Frozen SQL plans](tutorial_frozen_sql_plans.md)

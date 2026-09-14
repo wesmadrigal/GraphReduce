@@ -12,7 +12,7 @@ print(target, holdout_mae, n_features, len(df_eval), len(df_holdout))
 
 Current implementation:
 
-* [`examples/relbench_hm_item_sales.py`](../../examples/relbench_hm_item_sales.py)
+* [`examples/relbench_hm_item_sales.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_hm_item_sales.py)
 
 Current RelBench-aligned dates:
 

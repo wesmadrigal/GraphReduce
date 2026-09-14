@@ -72,7 +72,6 @@ gr = GraphReduce(
     fmt="csv",
     compute_layer=ComputeLayerEnum.pandas,
     auto_features=True,
-    auto_labels=True,
     cut_date=datetime.datetime(2023, 6, 30),
     compute_period_unit=PeriodUnit.day,
     compute_period_val=365,
@@ -136,7 +135,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 # y_proba = model.predict_proba(X_test)[:, 1]
 ```
 
-## What To Expect
+## What to expect
 
 * GraphReduce produces a parent-grain feature matrix (`df`) with one row per customer.
 * Feature columns (`X`) include aggregated behavior from `orders` and `notifications`.

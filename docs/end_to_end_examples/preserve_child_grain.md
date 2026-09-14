@@ -24,7 +24,7 @@ The key effect is that notifications are not rolled up to one row per
 customer before joining. That preserves the child 1:n grain at the parent join
 point and expands output rows beyond pure parent grain.
 
-## When To Use This Pattern
+## When to use this pattern
 
 Use `reduce=False` when you want downstream logic to keep child-level records
 instead of collapsing them into aggregated features immediately.
@@ -154,7 +154,6 @@ gr = GraphReduce(
     fmt="csv",
     compute_layer=ComputeLayerEnum.pandas,
     auto_features=False,
-    auto_labels=False,
     label_node=None,
     label_field=None,
     label_operation=None,
@@ -252,7 +251,6 @@ gr = GraphReduce(
     compute_layer=ComputeLayerEnum.duckdb,
     sql_client=con,
     auto_features=False,
-    auto_labels=False,
     label_node=None,
     label_field=None,
     label_operation=None,
@@ -291,9 +289,9 @@ print(out_df.shape)
 con.close()
 ```
 
-## What To Expect
+## What to expect
 
-* No `y` column is generated because labels are disabled (`auto_labels=False`).
+* No label column is generated because this graph has no label configuration.
 * The page includes both a `pandas backend` and a `duckdb backend`.
 * `pandas backend` uses custom `GraphReduceNode` subclasses.
 * `duckdb backend` uses `DuckdbNode` (a `SQLNode` implementation for DuckDB).
@@ -303,14 +301,14 @@ con.close()
 * You still get aggregated signal from reduced edges (here: `orders` via
   custom reduction logic) while preserving notification-level rows.
 
-## Run Interactive
+## Run interactively
 
 Use the interactive runner below to execute the pandas variant and stream logs
 directly in the docs UI.
 
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="preserve_child_grain">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="preserve_child_grain">
   <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
     <button data-run-btn>Run Preserve Child Grain</button>
   </div>

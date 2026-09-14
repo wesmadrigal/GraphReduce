@@ -1,56 +1,72 @@
-# Post-join method execution
-There is a method decorator for specifying that
-a node instance method can only be executed
-once other nodes have been joined to the node.
+# Post-Join Dependencies
 
-For example, using the `cust.csv` and `orders.csv`
-datasets from prior examples, let's say we want
-to compute the difference between an order date
-and the signup date of the customer.  In this
-case we need the timestamp of the order and the
-timestamp of the customer.  
+Some annotations and filters require columns from one or more child nodes. A
+post-join dependency prevents that operation from running until those children
+have been merged.
 
-```Python
-# In the node definition of the customer
-# specify this dependency
-from graphreduce.node import GraphReduceNode
+## Dataframe nodes
+
+Use `method_requires` with node classes:
+
+```python
 from graphreduce.context import method_requires
+from graphreduce.node import GraphReduceNode
+
+
+class OrderNode(GraphReduceNode):
+    # Implement the required node methods here.
+    ...
+
 
 class CustomerNode(GraphReduceNode):
-    def do_filters(self):
-        pass
-    ...
-    ...
-    
     @method_requires(nodes=[OrderNode])
     def do_post_join_annotate(self):
-        self.df[self.colabbr('signup_order_diff_seconds')] = self.df.apply(
-            lambda x: (x['ord_ts'] - x[self.colabbr('signup_date')]).total_seconds(),
-            axis=1
-        )
-```
+        signup = self.colabbr("signup_date")
+        self.df[self.colabbr("days_to_last_order")] = (
+            self.df["ord_ts_max"] - self.df[signup]
+        ).dt.days
 
-By using the `method_requires` decorator we've told graphreduce
-that the `CustomerNode.do_post_join_annotate` method can only
-be executed once the `OrderNode` has been joined.  
-
-There are cases where we need multiple child nodes' data merged
-to a parent node before certain operations can be executed, such
-as annotations and filters.  
-
-This would look like the following snippet:
-```Python
-
-class ParentNode(GraphReduceNode):
+    # Implement the other required node methods here.
     ...
-
-    @method_requies(nodes=[ChildNodeOne, ChildNodeThree])
-    def do_post_join_filters(self):
-        self.df[self.colabbr('newcol')] = self.df.apply(lambda x: f"{x['col1']}-{x['child_col']}-{x['child3_col']}", axis=1)
-
-    
-    @method_requires(nodes=[ChildNodeOne, ChildNodeTwo, ChildNodeThree])
-    def do_post_join_filters(self):
-        self.df = self.df[..]
-
 ```
+
+GraphReduce records merged relation classes on the parent. The decorated method
+returns without executing until every required class is present.
+
+For multiple dependencies:
+
+```python
+@method_requires(nodes=[OrderNode, NotificationNode])
+def do_post_join_filters(self):
+    self.df = self.df[
+        self.df["ord_id_count"].notna()
+        | self.df["not_id_count"].notna()
+    ]
+```
+
+## SQL nodes
+
+SQL nodes accept dependency instances as constructor settings:
+
+```python
+customers = SQLNode(
+    # ...normal node configuration...
+    do_post_join_annotate_ops=[...],
+    do_post_join_annotate_requires=[orders],
+    do_post_join_filters_ops=[...],
+    do_post_join_filters_requires=[orders, notifications],
+)
+```
+
+The SQL path checks whether columns with each required node's prefix are
+available before returning the configured operations.
+
+## Guidance
+
+- Use pre-join hooks for logic that depends only on the node's own columns.
+- Use post-join hooks only when another relation is genuinely required.
+- Depend on the smallest set of nodes needed by the expression.
+- Reference prefixed columns, because source names have already changed by the
+  time a post-join method runs.
+- Cover dependency order with a small graph test; the operation's correctness
+  depends on both graph topology and prefixes.

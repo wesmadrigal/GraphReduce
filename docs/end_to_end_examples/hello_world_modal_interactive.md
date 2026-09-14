@@ -3,9 +3,9 @@
 This page runs the Hello World GraphReduce example on the same machine as the
 docs API server and streams stdout live into the docs UI.
 
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io">
   <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
     <button data-run-btn>Run Hello World</button>
   </div>
@@ -13,23 +13,26 @@ docs API server and streams stdout live into the docs UI.
   <pre class="modal-runner-log" data-log></pre>
 </div>
 
-## One-Time Local Setup
+## One-time local setup
+
+Run these commands from a repository checkout:
 
 ```bash
-pip install graphreduce
+pip install -e ".[dev]"
+pip install -r docs/requirements.txt
 pip install -r docs/api/requirements.txt
 ```
 
 This Hello World runner uses the pandas backend, so optional extras like
 `[spark]`, `[daft]`, or `[duckdb]` are not required.
 
-## Start The Stream API (Terminal 1)
+## Start the stream API (terminal 1)
 
 ```bash
 python docs/api/modal_stream_server.py
 ```
 
-## Start Docs (Terminal 2)
+## Start the docs (terminal 2)
 
 ```bash
 mkdocs serve
@@ -37,7 +40,7 @@ mkdocs serve
 
 Then open this page and click **Run Hello World**.
 
-## Production Deployment (GitHub Pages + External Backend)
+## Production deployment
 
 1. Deploy docs to GitHub Pages as usual.
 2. Deploy the API server (`docs/api/modal_stream_server.py`) on your own host

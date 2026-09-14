@@ -58,7 +58,7 @@
 
   <rect x="620" y="392" width="390" height="320" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
   <text x="640" y="422" class="section">3) Compute Graph Pipeline in DuckDB</text>
-  <text x="640" y="450" class="text">A) Download rel-avito parquet tables from S3.</text>
+  <text x="640" y="450" class="text">A) Materialize rel-avito tables from the relbench library.</text>
   <text x="640" y="474" class="text">B) Build User/Visits/Ads DuckdbNodes.</text>
   <text x="640" y="498" class="text">C) Define distinct-AdID label agg on visits node.</text>
   <text x="640" y="522" class="text">D) Run `gr.do_transformations_sql()` with labels.</text>

@@ -1,7 +1,8 @@
-# End-to-end automated feature engineering
+# Automated Feature Engineering
 
-This tutorial shows a full batch feature engineering flow on a multi-table graph
-using `GraphReduce.do_transformations()` with `auto_features=True`.
+This guide builds a multi-table customer feature frame with
+`GraphReduce.do_transformations()` and `auto_features=True`. Run the examples
+from the repository root; they use the CSV files in `tests/data/cust_data/`.
 
 It covers:
 
@@ -10,16 +11,15 @@ It covers:
 3. Automatically generating aggregate features on child tables.
 4. Generating a label and joining everything back to a parent grain.
 
-## End-to-end example
+## Dataframe example
 
 ```python
 import datetime
-from sklearn.model_selection import train_test_split
 from graphreduce.node import DynamicNode
 from graphreduce.graph_reduce import GraphReduce
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
 
-base = "graphreduce/datasets/customers"
+base = "tests/data/cust_data"
 
 # Each node gets a unique prefix so merged columns keep table lineage.
 nodes = {
@@ -125,32 +125,21 @@ df = gr.parent_node.df
 print(df.shape)
 print(df.head())
 
-# Example supervised training split.
-target_col = "ord_id_label"
-feature_cols = [
-    c
-    for c, dtype in dict(df.dtypes).items()
-    if c != target_col and (str(dtype).startswith("int") or str(dtype).startswith("float"))
-]
-model_df = df[feature_cols + [target_col]].dropna()
-
-X = model_df[feature_cols]
-y = model_df[target_col]
-X_train, X_test, y_train, y_test = train_test_split(
-    X, y, test_size=0.2, random_state=42
-)
-
-# Requires installing tabpfn first:
-#   pip install tabpfn
-#
-# from tabpfn import TabPFNClassifier
-# clf = TabPFNClassifier()
-# clf.fit(X_train, y_train)
-# y_pred = clf.predict(X_test)
-# print(y_pred[:10])
+assert df["cu_id"].is_unique
+assert "ord_id_label" in df.columns
 ```
 
-## End-to-end SQL example with `do_transformations_sql` and `sqlop`
+The graph is evaluated from its leaves upward. `order_products` is reduced to
+order grain before the enriched order table is reduced to customer grain;
+`notification_interactions` follows the same path through notifications.
+
+The bundled data contains only four customers and is intended to demonstrate
+materialization, not meaningful model evaluation. Use the
+[XGBoost](end_to_end_examples/predictive_ai_xgboost.md) or
+[TabPFN](end_to_end_examples/predictive_ai_tabpfn.md) example for the modeling
+step.
+
+## SQL example with `do_transformations_sql()`
 
 ```python
 import datetime
@@ -161,7 +150,7 @@ from graphreduce.node import SQLNode
 from graphreduce.models import sqlop
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 
-base = "graphreduce/datasets/customers"
+base = "tests/data/cust_data"
 conn = sqlite3.connect(":memory:")
 
 # Load csv files into sqlite tables for this example.

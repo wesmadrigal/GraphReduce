@@ -12,8 +12,8 @@ print(target, holdout_mae, n_features, len(df_val), len(df_holdout))
 
 Current implementation:
 
-* [`examples/relbench_amazon_item_ltv.py`](../../examples/relbench_amazon_item_ltv.py)
-* [`examples/relbench_amazon_common.py`](../../examples/relbench_amazon_common.py)
+* [`examples/relbench_amazon_item_ltv.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_amazon_item_ltv.py)
+* [`examples/relbench_amazon_common.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_amazon_common.py)
 
 Current RelBench-aligned dates:
 

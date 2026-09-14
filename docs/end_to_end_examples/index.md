@@ -1,58 +1,57 @@
 # End-to-End Examples
 
-This section contains complete, practical GraphReduce examples that can be run
-from start to finish.
+These examples show complete graph construction, execution, and output
+inspection. Start with the smallest example that matches your goal.
 
-These examples are intended to show:
+## Learn the core workflow
 
-* dataset setup
-* graph modeling choices
-* feature and label generation
-* output inspection
-* production-oriented patterns
+| Example | What it demonstrates | Backend |
+| --- | --- | --- |
+| [Hello World](hello_world.md) | Parent grain, two child relations, automatic features, and labels | pandas |
+| [Preserve child grain](preserve_child_grain.md) | The effect of `reduce=False` | pandas, DuckDB |
+| [All tables with labels](all_tables_reduce_with_labels.md) | A deeper graph with complete reduction and ML targets | pandas, DuckDB |
 
-Start with [Hello World](hello_world.md).
+## Compare backends and custom logic
 
-Next: [Preserve Child Grain (`reduce=False`)](preserve_child_grain.md).
+| Example | What it demonstrates |
+| --- | --- |
+| [Same graph, multiple backends](multi_backend_cust_notifications.md) | Equivalent customer/notification logic across pandas, SQLite, DuckDB, PySpark, Snowflake, and Databricks SQL |
+| [Custom pandas graph](custom_pandas_all_nodes.md) | Explicit node operations across all sample tables |
+| [Custom DuckDB graph](custom_duckdb_all_nodes.md) | SQL-native custom operations across all sample tables |
+| [Custom PySpark graph](custom_pyspark_all_nodes.md) | Distributed dataframe operations across all sample tables |
 
-Then: [Multi-Backend Same Graph (pandas, sqlite, duckdb, pyspark, snowflake SQL, databricks SQL)](multi_backend_cust_notifications.md).
+## Continue into modeling
 
-Then: [Custom PySpark Graph (All `cust_data` Nodes)](custom_pyspark_all_nodes.md).
+| Example | Model |
+| --- | --- |
+| [Predictive AI with XGBoost](predictive_ai_xgboost.md) | `XGBClassifier` on GraphReduce features |
+| [Predictive AI with TabPFN](predictive_ai_tabpfn.md) | `TabPFNClassifier` on GraphReduce features |
 
-Then: [Custom Pandas Graph (All `cust_data` Nodes)](custom_pandas_all_nodes.md).
+## RelBench tasks
 
-Then: [Custom DuckDB Graph (All `cust_data` Nodes)](custom_duckdb_all_nodes.md).
+The [performance comparison](relbench_performance.md) summarizes the available
+RelBench runs. Individual task pages provide the corresponding materialization
+and evaluation entry points.
 
-Then: [All Tables, Full Reduction, With Labels](all_tables_reduce_with_labels.md).
+Classification:
 
-Then: [End-to-End Predictive AI with XGBoost](predictive_ai_xgboost.md).
+- [rel-stack: user badges](relbench_rel_stack_badges_duckdb.md)
+- [rel-stack: user engagement](relbench_rel_stack_user_engagement_duckdb.md)
+- [rel-trial: study outcome](relbench_rel_trial_study_outcome_duckdb.md)
+- [rel-hm: user churn](relbench_rel_hm_user_churn_duckdb.md)
+- [rel-avito: user clicks](relbench_rel_avito_user_clicks_duckdb.md)
+- [rel-avito: user visits](relbench_rel_avito_user_visits_duckdb.md)
+- [rel-amazon: user churn](relbench_rel_amazon_user_churn_duckdb.md)
+- [rel-amazon: item churn](relbench_rel_amazon_item_churn_duckdb.md)
 
-Then: [End-to-End Predictive AI with TabPFN](predictive_ai_tabpfn.md).
+Regression:
 
-Then: [RelBench Rel-Stack DuckDB (Badges Label)](relbench_rel_stack_badges_duckdb.md).
+- [rel-stack: post votes](relbench_rel_stack_post_votes_duckdb.md)
+- [rel-avito: ad CTR](relbench_rel_avito_ad_ctr_duckdb.md)
+- [rel-hm: item sales](relbench_rel_hm_item_sales_duckdb.md)
+- [rel-amazon: user LTV](relbench_rel_amazon_user_ltv_duckdb.md)
+- [rel-amazon: item LTV](relbench_rel_amazon_item_ltv_duckdb.md)
 
-Then: [RelBench Rel-Stack DuckDB (Post Votes Label)](relbench_rel_stack_post_votes_duckdb.md).
-
-Then: [RelBench Rel-Stack DuckDB (User Engagement)](relbench_rel_stack_user_engagement_duckdb.md).
-
-Then: [RelBench rel-trial DuckDB (Study Outcome)](relbench_rel_trial_study_outcome_duckdb.md).
-
-Then: [RelBench rel-hm DuckDB (User Churn)](relbench_rel_hm_user_churn_duckdb.md).
-
-Then: [RelBench rel-hm DuckDB (Item Sales)](relbench_rel_hm_item_sales_duckdb.md).
-
-Then: [RelBench rel-avito DuckDB (User Clicks)](relbench_rel_avito_user_clicks_duckdb.md).
-
-Then: [RelBench rel-avito DuckDB (User Visits)](relbench_rel_avito_user_visits_duckdb.md).
-
-Then: [RelBench rel-avito DuckDB (Ad CTR Regression)](relbench_rel_avito_ad_ctr_duckdb.md).
-
-Then: [RelBench rel-amazon DuckDB (User Churn)](relbench_rel_amazon_user_churn_duckdb.md).
-
-Then: [RelBench rel-amazon DuckDB (Item Churn)](relbench_rel_amazon_item_churn_duckdb.md).
-
-Then: [RelBench rel-amazon DuckDB (User LTV)](relbench_rel_amazon_user_ltv_duckdb.md).
-
-Then: [RelBench rel-amazon DuckDB (Item LTV)](relbench_rel_amazon_item_ltv_duckdb.md).
-
-SQL focus moved to Tutorial: [SQL Backends and Dynamic Query Construction](../tutorial_sql_backends_dynamic_queries.md).
+For smaller SQL building blocks, use the
+[SQL backends guide](../tutorial_sql_backends_dynamic_queries.md) before these
+full examples.

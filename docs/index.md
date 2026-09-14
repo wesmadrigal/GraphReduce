@@ -1,161 +1,114 @@
-# Welcome to graphreduce
+# GraphReduce
 
-GraphReduce is a relational AI data system for the problem that still dominates real-world ML work: converting many
-heterogeneous tables into leakage-safe, model-ready training frames at the correct parent grain. It encodes relational
-algebra as a graph over entities, keys, and temporal constraints, then executes deterministic rollups and joins so data
-prep is composable, inspectable, and production-ready.
+GraphReduce builds model-ready feature tables from relational data. A graph
+describes which tables are related, how they join, and which entity defines the
+final row grain. GraphReduce executes the graph from the leaves upward,
+reducing one-to-many relations before joining them into their parents.
 
-The point is blunt: a pure end-to-end relational foundation model may be more expressive in theory, but tabular data
-still lacks universal semantics across datasets, and enterprise workloads still demand interpretability, stability, and
-cost-efficient execution. The strongest strategy right now is hybrid:
-relational algebra + strong feature synthesis + classical ML and tabular foundation models. GraphReduce is the
-infrastructure layer for that strategy, with interoperability across dataframe and SQL compute backends.
+The result is a reproducible alternative to maintaining a large, hand-written
+chain of joins and aggregations for every ML project.
 
-A few inspirations for this project:
+## Start here
 
-* [Deep Feature Synthesis](https://groups.csail.mit.edu/EVO-DesignOpt/groupWebSite/uploads/Site/DSAA_DSM_2015.pdf)
-* [One button machine](https://arxiv.org/abs/1706.00327)
-* [featuretools](https://www.featuretools.com)
-* [MapReduce](https://static.googleusercontent.com/media/research.google.com/en//archive/mapreduce-osdi04.pdf)
+New users should follow this path:
 
-## Where most of the time is spent
-![Where most of the time is spent in tabular data science](where_most_time_is_spent.svg)
+1. Read the [fundamentals](fundamentals/index.md) for the graph model.
+2. Run the [quickstart](tutorial_index.md) from a repository checkout.
+3. Review [time windows](fundamentals/time_and_leakage.md) before creating a
+   training dataset.
+4. Choose an [end-to-end example](end_to_end_examples/index.md) that matches
+   your backend or modeling goal.
 
-## Graph modeling and rollup
+If you already understand the basics, use these direct routes:
+
+| Goal | Read |
+| --- | --- |
+| Define custom dataframe logic | [Custom node operations](tutorial_custom_graph.md) |
+| Look up graph, node, or edge settings | [Configuration reference](configuration.md) |
+| Understand joins and output grain | [Joins and cardinality](fundamentals/joins_and_cardinality.md) |
+| Use DuckDB or another SQL backend | [SQL backends](tutorial_sql_backends_dynamic_queries.md) |
+| Configure automatic SQL features | [SQL auto-feature families](sql_auto_feature_families.md) |
+| Reuse a generated SQL plan | [Frozen SQL plans](tutorial_frozen_sql_plans.md) |
+| Compare complete workflows | [End-to-end examples](end_to_end_examples/index.md) |
+
+## The graph model
+
 ![GraphReduce modeling and feature rollup](graphreduce_modeling_overview.svg)
 
+A GraphReduce graph has three parts:
 
-## Key features
-* <b>Cutomizable</b>: abstractions allow feature implementations to be customized.  While many will opt for automated feature engineering, deduplication, anomalies, entity resolution, and others may need custom or third-party library support.
-* <b>Interoperable</b>: supports `pandas`, `pyspark`, and `dask` dataframe APIs and SQL dialects for Redshift, Athena, SQLite, Databricks SQL (Snowflake in progress).
-* <b>Composable</b>: by using graphs as the underpinning data structure with `networkx` we allow arbitrarily large feature engineering pipelines by doing depth first traversal based on cardinality.
-* <b>Scalable</b>: support for different computational backends and checkpointing allow for massive feature engineering graphs to be constructed and executed with a compute push down paradigm
-* <b>Automated</b>: by leveraging and extending ideas from research such as [Deep Feature Synthesis](https://www.researchgate.net/publication/308808004_Deep_feature_synthesis_Towards_automating_data_science_endeavors) we support fully automated feature engineering.
-* <b>Point in time correctness</b>: requirements that time-series data to have a date key, allowing for point in time correctness filtering to be applied across all data / nodes in the compute graph.
-* <b>Production-ready</b>: since batch feature engineering pipelines require a computational graph defined, this makes transition to production deployments
-* <b>Cardinality awareness</b>: in most tabular datasets cardinality needs to be handled carefully to avoid duplication and proper aggregation - `graphreduce` makes  this a breeze.
+- A **node** represents one table or file and owns its data operations.
+- An **edge** represents a key relationship and its reduction behavior.
+- The **parent node** defines the intended output grain.
+
+For a customer-to-orders edge, `reduce=True` means “aggregate orders by their
+customer foreign key, then join the aggregates to customers.” This avoids the
+row multiplication that a raw one-to-many join would create.
+
+## Time semantics
+
+For a cutoff time `T`, GraphReduce separates feature and label data:
+
+```text
+feature rows                       label rows
+(T - history, T)                   (T, T + horizon)
+───────────────●───────────────────●───────────────
+               history start       T
+```
+
+For non-null timestamps the boundaries are strict: rows exactly at `T` are
+excluded from both windows. Every time-varying node needs a valid `date_key`;
+otherwise GraphReduce cannot apply point-in-time filtering to that node.
+
+See [Time windows and leakage safety](fundamentals/time_and_leakage.md) for the
+full contract.
 
 ## Installation
 
-### with pip
 ```bash
 pip install graphreduce
 ```
 
-### from source
+Optional integrations are installed as extras:
+
 ```bash
-git clone https://github.com/wesmadrigal/graphreduce
-cd graphreduce && pip install -e .
+pip install "graphreduce[duckdb]"
+pip install "graphreduce[spark]"
+pip install "graphreduce[daft]"
+pip install "graphreduce[trino]"
+pip install "graphreduce[relbench]"
 ```
 
-## Compute integrations
-* Pandas
-* Dask
-* Daft
-* Spark
-* Redshift
-* Databricks SQL
-* Snowflake SQL
+For development:
 
-## Basic usage
-
-```Python
-import datetime
-import pandas as pd
-from graphreduce.node import GraphReduceNode, DynamicNode
-from graphreduce.enum import ComputeLayerEnum, PeriodUnit
-from graphreduce.graph_reduce import GraphReduce
-
-# source from a csv file with the relationships
-# using the file at: https://github.com/wesmadrigal/GraphReduce/blob/master/examples/cust_graph_labels.csv
-reldf = pd.read_csv('cust_graph_labels.csv')
-
-# using the data from: https://github.com/wesmadrigal/GraphReduce/tree/master/tests/data/cust_data
-files = {
-    'cust.csv' : {'prefix':'cu'},
-    'orders.csv':{'prefix':'ord'},
-    'order_products.csv': {'prefix':'op'},
-    'notifications.csv':{'prefix':'notif'},
-    'notification_interactions.csv':{'prefix':'ni'},
-    'notification_interaction_types.csv':{'prefix':'nit'}
-
-}
-# create graph reduce nodes
-gr_nodes = {
-    f.split('/')[-1]: DynamicNode(
-        fpath=f,
-        fmt='csv',
-        pk='id',
-        prefix=files[f]['prefix'],
-        date_key=None,
-        compute_layer=GraphReduceComputeLayerEnum.pandas,
-        compute_period_val=730,
-        compute_period_unit=PeriodUnit.day,
-    )
-    for f in files.keys()
-}
-gr = GraphReduce(
-    name='cust_dynamic_graph',
-    parent_node=gr_nodes['cust.csv'],
-    fmt='csv',
-    cut_date=datetime.datetime(2023,9,1),
-    compute_layer=GraphReduceComputeLayerEnum.pandas,
-    auto_features=True,
-    auto_feature_hops_front=1,
-    auto_feature_hops_back=2,
-    label_node=gr_nodes['orders.csv'],
-    label_operation='count',
-    label_field='id',
-    label_period_val=60,
-    label_period_unit=PeriodUnit.day
-)
-# Add graph edges
-for ix, row in reldf.iterrows():
-    gr.add_entity_edge(
-        parent_node=gr_nodes[row['to_name']],
-        relation_node=gr_nodes[row['from_name']],
-        parent_key=row['to_key'],
-        relation_key=row['from_key'],
-        reduce=True
-    )
-
-
-gr.do_transformations()
-2024-04-23 13:49:41 [info     ] hydrating graph attributes
-2024-04-23 13:49:41 [info     ] hydrating attributes for DynamicNode
-2024-04-23 13:49:41 [info     ] hydrating attributes for DynamicNode
-2024-04-23 13:49:41 [info     ] hydrating attributes for DynamicNode
-2024-04-23 13:49:41 [info     ] hydrating attributes for DynamicNode
-2024-04-23 13:49:41 [info     ] hydrating attributes for DynamicNode
-2024-04-23 13:49:41 [info     ] hydrating attributes for DynamicNode
-2024-04-23 13:49:41 [info     ] hydrating graph data
-2024-04-23 13:49:41 [info     ] checking for prefix uniqueness
-2024-04-23 13:49:41 [info     ] running filters, normalize, and annotations for <GraphReduceNode: fpath=notification_interaction_types.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] running filters, normalize, and annotations for <GraphReduceNode: fpath=notification_interactions.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] running filters, normalize, and annotations for <GraphReduceNode: fpath=notifications.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] running filters, normalize, and annotations for <GraphReduceNode: fpath=orders.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] running filters, normalize, and annotations for <GraphReduceNode: fpath=order_products.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] running filters, normalize, and annotations for <GraphReduceNode: fpath=cust.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] depth-first traversal through the graph from source: <GraphReduceNode: fpath=cust.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] reducing relation <GraphReduceNode: fpath=notification_interactions.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] performing auto_features on node <GraphReduceNode: fpath=notification_interactions.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] joining <GraphReduceNode: fpath=notification_interactions.csv fmt=csv> to <GraphReduceNode: fpath=notifications.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] reducing relation <GraphReduceNode: fpath=notifications.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] performing auto_features on node <GraphReduceNode: fpath=notifications.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] joining <GraphReduceNode: fpath=notifications.csv fmt=csv> to <GraphReduceNode: fpath=cust.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] reducing relation <GraphReduceNode: fpath=order_products.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] performing auto_features on node <GraphReduceNode: fpath=order_products.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] joining <GraphReduceNode: fpath=order_products.csv fmt=csv> to <GraphReduceNode: fpath=orders.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] reducing relation <GraphReduceNode: fpath=orders.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] performing auto_features on node <GraphReduceNode: fpath=orders.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] joining <GraphReduceNode: fpath=orders.csv fmt=csv> to <GraphReduceNode: fpath=cust.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] Had label node <GraphReduceNode: fpath=orders.csv fmt=csv>
-2024-04-23 13:49:41 [info     ] computed labels for <GraphReduceNode: fpath=orders.csv fmt=csv>
-
-gr.parent_node.df
-cu_id	cu_name	notif_customer_id	notif_id_count	notif_customer_id_count	notif_ts_first	notif_ts_min	notif_ts_max	ni_notification_id_min	ni_notification_id_max	ni_notification_id_sum	ni_id_count_min	ni_id_count_max	ni_id_count_sum	ni_notification_id_count_min	ni_notification_id_count_max	ni_notification_id_count_sum	ni_interaction_type_id_count_min	ni_interaction_type_id_count_max	ni_interaction_type_id_count_sum	ni_ts_first_first	ni_ts_first_min	ni_ts_first_max	ni_ts_min_first	ni_ts_min_min	ni_ts_min_max	ni_ts_max_first	ni_ts_max_min	ni_ts_max_max	ord_customer_id	ord_id_count	ord_customer_id_count	ord_ts_first	ord_ts_min	ord_ts_max	op_order_id_min	op_order_id_max	op_order_id_sum	op_id_count_min	op_id_count_max	op_id_count_sum	op_order_id_count_min	op_order_id_count_max	op_order_id_count_sum	op_product_id_count_min	op_product_id_count_max	op_product_id_count_sum	ord_customer_id_dupe	ord_id_label
-0	1	wes	1	6	6	2022-08-05	2022-08-05	2023-06-23	101.0	106.0	621.0	1.0	3.0	14.0	1.0	3.0	14.0	1.0	3.0	14.0	2022-08-06	2022-08-06	2023-05-15	2022-08-06	2022-08-06	2023-05-15	2022-08-08	2022-08-08	2023-05-15	1.0	2.0	2.0	2023-05-12	2023-05-12	2023-06-01	1.0	2.0	3.0	4.0	4.0	8.0	4.0	4.0	8.0	4.0	4.0	8.0	1.0	1.0
-1	2	john	2	7	7	2022-09-05	2022-09-05	2023-05-22	107.0	110.0	434.0	1.0	1.0	4.0	1.0	1.0	4.0	1.0	1.0	4.0	2023-06-01	2023-06-01	2023-06-04	2023-06-01	2023-06-01	2023-06-04	2023-06-01	2023-06-01	2023-06-04	2.0	1.0	1.0	2023-01-01	2023-01-01	2023-01-01	3.0	3.0	3.0	4.0	4.0	4.0	4.0	4.0	4.0	4.0	4.0	4.0	NaN	NaN
-2	3	ryan	3	2	2	2023-06-12	2023-06-12	2023-09-01	NaN	NaN	0.0	NaN	NaN	0.0	NaN	NaN	0.0	NaN	NaN	0.0	NaT	NaT	NaT	NaT	NaT	NaT	NaT	NaT	NaT	3.0	1.0	1.0	2023-06-01	2023-06-01	2023-06-01	5.0	5.0	5.0	1.0	1.0	1.0	1.0	1.0	1.0	1.0	1.0	1.0	NaN	NaN
-3	4	tianji	4	2	2	2024-02-01	2024-02-01	2024-02-15	NaN	NaN	0.0	NaN	NaN	0.0	NaN	NaN	0.0	NaN	NaN	0.0
+```bash
+git clone https://github.com/wesmadrigal/graphreduce.git
+cd graphreduce
+pip install -e ".[dev]"
 ```
+
+## Execution paths
+
+| Workload | Node | Execute with |
+| --- | --- | --- |
+| Automatic dataframe features | `DynamicNode` | `GraphReduce.do_transformations()` |
+| Custom dataframe features | `GraphReduceNode` subclass | `GraphReduce.do_transformations()` |
+| SQL-native features | `SQLNode` or backend subclass | `GraphReduce.do_transformations_sql()` |
+
+Use a unique `prefix` for every node regardless of the execution path. Prefixes
+make joined columns traceable and prevent name collisions.
+
+## Design goals
+
+GraphReduce emphasizes:
+
+- explicit relational structure rather than hidden join logic;
+- cardinality-safe aggregation to a declared output grain;
+- consistent historical and future time windows;
+- backend portability where the underlying engines permit it;
+- a gradual path from automatic features to fully custom operations; and
+- inspectable intermediate logic, including generated SQL.
+
+The library is under active development, and support is not perfectly uniform
+across every compute layer. Validate a representative sample on the backend
+you intend to use before scaling a production workload.

@@ -24,7 +24,7 @@ print(materialized)
 
 Current implementation:
 
-* [`examples/relbench_user_badges_local_runner.py`](../../examples/relbench_user_badges_local_runner.py)
+* [`examples/relbench_user_badges_local_runner.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_user_badges_local_runner.py)
 
 ## Latest Tested Result
 

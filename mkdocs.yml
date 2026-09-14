@@ -1,5 +1,5 @@
-site_name: graphreduce
-site_url: https://github.com/wesmadrigal/graphreduce
+site_name: GraphReduce
+site_url: https://wesmadrigal.github.io/graphreduce/
 repo_url: https://github.com/wesmadrigal/GraphReduce
 repo_name: wesmadrigal/GraphReduce
 theme:
@@ -12,14 +12,17 @@ theme:
 nav:
   - Home: index.md
   - Fundamentals:
-    - fundamentals/index.md
+    - Overview: fundamentals/index.md
     - Operations Pipeline: fundamentals/operations.md
     - Joins and Cardinality: fundamentals/joins_and_cardinality.md
     - Time Windows and Leakage Safety: fundamentals/time_and_leakage.md
   - Abstractions: abstractions.md
+  - Configuration: configuration.md
+  - Quickstart: tutorial_index.md
   - End-to-End Examples:
-    - end_to_end_examples/index.md
+    - Choose an Example: end_to_end_examples/index.md
     - Hello World: end_to_end_examples/hello_world.md
+    - Interactive Runner Setup: end_to_end_examples/hello_world_modal_interactive.md
     - Preserve Child Grain: end_to_end_examples/preserve_child_grain.md
     - Multi-Backend Examples:
       - "cust+notifications: pandas, sqlite, duckdb, pyspark, snowflake SQL, databricks SQL": end_to_end_examples/multi_backend_cust_notifications.md
@@ -30,6 +33,7 @@ nav:
     - Predictive AI with XGBoost: end_to_end_examples/predictive_ai_xgboost.md
     - Predictive AI with TabPFN: end_to_end_examples/predictive_ai_tabpfn.md
     - RelBench Tasks:
+      - Performance Comparison: end_to_end_examples/relbench_performance.md
       - classification:
         - "rel-stack: user-badges": end_to_end_examples/relbench_rel_stack_badges_duckdb.md
         - "rel-stack: user-engagement": end_to_end_examples/relbench_rel_stack_user_engagement_duckdb.md
@@ -41,19 +45,21 @@ nav:
         - "rel-amazon: item-churn": end_to_end_examples/relbench_rel_amazon_item_churn_duckdb.md
       - regression:
         - "rel-stack: post-votes": end_to_end_examples/relbench_rel_stack_post_votes_duckdb.md
-        - "rel-hm: item-sales": end_to_end_examples/relbench_rel_hm_item_sales_duckdb.md
         - "rel-avito: ad-ctr": end_to_end_examples/relbench_rel_avito_ad_ctr_duckdb.md
+        - "rel-hm: item-sales": end_to_end_examples/relbench_rel_hm_item_sales_duckdb.md
         - "rel-amazon: user-ltv": end_to_end_examples/relbench_rel_amazon_user_ltv_duckdb.md
         - "rel-amazon: item-ltv": end_to_end_examples/relbench_rel_amazon_item_ltv_duckdb.md
-  - Tutorial:
-    - tutorial_index.md
-    - tutorial_time.md
-    - tutorial_custom_graph.md
-    - tutorial_swapping_compute.md
-    - tutorial_sql_dialects.md
-    - tutorial_sql_backends_dynamic_queries.md
-    - tutorial_method_deps.md
-    - tutorial_auto_feature_engineering.md
+  - Guides:
+    - Point-in-Time Correctness: tutorial_time.md
+    - Custom Node Operations: tutorial_custom_graph.md
+    - Compute Layers: tutorial_swapping_compute.md
+    - SQL Operations: tutorial_sql_dialects.md
+    - SQL Backends: tutorial_sql_backends_dynamic_queries.md
+    - SQL Auto-Feature Families: sql_auto_feature_families.md
+    - Frozen SQL Plans: tutorial_frozen_sql_plans.md
+    - Post-Join Dependencies: tutorial_method_deps.md
+    - Automated Feature Engineering: tutorial_auto_feature_engineering.md
+    - Feature Schema Profiles: feature_schema_profiles.md
 markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true

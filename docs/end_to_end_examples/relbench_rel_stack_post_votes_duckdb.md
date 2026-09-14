@@ -28,7 +28,7 @@ print(materialized)
 
 Current implementation:
 
-* [`examples/relbench_post_votes_local_runner.py`](../../examples/relbench_post_votes_local_runner.py)
+* [`examples/relbench_post_votes_local_runner.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_post_votes_local_runner.py)
 
 ## Latest Tested Result
 

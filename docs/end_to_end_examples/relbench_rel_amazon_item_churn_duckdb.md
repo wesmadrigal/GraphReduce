@@ -12,8 +12,8 @@ print(target, auc, n_features, len(df))
 
 Current implementation:
 
-* [`examples/relbench_amazon_item_churn.py`](../../examples/relbench_amazon_item_churn.py)
-* [`examples/relbench_amazon_common.py`](../../examples/relbench_amazon_common.py)
+* [`examples/relbench_amazon_item_churn.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_amazon_item_churn.py)
+* [`examples/relbench_amazon_common.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_amazon_common.py)
 
 Current RelBench-aligned dates:
 

@@ -1,28 +1,29 @@
 # rel-trial: study outcome (Classification)
 
-This example now materializes the official `rel-trial` tables from the `relbench` Python library and runs the GraphReduce pipeline on those local parquet files.
+This example now materializes the official `rel-trial` tables from the `relbench` Python library and runs one GraphReduce instance for each official yearly training cut date, plus the validation and test cut dates.
 
 ```python
 from relbench_trial_study_outcome import run_rel_trial_study_outcome
 
-df_val, df_test, in_time_auc, holdout_auc, n_features, materialized, target = run_rel_trial_study_outcome()
+df_train, df_val, df_test, in_time_auc, holdout_auc, n_features, materialized, target = run_rel_trial_study_outcome()
 print(materialized)
-print(target, in_time_auc, holdout_auc, n_features, len(df_val), len(df_test))
+print(target, in_time_auc, holdout_auc, n_features, len(df_train), len(df_val), len(df_test))
 ```
 
 Current implementation:
 
-* [`examples/relbench_trial_study_outcome.py`](../../examples/relbench_trial_study_outcome.py)
+* [`examples/relbench_trial_study_outcome.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_trial_study_outcome.py)
 
 ## Latest Tested Result
 
 Latest local run from `tests/data/relbench/run_reports/relbench_results.json`:
 
-* in-time AUC: `0.5679`
-* holdout AUC: `0.6157`
-* feature count: `349`
-* rows: validation `960`, test `825`
-* runtime: `21.6s` (`2026-04-09T22:53:10Z`)
+* in-time AUC: `0.6208`
+* holdout AUC: `0.6434`
+* feature count: `282`
+* temporal instances: `21` (`19` train, `1` validation, `1` test)
+* rows: train `11,994`, validation `960`, test `825`
+* runtime: approximately `45s` on the local development machine
 
 ## Interactive Runner
 

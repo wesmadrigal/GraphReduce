@@ -12,7 +12,7 @@ print(auc, n_features, len(df))
 
 Current implementation:
 
-* [`examples/relbench_hm_user_churn.py`](../../examples/relbench_hm_user_churn.py)
+* [`examples/relbench_hm_user_churn.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_hm_user_churn.py)
 
 Current RelBench-aligned dates:
 

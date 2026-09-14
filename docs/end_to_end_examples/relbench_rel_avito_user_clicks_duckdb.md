@@ -12,8 +12,8 @@ print(target, auc, n_features, len(df))
 
 Current implementation:
 
-* [`examples/relbench_avito_user_clicks.py`](../../examples/relbench_avito_user_clicks.py)
-* [`examples/relbench_avito_common.py`](../../examples/relbench_avito_common.py)
+* [`examples/relbench_avito_user_clicks.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_avito_user_clicks.py)
+* [`examples/relbench_avito_common.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_avito_common.py)
 
 ## Latest Tested Result
 

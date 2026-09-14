@@ -1,89 +1,146 @@
 # Quickstart
 
-Full code [here](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/tutorial_ex1.ipynb)
+This walkthrough builds a two-table customer feature graph with the sample CSV
+files included in the repository. Run it from the repository root.
 
-The most simple graph is two nodes with no time component, no aggregations,
-and no labels.  We are using customer (`cust.csv`) and order data (`orders.csv`).  
+## What you will build
 
-In plain terms what the below code does is as follows:
-
-1. Create prefixes for each node so we always know where the column originated from after joinining the two datasets.
-2. Instantiate two `DynamicNode` instances: one node for `cust.csv` and another for `orders.csv`.
-3. Instantiate the `GraphReduce` object to house the compute graph.  We are specifying that the `cust.csv` node is the `parent_node`, which means all data will be joined to and aggregated to the `cust.csv` node.  In cases where we reduce the data the resulting dataset should be at the ganularity of the `parent_node` dimension.
-4. Add the nodes.
-5. Add the edge between the nodes.
-6. Execute the computation with `GraphReduce.do_transformations()` the primary entrypoint to execution.
-7. Dump out the head of the computed dataframe. 
-
-```Python
-from graphreduce.node import GraphReduceNode, DynamicNode
-from graphreduce.graph_reduce import GraphReduce
-from graphreduce.enum import ComputeLayerEnum as GraphReduceComputeLayerEnum, PeriodUnit
-
-# Need unique prefixes for all nodes
-# so when columns are merged we know
-# where they originate from.
-prefixes = {
-    'cust.csv' : {'prefix':'cu'},
-    'orders.csv':{'prefix':'ord'}
-}
-
-# create graph reduce nodes
-gr_nodes = {
-    f.split('/')[-1]: DynamicNode(
-        fpath=f,
-        fmt='csv',
-        pk='id',
-        prefix=prefixes[f]['prefix'],
-        date_key=None,
-        compute_layer=GraphReduceComputeLayerEnum.pandas,
-        compute_period_val=730,
-        compute_period_unit=PeriodUnit.day,
-    )
-    for f in files.keys()
-}
-
-# Instantiate GraphReduce with params.
-# We are using 'cust.csv' as parent node
-# so the granularity should be at the customer
-# dimension.
-gr = GraphReduce(
-    name='starter_graph',
-    parent_node=gr_nodes['cust.csv'],
-    fmt='csv',
-    cut_date=datetime.datetime(2023,9,1),
-    compute_layer=GraphReduceComputeLayerEnum.pandas,
-    auto_features=True,
-    auto_feature_hops_front=1,
-    auto_feature_hops_back=2,
-    label_node=gr_nodes['orders.csv'],
-    label_operation='count',
-    label_field='id',
-    label_period_val=60,
-    label_period_unit=PeriodUnit.day
-)
-
-# Add the nodes to the GraphReduce instance.
-gr.add_node(gr_nodes['cust.csv'])
-gr.add_node(gr_nodes['orders.csv'])
-
-gr.add_entity_edge(
-    parent_node=gr_nodes['cust.csv'],
-    relation_node=gr_nodes['orders.csv'],
-    parent_key='id',
-    relation_key='customer_id',
-    reduce=True
-)
-
-gr.do_transformations()
-
-gr.parent_node.df.head()
-	cu_id	cu_name	ord_customer_id	ord_id_count	ord_customer_id_count	ord_ts_min	ord_ts_max	ord_amount_count	ord_customer_id_dupe	ord_id_label
-0	1	wes	1	3	3	2023-05-12	2023-09-02	3	1	3
-1	2	ana	2	3	3	2022-08-05	2023-10-15	3	2	3
-2	3	caleb	3	1	1	2023-06-01	2023-06-01	1	3	1
-3	4	luly	4	2	2	2024-01-01	2024-02-01	2	4	2
-
+```text
+cust.csv                       orders.csv
+one row per customer           many rows per customer
+        id  1 ───────────── *  customer_id
+           output grain          reduce before join
 ```
 
-Next tutorial: [End-to-end automated feature engineering](tutorial_auto_feature_engineering.md)
+The graph uses order history to create customer features and uses future order
+rows to create a customer label.
+
+## 1. Install the project
+
+```bash
+pip install -e ".[dev]"
+```
+
+The sample files live under `tests/data/cust_data/`.
+
+## 2. Define the nodes
+
+```python
+import datetime as dt
+from pathlib import Path
+
+from graphreduce.enum import ComputeLayerEnum, PeriodUnit
+from graphreduce.graph_reduce import GraphReduce
+from graphreduce.node import DynamicNode
+
+data_dir = Path("tests/data/cust_data")
+
+customers = DynamicNode(
+    fpath=str(data_dir / "cust.csv"),
+    fmt="csv",
+    pk="id",
+    prefix="cust",
+    compute_layer=ComputeLayerEnum.pandas,
+)
+
+orders = DynamicNode(
+    fpath=str(data_dir / "orders.csv"),
+    fmt="csv",
+    pk="id",
+    prefix="ord",
+    date_key="ts",
+    compute_layer=ComputeLayerEnum.pandas,
+)
+```
+
+The prefixes are unique, so output columns retain their source: `cust_name`
+comes from customers and `ord_amount_sum` comes from orders. The orders node
+has a `date_key`; the static customer table does not need one.
+
+## 3. Configure the graph
+
+```python
+graph = GraphReduce(
+    name="customer_quickstart",
+    parent_node=customers,
+    compute_layer=ComputeLayerEnum.pandas,
+    cut_date=dt.datetime(2023, 6, 30),
+    compute_period_val=365,
+    compute_period_unit=PeriodUnit.day,
+    auto_features=True,
+    label_node=orders,
+    label_field="id",
+    label_operation="count",
+    label_period_val=30,
+    label_period_unit=PeriodUnit.day,
+)
+```
+
+This declares:
+
+- one output row per customer;
+- a one-year order-history window ending just before June 30, 2023; and
+- a 30-day future window beginning just after that cutoff for the order-count
+  label.
+
+## 4. Connect the nodes
+
+```python
+graph.add_node(customers)
+graph.add_node(orders)
+
+graph.add_entity_edge(
+    parent_node=customers,
+    relation_node=orders,
+    parent_key="id",
+    relation_key="customer_id",
+    reduce=True,
+)
+```
+
+`reduce=True` is essential here. It tells GraphReduce to aggregate all matching
+orders to one row per `customer_id` before joining them to customers.
+
+## 5. Execute and inspect
+
+```python
+graph.do_transformations()
+
+features = graph.parent_node.df
+print(features.shape)
+print(features.head())
+```
+
+The sample produces four rows—one for each customer. The exact feature count
+may evolve as automatic feature generation improves, so assert the intended
+row grain and required columns rather than a fixed total column count.
+
+```python
+assert len(features) == 4
+assert features["cust_id"].is_unique
+assert "ord_id_label" in features.columns
+```
+
+Customers with no order in the label window have a null label after the left
+join. If “no matching event” means zero for your task, fill that value
+explicitly before model training; do not apply that rule blindly to targets
+where missing has a different meaning.
+
+## What happened
+
+GraphReduce performed the following work:
+
+1. Loaded and prefixed both CSV files.
+2. Filtered order feature rows to the configured historical window.
+3. Generated order aggregates grouped by `ord_customer_id`.
+4. Left-joined those aggregates to customers.
+5. Counted orders in the future label window and joined the label.
+6. Stored the customer-grain result on `graph.parent_node.df`.
+
+## Next steps
+
+- Add a third table in the full [Hello World](end_to_end_examples/hello_world.md).
+- Learn the exact [time-window boundaries](fundamentals/time_and_leakage.md).
+- Replace automatic logic with [custom node operations](tutorial_custom_graph.md).
+- Move the same graph shape to another [compute layer](tutorial_swapping_compute.md).
+- Build and inspect [SQL-native graphs](tutorial_sql_backends_dynamic_queries.md).

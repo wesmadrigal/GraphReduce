@@ -1,104 +1,109 @@
-# Swapping compute layers
+# Choose a Compute Layer
 
-Full code [here](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/tutorial_ex4.ipynb)
+GraphReduce keeps the graph structure and node operations from the execution
+engine. Switching engines is easiest when the graph uses `DynamicNode` and
+automatic features; custom node methods remain backend-specific.
 
-There are API differences between a lot of compute layers
-but between `pandas` and `dask` the API is mostly the same.  This
-makes swapping between these two compute layers a breeze.
+## Backend map
 
-Let's say we're using the `orders.csv` and `cust.csv`
-from prior examples and using automated feature engineering
-with `DynamicNode` instances.
+| Workload | `ComputeLayerEnum` | Typical node | Extra |
+| --- | --- | --- | --- |
+| pandas | `pandas` | `DynamicNode` | Core install |
+| Dask | `dask` | `DynamicNode` | Core install |
+| Spark | `spark` | `DynamicNode` | `graphreduce[spark]` |
+| Daft | `daft` | `DynamicNode` | `graphreduce[daft]` |
+| DuckDB | `duckdb` | `DuckdbNode` | `graphreduce[duckdb]` |
+| SQLite | `sqlite` | `SQLNode` | Python standard library |
+| Trino | `trino` | `TrinoNode` | `graphreduce[trino]` |
+| Other SQL engines | Matching enum member | `SQLNode` or backend subclass | Backend client |
 
+There is no generic `ComputeLayerEnum.sql`. Select the actual SQL dialect so
+GraphReduce can render backend-specific syntax.
 
-## Pandas
-We'll use the same `orders.csv` and `cust.csv` datasets
-and start with a `pandas` backend, which is specified
-with the `compute_layer` parameter.
+## Dataframe nodes
 
-```
-cust_node = DynamicNode(
-    fpath='cust.csv',
-    fmt='csv',
-    pk='id',
-    prefix='cu',
-    date_key=None,
-    compute_layer=ComputeLayerEnum.pandas
-)
+The same basic node configuration works across dataframe engines:
 
-cust_node.do_data()
-type(cust_node.df)
-pandas.core.frame.DataFrame
-```
+```python
+from graphreduce.enum import ComputeLayerEnum
+from graphreduce.node import DynamicNode
 
-
-## Dask
-Now we can instantiate the same nodes with `dask`:
-```Python
-cust_node = DynamicNode(
-    fpath='cust.csv',
-    fmt='csv',
-    pk='id',
-    prefix='cu',
-    date_key=None,
-    compute_layer=ComputeLayerEnum.dask
-)
-
-cust_node.do_data()
-type(cust_node.df)
-dask.dataframe.core.DataFrame
-```
-
-## Spark
-For `spark` you will need access to a SparkContext
-and can instantiate as follows:
-```Python
-cloud_node = DynamicNode(
-    fpath='s3://mybucket/path/to/file.parquet',
-    fmt='parquet',
-    pk='id',
-    prefix='fi',
-    date_key='updated_at',
-    compute_layer=ComputeLayerEnum.spark,
-    compute_period_val=365,
-    compute_period_unit=PeriodUnit.day,
-    spark_sqlctx=sqlCtx
-)
-cloud_node.do_data()
-type(cloud_node.df)
-pyspark.sql.dataframe.DataFrame
-```
-
-## Daft
-For `daft` you will just need to specify
-the compute layer.
-```Python
-daft_node = DynamicNode(
-   fpath='cusv.csv',
-   fmt='csv',
-   pk='id',
-   prefix='cu',
-   date_key=None,
-   compute_layer=ComputeLayerEnum.daft
-)
-
-cust_node.do_data()
-type(cust_node.df)
-daft.dataframe.dataframe.DataFrame
-```
-
-## SQL compute engines
-To use SQL dialect we need to use the `SQLNode` class
-and it's subclasses.  These are instantiated as follows:
-```Python
-from graphreduce.node import SQLNode
-
-cust_node = SQLNode(
-    fpath='schema.customers',
-    fmt='sql',
-    pk='id',
-    prefix='cu',
-    date_key='signup_date',
-    compute_layer=ComputeLayerEnum.sql
+customers = DynamicNode(
+    fpath="customers.parquet",
+    fmt="parquet",
+    pk="id",
+    prefix="cust",
+    compute_layer=ComputeLayerEnum.pandas,  # or dask, spark, or daft
 )
 ```
+
+Set the graph to the same compute layer:
+
+```python
+graph = GraphReduce(
+    parent_node=customers,
+    compute_layer=ComputeLayerEnum.pandas,
+    auto_features=True,
+)
+```
+
+Spark also needs `spark_sqlctx` where required by the current API. Storage
+paths must be readable by the chosen engine; a local path that works in pandas
+may not be visible to a distributed Spark job.
+
+## SQL nodes
+
+SQL execution uses `SQLNode` or a backend-specific subclass and the SQL entry
+point:
+
+```python
+import duckdb
+
+from graphreduce.enum import ComputeLayerEnum
+from graphreduce.node import DuckdbNode
+
+connection = duckdb.connect()
+
+customers = DuckdbNode(
+    fpath="customers",
+    table_name="customers",
+    fmt="sql",
+    pk="id",
+    prefix="cust",
+    compute_layer=ComputeLayerEnum.duckdb,
+    client=connection,
+    columns=["id", "name"],
+)
+
+graph = GraphReduce(
+    parent_node=customers,
+    compute_layer=ComputeLayerEnum.duckdb,
+    sql_client=connection,
+)
+graph.add_node(customers)
+graph.do_transformations_sql()
+```
+
+Client construction, credentials, catalogs, and temporary-object behavior vary
+by backend. Use the matching end-to-end example before porting a large graph.
+
+## What is portable
+
+Usually portable:
+
+- graph topology and edge keys;
+- parent-grain and time-window configuration;
+- `DynamicNode` automatic feature intent; and
+- basic aggregate semantics.
+
+Usually backend-specific:
+
+- custom dataframe expressions;
+- custom SQL strings and functions;
+- type coercion and timestamp syntax;
+- identifier quoting;
+- connection and catalog setup; and
+- materialization/checkpoint behavior.
+
+See [Same graph, multiple backends](end_to_end_examples/multi_backend_cust_notifications.md)
+for side-by-side implementations.

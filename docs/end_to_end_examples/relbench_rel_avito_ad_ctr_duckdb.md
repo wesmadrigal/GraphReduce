@@ -12,8 +12,8 @@ print(target, mae, n_features, len(df))
 
 Current implementation:
 
-* [`examples/relbench_avito_ad_ctr.py`](../../examples/relbench_avito_ad_ctr.py)
-* [`examples/relbench_avito_common.py`](../../examples/relbench_avito_common.py)
+* [`examples/relbench_avito_ad_ctr.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_avito_ad_ctr.py)
+* [`examples/relbench_avito_common.py`](https://github.com/wesmadrigal/graphreduce/blob/master/examples/relbench_avito_common.py)
 
 ## Latest Tested Result
 

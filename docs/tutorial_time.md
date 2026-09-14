@@ -1,104 +1,107 @@
-# Point in time correctness
+# Verify Point-in-Time Correctness
 
-Full code [here](https://github.com/wesmadrigal/GraphReduce/blob/master/examples/tutorial_ex2.ipynb)
+Time leakage occurs when a feature uses information that would not have been
+available at prediction time. GraphReduce prevents this by applying separate
+historical and future windows around a cutoff.
 
-To handle point in time correctness properly all nodes 
-in the graph need to share the same date parameters.  Also,
-all nodes must have a `date_key` set if they are to take
-advantage of the date filtering provided out of the box.
+## Window contract
 
+For cutoff `T`:
 
-## A single node date filter
-A good way to test if things are working properly is instantiate
-a single node and test the following functions:
+```text
+features: T - compute period < timestamp < T
+labels:   T                  < timestamp < T + label period
+```
 
-* `prep_for_features()` - this filters all data prior to a `cut_date` for generating features
-* `prep_for_labels()` - this filters all data after a `cut_date` for generating labels / targets
+For non-null timestamps, the comparisons are strict. Rows on any boundary are
+excluded.
 
-```Python
-from graphreduce.node import DynamicNode
+## Inspect one node
+
+Run this example from the repository root:
+
+```python
+import datetime as dt
+from pathlib import Path
+
+import pandas as pd
+
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit
-# Only works in jupyter notebook 
-!cat orders.csv
+from graphreduce.node import DynamicNode
 
-id,customer_id,ts,amount
-1,1,2023-05-12,10
-2,1,2023-06-01,12
-3,2,2023-01-01,13
-4,2,2022-08-05,150
-5,3,2023-06-01,220
-6,1,2023-09-02,1200
-7,2,2023-10-15,47
-8,4,2024-01-01,42
-9,4,2024-02-01,42
-
-order_node = DynamicNode(
-    fpath='./orders.csv',
-    fmt='csv',
-    pk='id',
-    prefix='ord',
-    date_key='ts',
+orders = DynamicNode(
+    fpath=str(Path("tests/data/cust_data/orders.csv")),
+    fmt="csv",
+    pk="id",
+    prefix="ord",
+    date_key="ts",
     compute_layer=ComputeLayerEnum.pandas,
-    compute_period_val=180,
+    cut_date=dt.datetime(2023, 7, 1),
+    compute_period_val=365,
     compute_period_unit=PeriodUnit.day,
-    cut_date=datetime.datetime(2023, 10, 1)
+    label_period_val=60,
+    label_period_unit=PeriodUnit.day,
 )
 
-# loads the data
-order_node.do_data()
+orders.do_data()
 
-print(len(order_node.df))
-9
+feature_rows = orders.prep_for_features()
+label_rows = orders.prep_for_labels()
 
-print(len(order_node.prep_for_features()))
-4
+print(feature_rows[["ord_id", "ord_ts"]])
+print(label_rows[["ord_id", "ord_ts"]])
 
-print(len(order_node.prep_for_labels()))
-1
+feature_times = pd.to_datetime(feature_rows["ord_ts"])
+label_times = pd.to_datetime(label_rows["ord_ts"])
+cutoff = pd.Timestamp("2023-07-01")
+
+assert (feature_times < cutoff).all()
+assert (label_times > cutoff).all()
 ```
 
-In the above snippet we used a `cut_date` of October 1, 2023 and a
-`compute_period_val` of 180, so we want 180 day of history prior
-to October 1, 2023.  There are exactly 4 records that satisfy that
-criteria, so we can see the `prep_for_features` function is working as expected.
+`do_data()` loads the CSV and adds the `ord_` prefix. The two helper methods
+return filtered frames; they do not mix feature and label rows. The explicit
+`pd.to_datetime()` calls above normalize the result before the verification
+assertions.
 
+## Configure the whole graph
 
-Additionally, for the labels we see there is 1 record within 30
-days of October 1, 2023 so we can see the `prep_for_labels`
-function is working as expected.
-Using the example from before with `cust.csv` and `orders.csv`
-let's say we want to only compute features within 6 months
-and compute a label for 45 days.  
+Set shared time controls on `GraphReduce`:
 
-
-## Top-level config
-
-In the `GraphReduce` instance we specify `compute_period_val` and `label_period_val`.  
-These parameters control how much history is included during execution.  These parameters
-will be pushed down through all the nodes in the graph, ensuring consistency across
-all nodes.  
-In the below instance data from `2023/9/1` going back 180 days will be included in feature preparation
-and data from `2023/9/1` going forward 45 days will be included in label preparation.
-
-
-```Python
-gr = GraphReduce(
-    name='starter_graph',
-    parent_node=gr_nodes['cust.csv'],
-    fmt='csv',
-    cut_date=datetime.datetime(2023,9,1),
-    compute_layer=GraphReduceComputeLayerEnum.pandas,
-    compute_period_val=180,
+```python
+graph = GraphReduce(
+    parent_node=customers,
+    compute_layer=ComputeLayerEnum.pandas,
+    cut_date=dt.datetime(2023, 7, 1),
+    compute_period_val=365,
     compute_period_unit=PeriodUnit.day,
+    label_node=orders,
+    label_field="id",
+    label_operation="count",
+    label_period_val=60,
+    label_period_unit=PeriodUnit.day,
     auto_features=True,
-    label_node=gr_nodes['orders.csv'],
-    label_operation='count',
-    label_field='id',
-    label_period_val=45,
-    label_period_unit=PeriodUnit.day
 )
 ```
-This interface allows us to simply change a couple of parameters
-to regenerate datasets with different time periods.
 
+During graph hydration, these values are pushed to the nodes so one execution
+uses a consistent reference time.
 
+## Checklist before training
+
+- Give every time-varying node the correct `date_key`.
+- Confirm timestamps represent availability time, not merely when an event was
+  later recorded or updated.
+- Treat static dimensions without a `date_key` carefully if their attributes
+  can change over time.
+- Decide whether rows with null timestamps should be retained. The dataframe
+  feature helper currently retains them, while SQL comparisons normally do not.
+- Test both helper windows on a small known sample.
+- Assert the output grain after all joins.
+- Reserve validation and test cutoffs that are later than training cutoffs.
+
+GraphReduce can enforce configured timestamps; it cannot infer whether a source
+column itself contains future-derived information. Declare or remove such
+columns before feature generation. See
+[Feature schema profiles](feature_schema_profiles.md) for explicit unsafe-column
+handling.

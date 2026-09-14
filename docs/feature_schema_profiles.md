@@ -1,8 +1,10 @@
-# Feature schema profiles
+# Feature Schema Profiles
 
-GraphReduce can fit a typed, model-agnostic feature manifest from a training
-sample. The manifest separates structural keys from model features and makes
-cutoff-availability decisions explicit.
+A feature schema profile records which columns are structural, predictive, or
+unsafe. Fit it on training data before automatic feature generation so schema
+decisions do not learn from validation or test distributions.
+
+## Create a manifest
 
 ```python
 from graphreduce.feature_schema import profile_feature_schema
@@ -16,12 +18,26 @@ manifest = profile_feature_schema(
     unsafe_columns=("future_duration",),
     source="studies",
 )
+```
 
+The manifest separates:
+
+- primary and foreign keys used for graph structure;
+- date keys used for temporal behavior;
+- target columns used for supervision;
+- unsafe columns that must not become features; and
+- eligible model features with inferred types.
+
+Typical consumers are:
+
+```python
 node.columns = list(manifest.graph_columns)
 categorical_columns = manifest.categorical_columns
 ```
 
-SQL nodes provide the same operation directly:
+## Infer through a node
+
+Nodes expose the same workflow:
 
 ```python
 manifest = node.infer_feature_manifest(
@@ -33,17 +49,34 @@ manifest = node.infer_feature_manifest(
 )
 ```
 
-Profiling must use training data. Validation and test frames may be aligned to
-the resulting manifest, but must not be used to decide types, coverage,
-cardinality, or feature inclusion.
+With `apply_columns=True`, the inferred graph columns are assigned back to the
+node.
 
-GraphReduce cannot infer when a value became available from its dtype or name.
-Callers must declare mutable or future-derived columns through
-`unsafe_columns`. This is dataset metadata, not task-specific feature logic.
+## Prevent schema leakage
 
-The manifest complements the existing generic SQL feature primitives. In
-particular, `auto_annotate_features=True` already creates bounded categorical
-indicators and category-gated numeric values. Those values feed normal
-reductions, so a categorical `event_type` and numerical `amount` can produce
-aggregates such as the minimum amount for each frequent event type without
-hardcoding domain values.
+Use only the training sample to decide:
+
+- semantic and physical types;
+- missing-value coverage;
+- categorical cardinality;
+- feature inclusion; and
+- any value-frequency threshold.
+
+Validation and test frames may be aligned to the completed manifest, but must
+not change it.
+
+GraphReduce cannot determine availability time from a dtype or column name. A
+field such as `resolved_at`, `final_status`, or `lifetime_value` may contain
+future information even when it looks harmless. Put mutable, post-outcome, or
+future-derived fields in `unsafe_columns` based on dataset knowledge.
+
+## Relationship to automatic features
+
+The manifest decides which columns are safe and how they should be understood.
+Automatic feature families decide which relational operations to generate from
+those columns. For example, a safe categorical `event_type` can produce bounded
+indicators, while a safe numeric `amount` can produce reductions or windowed
+summaries.
+
+See [SQL auto-feature families](sql_auto_feature_families.md) for those
+generation controls.

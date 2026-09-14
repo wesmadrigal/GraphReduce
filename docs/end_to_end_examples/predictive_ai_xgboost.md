@@ -72,7 +72,6 @@ gr = GraphReduce(
     fmt="csv",
     compute_layer=ComputeLayerEnum.pandas,
     auto_features=True,
-    auto_labels=True,
     cut_date=datetime.datetime(2023, 5, 1),
     compute_period_unit=PeriodUnit.day,
     compute_period_val=365,
@@ -143,7 +142,7 @@ X_train, X_test, y_train, y_test = train_test_split(
 # y_proba = model.predict_proba(X_test)[:, 1]
 ```
 
-## What To Expect
+## What to expect
 
 * GraphReduce produces a parent-grain feature matrix (`df`) with one row per customer.
 * Feature columns (`X`) include aggregated behavior from `orders` and `notifications`.
@@ -151,11 +150,11 @@ X_train, X_test, y_train, y_test = train_test_split(
 * The resulting feature vector can be fed directly into `.fit()` / `.predict()` for a
   classical machine learning workflow.
 
-## Run Interactive
+## Run interactively
 
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="predictive_ai_xgboost">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="predictive_ai_xgboost">
   <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
     <button data-run-btn>Run XGBoost Example</button>
   </div>

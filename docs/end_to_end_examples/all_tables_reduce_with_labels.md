@@ -15,7 +15,7 @@ In this scenario:
 * features use a 365-day lookback from `cut_date`
 * labels use a 30-day look-forward window
 
-## Tables Used
+## Tables used
 
 * `cust.csv` (parent node)
 * `orders.csv` (label node)
@@ -81,7 +81,6 @@ gr = GraphReduce(
     fmt="csv",
     compute_layer=ComputeLayerEnum.pandas,
     auto_features=True,
-    auto_labels=True,
     cut_date=datetime.datetime(2023, 6, 30),
     compute_period_unit=PeriodUnit.day,
     compute_period_val=365,
@@ -207,7 +206,6 @@ gr = GraphReduce(
     compute_layer=ComputeLayerEnum.duckdb,
     sql_client=con,
     auto_features=True,
-    auto_labels=True,
     cut_date=datetime.datetime(2023, 6, 30),
     compute_period_unit=PeriodUnit.day,
     compute_period_val=365,
@@ -268,7 +266,7 @@ print(out_df.shape)
 con.close()
 ```
 
-## What To Expect
+## What to expect
 
 * Both backends execute the same graph structure and reduction strategy.
 * Because all edges are reduced, output returns to parent grain (one row per customer).
@@ -277,11 +275,11 @@ con.close()
   * X uses `cut_date - 365 days` through `cut_date`
   * y uses `cut_date + 1 day` through `cut_date + 30 days`
 
-## Run Interactive
+## Run interactively
 
-<div class="modal-runner" data-modal-runner data-api-base="https://runner.23.22.30.104.sslip.io" data-example="all_tables_ml_targets">
+<div class="modal-runner" data-modal-runner data-api-base="https://runner.13.218.155.128.sslip.io" data-example="all_tables_ml_targets">
   <div class="modal-runner-controls">
-    <input class="modal-runner-input" data-api-input value="https://runner.23.22.30.104.sslip.io" />
+    <input class="modal-runner-input" data-api-input value="https://runner.13.218.155.128.sslip.io" />
     <button data-save-api-btn>Save API URL</button>
     <button data-run-btn>Run All Tables ML Targets</button>
   </div>

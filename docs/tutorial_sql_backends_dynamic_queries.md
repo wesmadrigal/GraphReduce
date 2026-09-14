@@ -1,18 +1,25 @@
-# SQL Backends and Dynamic Query Construction
+# SQL Backends and Dynamic Queries
 
-This page highlights GraphReduce SQL pluggability and starts with a single-node
-example showing how SQL is dynamically constructed at runtime.
+SQL nodes express graph operations as composable SQL and execute them through a
+backend client. Start with a single node to verify source loading, prefixes,
+and generated SQL before building a multi-table graph.
 
-SQL can already be used with:
+`ComputeLayerEnum` includes SQL dialects for:
 
-* sqlite
-* duckdb
-* snowflake SQL
-* databricks SQL
-* aws Athena
-* aws redshift
+- SQLite
+- DuckDB
+- Snowflake
+- Databricks SQL
+- AWS Athena
+- AWS Redshift
+- PostgreSQL
+- MySQL
+- Trino
 
-## Single Node Example (duckdb backend)
+Client setup and backend-specific behavior vary. Choose the matching enum and
+node subclass; there is no generic `ComputeLayerEnum.sql`.
+
+## DuckDB single-node example
 
 This mirrors the `test_duckdb_node` pattern and shows the exact dynamic query
 construction call:
@@ -47,7 +54,7 @@ What this demonstrates:
 * `node.build_query(...)` compiles SQL text from those ops
 * `node.do_annotate()` shows prefixed column-selection SQL generation
 
-## Single Node Example (sqlite backend with custom SQLNode)
+## SQLite custom-node example
 
 This version shows dynamic SQL from user-defined node methods.
 
@@ -64,7 +71,7 @@ from graphreduce.models import sqlop
 data_path = Path("tests/data/cust_data")
 conn = sqlite3.connect(":memory:")
 
-# Load csv into sqlite table.
+# Load the CSV into a SQLite table.
 pd.read_csv(data_path / "orders.csv").to_sql("orders", conn, index=False, if_exists="replace")
 
 class OrdersSQLNode(SQLNode):
@@ -95,7 +102,7 @@ print(orders.build_query(orders.do_filters() + orders.do_reduce("customer_id")))
 conn.close()
 ```
 
-## Why This Matters
+## Why this matters
 
 * You define SQL behavior in small composable ops.
 * GraphReduce compiles those ops into executable SQL at runtime.
