@@ -65,6 +65,12 @@ from graphreduce.feature_schema import (
     profile_feature_schema,
 )
 from graphreduce.predicates import EqualityPredicate
+from graphreduce.base_distribution import (
+    BASE_CDF_MAX_COLUMNS,
+    BASE_CDF_MAX_FIT_ROWS,
+    base_cdf_expressions,
+    is_base_cdf_column,
+)
 
 
 logger = get_logger("Node")
@@ -106,6 +112,7 @@ FEATURE_FAMILY_NAMES = {
     "episode",
     "semantic",
     "sequence",
+    "state",
     "context",
 }
 
@@ -220,6 +227,7 @@ def normalize_key(key: KeySpec, name: str = "key") -> KeySpec:
     parts = key_parts(key, name=name)
     return parts[0] if len(parts) == 1 else parts
 
+
 def _sample_is_numeric_object_series(series: pd.Series) -> bool:
     """
     Pandas represents Decimal-backed SQL numerics as object dtype. Treat those
@@ -229,6 +237,18 @@ def _sample_is_numeric_object_series(series: pd.Series) -> bool:
     if len(non_null) == 0:
         return False
     return all(isinstance(value, numbers.Number) for value in non_null)
+
+
+def _sample_has_numeric_values(series: pd.Series) -> bool:
+    """Require observed numeric values before planning a SQL numeric operation.
+
+    DuckDB can materialize an all-null VARCHAR sample as float64, even though
+    the backing relation still has a text type at full-frame rerank time.
+    """
+    return not series.dropna().empty and (
+        pd.api.types.is_numeric_dtype(series)
+        or _sample_is_numeric_object_series(series)
+    )
 
 
 def _should_skip_numeric_sql_agg(
@@ -257,6 +277,65 @@ def _is_collection_series(series: pd.Series) -> bool:
     if np is not None:
         collection_types = collection_types + (np.ndarray,)
     return sample_vals.map(lambda v: isinstance(v, collection_types)).any()
+
+
+def _stable_category_value_key(value: typing.Any) -> typing.Tuple[str, str, str]:
+    """Return a total, process-independent order for ordinary scalar values."""
+
+    value_type = type(value)
+    if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+        representation = value.isoformat()
+    elif isinstance(value, bytes):
+        representation = value.hex()
+    else:
+        representation = repr(value)
+    return value_type.__module__, value_type.__qualname__, representation
+
+
+def _deterministic_value_counts(
+    series: pd.Series,
+    *,
+    tie_break: str = "value",
+    tie_break_seed: int = 0,
+) -> pd.Series:
+    """Count values by frequency with a configurable deterministic tie-break.
+
+    SQL engines do not promise row order without ``ORDER BY``, so implicit
+    category ties caused otherwise identical feature plans to choose different
+    values under different worker counts. ``"value"`` sorts tied values by a
+    typed scalar representation and ``"appearance"`` explicitly preserves
+    first appearance. ``"legacy"`` delegates ordering to pandas' historical
+    ``value_counts()`` behavior so a frozen 1.10.14-compatible run can reproduce
+    its feature plan exactly.
+    """
+
+    if tie_break not in {"value", "appearance", "hash", "legacy"}:
+        raise ValueError("tie_break must be 'value', 'appearance', 'hash', or 'legacy'")
+    if tie_break == "legacy":
+        return series.dropna().value_counts()
+    counts = series.dropna().value_counts(sort=False)
+    if counts.empty:
+        return counts
+    if tie_break == "appearance":
+        return counts.iloc[
+            sorted(range(len(counts)), key=lambda position: -int(counts.iloc[position]))
+        ]
+
+    def value_order(value: typing.Any) -> typing.Any:
+        stable_key = _stable_category_value_key(value)
+        if tie_break != "hash":
+            return stable_key
+        payload = "\0".join((str(int(tie_break_seed)), *stable_key)).encode("utf-8")
+        return hashlib.sha256(payload).digest(), stable_key
+
+    positions = sorted(
+        range(len(counts)),
+        key=lambda position: (
+            -int(counts.iloc[position]),
+            value_order(counts.index[position]),
+        ),
+    )
+    return counts.iloc[positions]
 
 
 def _sql_literal(value: typing.Any) -> str:
@@ -294,9 +373,9 @@ def _uniquify_predicate_specs(
 
         resolved_alias = alias
         if resolved_alias.lower() in used_aliases:
-            digest = hashlib.md5(
-                f"{column}\0{condition}".encode("utf-8")
-            ).hexdigest()[:8]
+            digest = hashlib.md5(f"{column}\0{condition}".encode("utf-8")).hexdigest()[
+                :8
+            ]
             resolved_alias = f"{alias}_{digest}"
             collision_index = 2
             while resolved_alias.lower() in used_aliases:
@@ -322,10 +401,7 @@ def _balanced_sql_add(expressions: typing.Sequence[str]) -> str:
 
 
 def _series_looks_like_text(col: str, series: pd.Series, semantic_type: str) -> bool:
-    if (
-        semantic_type != "categorical"
-        and str(series.dtype) not in ["object", "string"]
-    ):
+    if semantic_type != "categorical" and str(series.dtype) not in ["object", "string"]:
         return False
     non_null = series.dropna().head(100)
     if len(non_null) == 0:
@@ -382,13 +458,17 @@ def _sql_context_annotation_ops(
         matches = [column for column in columns if column.lower().endswith(suffix)]
         return matches[0] if len(matches) == 1 else None
 
-    pk_aliases = {
-        alias
-        for alias in (
-            resolve_column(pk_part) for pk_part in key_parts(pk, name="pk")
-        )
-        if alias is not None
-    } if pk else set()
+    pk_aliases = (
+        {
+            alias
+            for alias in (
+                resolve_column(pk_part) for pk_part in key_parts(pk, name="pk")
+            )
+            if alias is not None
+        }
+        if pk
+        else set()
+    )
     context_columns = []
     for context_key in context_keys:
         context_column = resolve_column(context_key)
@@ -403,6 +483,7 @@ def _sql_context_annotation_ops(
 
     numeric_columns = []
     for col, stype in stypes.items():
+        series = table_df_sample[col]
         if col in context_columns or col in pk_aliases:
             continue
         if _column_name_looks_like_identifier(col.rsplit("_", 1)[-1]):
@@ -411,10 +492,18 @@ def _sql_context_annotation_ops(
             continue
         if _is_auto_annotated_feature_col(col):
             continue
-        if str(stype) != "numerical" and not pd.api.types.is_numeric_dtype(table_df_sample[col]):
+        # Semantic inference can label an all-null sample as numerical even
+        # when the backing SQL column is VARCHAR.  Window AVG is less
+        # forgiving than downstream model handling, so require observed
+        # numeric evidence before emitting a peer-relative delta.
+        if not (
+            pd.api.types.is_numeric_dtype(series)
+            and not pd.api.types.is_bool_dtype(series)
+            and not series.dropna().empty
+        ) and not _sample_is_numeric_object_series(series):
             continue
         numeric_columns.append(col)
-    numeric_columns = numeric_columns[:max(0, int(max_numeric_columns))]
+    numeric_columns = numeric_columns[: max(0, int(max_numeric_columns))]
 
     ops: typing.List[sqlop] = []
     for context_col in context_columns:
@@ -517,8 +606,11 @@ def _sql_bool_aggregate_ops(condition: str, alias_prefix: str) -> typing.List[sq
     ]
 
 
-def _sql_text_aggregate_ops(col: str) -> typing.List[sqlop]:
+def _sql_text_aggregate_ops(
+    col: str, render_identifier: typing.Callable[[str], str] = str
+) -> typing.List[sqlop]:
     alias_col = _safe_sql_alias_part(col)
+    col = render_identifier(col)
     coalesced = f"COALESCE({col}, '')"
     trimmed = f"TRIM({coalesced})"
     length_expr = f"LENGTH({coalesced})"
@@ -527,9 +619,7 @@ def _sql_text_aggregate_ops(col: str) -> typing.List[sqlop]:
         f"CASE WHEN {empty_condition} THEN 0 "
         f"ELSE LENGTH({trimmed}) - LENGTH(REPLACE({trimmed}, ' ', '')) + 1 END"
     )
-    number_condition = " OR ".join(
-        [f"{col} LIKE '%{digit}%'" for digit in range(10)]
-    )
+    number_condition = " OR ".join([f"{col} LIKE '%{digit}%'" for digit in range(10)])
     url_condition = (
         f"LOWER({coalesced}) LIKE '%http://%' "
         f"OR LOWER({coalesced}) LIKE '%https://%' "
@@ -543,9 +633,7 @@ def _sql_text_aggregate_ops(col: str) -> typing.List[sqlop]:
         ("question", f"{col} LIKE '%?%'"),
         ("exclamation", f"{col} LIKE '%!%'"),
     ]:
-        pattern_ops.extend(
-            _sql_bool_aggregate_ops(condition, f"{alias_col}_{name}")
-        )
+        pattern_ops.extend(_sql_bool_aggregate_ops(condition, f"{alias_col}_{name}"))
 
     return [
         sqlop(
@@ -577,12 +665,28 @@ def _sql_categorical_aggregate_ops(
     series: pd.Series,
     cardinality_threshold: int,
     top_k: int,
+    high_cardinality_policy: str,
+    categorical_low_cardinality_policy: str,
+    categorical_tie_break: str,
+    categorical_tie_break_seed: int,
+    render_identifier: typing.Callable[[str], str] = str,
 ) -> typing.List[sqlop]:
+    """Aggregate a categorical column with a configurable cardinality policy."""
+
     non_null = series.dropna()
     if len(non_null) == 0 or _is_collection_series(non_null):
         return []
 
+    value_counts = _deterministic_value_counts(
+        non_null,
+        tie_break=categorical_tie_break,
+        tie_break_seed=categorical_tie_break_seed,
+    )
+    if len(value_counts) > cardinality_threshold and high_cardinality_policy == "skip":
+        return []
+
     alias_col = _safe_sql_alias_part(col)
+    col = render_identifier(col)
     ops = [
         sqlop(
             optype=SQLOpType.aggfunc,
@@ -590,11 +694,13 @@ def _sql_categorical_aggregate_ops(
         )
     ]
 
-    value_counts = non_null.value_counts()
-    if len(value_counts) <= cardinality_threshold:
+    if (
+        len(value_counts) <= cardinality_threshold
+        and categorical_low_cardinality_policy == "all"
+    ):
         category_values = list(value_counts.index)
     else:
-        category_values = list(value_counts.head(top_k).index)
+        category_values = list(value_counts.head(top_k).index) if top_k > 0 else []
 
     used_aliases = set()
     for value in category_values:
@@ -610,16 +716,10 @@ def _sql_categorical_aggregate_ops(
             _sql_bool_aggregate_ops(f"{col} = {_sql_literal(value)}", alias_prefix)
         )
 
-    if (
-        len(value_counts) > cardinality_threshold
-        and top_k > 0
-        and len(category_values)
-    ):
+    if len(value_counts) > len(category_values) and len(category_values):
         literals = ", ".join([_sql_literal(value) for value in category_values])
         ops.extend(
-            _sql_bool_aggregate_ops(
-                f"{col} NOT IN ({literals})", f"{alias_col}_other"
-            )
+            _sql_bool_aggregate_ops(f"{col} NOT IN ({literals})", f"{alias_col}_other")
         )
 
     return ops
@@ -632,9 +732,14 @@ def _automatic_base_predicate_specs(
     excluded_columns: typing.Set[str],
     date_column: typing.Optional[str],
     max_predicates: int,
+    cardinality_threshold: int,
     categorical_top_k: int,
+    high_cardinality_policy: str,
+    categorical_tie_break: str,
+    categorical_tie_break_seed: int,
+    render_identifier: typing.Callable[[str], str] = str,
 ) -> typing.List[typing.Tuple[str, str, str]]:
-    """Select a bounded set of frequent categorical equality predicates."""
+    """Select frequent predicates under the configured cardinality policy."""
 
     if max_predicates <= 0:
         return []
@@ -660,7 +765,16 @@ def _automatic_base_predicate_specs(
         if _series_looks_like_text(col, series, semantic_type):
             continue
 
-        value_counts = series.dropna().value_counts()
+        value_counts = _deterministic_value_counts(
+            series,
+            tie_break=categorical_tie_break,
+            tie_break_seed=categorical_tie_break_seed,
+        )
+        if (
+            len(value_counts) > cardinality_threshold
+            and high_cardinality_policy == "skip"
+        ):
+            continue
         value_counts = (
             value_counts.head(categorical_top_k)
             if categorical_top_k > 0
@@ -675,7 +789,7 @@ def _automatic_base_predicate_specs(
                     column_index,
                     value_index,
                     _safe_sql_alias_part(f"{col}_{value}"),
-                    f"{col} = {_sql_literal(value)}",
+                    f"{render_identifier(col)} = {_sql_literal(value)}",
                     col,
                 )
             )
@@ -693,8 +807,7 @@ def _is_auto_annotated_feature_col(col: str) -> bool:
 
 def _is_auto_predicate_feature_col(col: str) -> bool:
     return (
-        _is_auto_annotated_feature_col(col)
-        and AUTO_ANNOTATED_VALUE_MARKER not in col
+        _is_auto_annotated_feature_col(col) and AUTO_ANNOTATED_VALUE_MARKER not in col
     )
 
 
@@ -703,6 +816,10 @@ def _sql_auto_annotate_ops(
     stypes: typing.Dict[str, typing.Any],
     cardinality_threshold: int,
     top_k: int,
+    high_cardinality_policy: str,
+    categorical_low_cardinality_policy: str,
+    categorical_tie_break: str,
+    categorical_tie_break_seed: int,
     max_categorical_columns: int,
     max_text_columns: typing.Optional[int],
     max_gated_numeric_cols: int,
@@ -717,6 +834,7 @@ def _sql_auto_annotate_ops(
     context_keys: typing.Sequence[str] = (),
     context_pk: typing.Optional[str] = None,
     context_max_numeric_columns: int = 4,
+    render_identifier: typing.Callable[[str], str] = str,
 ) -> typing.List[sqlop]:
     ops: typing.List[sqlop] = [sqlop(optype=SQLOpType.select, opval="*")]
     aliases: typing.Set[str] = set(table_df_sample.columns)
@@ -725,7 +843,9 @@ def _sql_auto_annotate_ops(
         if alias in aliases:
             return
         aliases.add(alias)
-        ops.append(sqlop(optype=SQLOpType.select, opval=f"{expr} as {alias}"))
+        ops.append(
+            sqlop(optype=SQLOpType.select, opval=f"{expr} as {render_identifier(alias)}")
+        )
 
     # Annotation expressions are deliberately compiled before generic type
     # inference so callers can expose domain predicates as numeric indicators
@@ -753,7 +873,7 @@ def _sql_auto_annotate_ops(
                 valid = False
                 break
             resolved_expression = resolved_expression.replace(
-                f"{{{placeholder}}}", candidate
+                f"{{{placeholder}}}", render_identifier(candidate)
             )
         if not valid:
             continue
@@ -765,8 +885,7 @@ def _sql_auto_annotate_ops(
             add_select(resolved_expression, alias)
         else:
             alias = (
-                f"{column_prefix}{AUTO_ANNOTATED_MARKER}"
-                f"{_safe_sql_alias_part(name)}"
+                f"{column_prefix}{AUTO_ANNOTATED_MARKER}{_safe_sql_alias_part(name)}"
             )
             add_select(f"CASE WHEN {resolved_expression} THEN 1 ELSE 0 END", alias)
 
@@ -802,10 +921,7 @@ def _sql_auto_annotate_ops(
             semantic_type == "numerical"
             and not _column_name_looks_like_identifier(col)
             and not _is_collection_series(series)
-            and (
-                pd.api.types.is_numeric_dtype(series)
-                or _sample_is_numeric_object_series(series)
-            )
+            and _sample_has_numeric_values(series)
         ):
             numeric_cols.append(col)
     numeric_cols = numeric_cols[:max_gated_numeric_cols]
@@ -827,22 +943,25 @@ def _sql_auto_annotate_ops(
                 continue
             text_columns_seen += 1
             alias_col = _safe_sql_alias_part(col)
-            coalesced = f"COALESCE({col}, '')"
+            sql_col = render_identifier(col)
+            coalesced = f"COALESCE({sql_col}, '')"
             trimmed = f"TRIM({coalesced})"
-            empty_condition = f"{col} IS NULL OR LENGTH({trimmed}) = 0"
+            empty_condition = f"{sql_col} IS NULL OR LENGTH({trimmed}) = 0"
             word_count_expr = (
                 f"CASE WHEN {empty_condition} THEN 0 "
                 f"ELSE LENGTH({trimmed}) - LENGTH(REPLACE({trimmed}, ' ', '')) + 1 END"
             )
             number_condition = " OR ".join(
-                [f"{col} LIKE '%{digit}%'" for digit in range(10)]
+                [f"{sql_col} LIKE '%{digit}%'" for digit in range(10)]
             )
             url_condition = (
                 f"LOWER({coalesced}) LIKE '%http://%' "
                 f"OR LOWER({coalesced}) LIKE '%https://%' "
                 f"OR LOWER({coalesced}) LIKE '%www.%'"
             )
-            add_select(f"LENGTH({coalesced})", f"{alias_col}{AUTO_ANNOTATED_MARKER}length")
+            add_select(
+                f"LENGTH({coalesced})", f"{alias_col}{AUTO_ANNOTATED_MARKER}length"
+            )
             add_select(word_count_expr, f"{alias_col}{AUTO_ANNOTATED_MARKER}word_count")
             add_select(
                 f"CASE WHEN {number_condition} THEN 1 ELSE 0 END",
@@ -861,7 +980,11 @@ def _sql_auto_annotate_ops(
         non_null = series.dropna()
         if len(non_null) == 0:
             continue
-        value_counts = non_null.value_counts()
+        value_counts = _deterministic_value_counts(
+            non_null,
+            tie_break=categorical_tie_break,
+            tie_break_seed=categorical_tie_break_seed,
+        )
         cardinality = len(value_counts)
         is_categorical = semantic_type == "categorical" or str(series.dtype) in [
             "object",
@@ -874,14 +997,18 @@ def _sql_auto_annotate_ops(
         )
         if not is_categorical and not is_low_cardinality_numeric_hint:
             continue
-        if cardinality > cardinality_threshold and top_k <= 0:
+        if cardinality > cardinality_threshold and high_cardinality_policy == "skip":
             continue
 
-        category_values = (
-            list(value_counts.index)
-            if cardinality <= cardinality_threshold
-            else list(value_counts.head(top_k).index)
-        )
+        if (
+            cardinality <= cardinality_threshold
+            and categorical_low_cardinality_policy == "all"
+        ):
+            category_values = list(value_counts.index)
+        else:
+            category_values = list(value_counts.head(top_k).index) if top_k > 0 else []
+        if not category_values:
+            continue
         categorical_specs.append((col, category_values, cardinality))
         if len(categorical_specs) >= max_categorical_columns:
             break
@@ -899,14 +1026,14 @@ def _sql_auto_annotate_ops(
                 alias = f"{alias}_{digest}"
             used_aliases.add(alias)
             add_select(
-                f"CASE WHEN {col} = {_sql_literal(value)} THEN 1 ELSE 0 END",
+                f"CASE WHEN {render_identifier(col)} = {_sql_literal(value)} THEN 1 ELSE 0 END",
                 alias,
             )
 
-        if len(category_values) and cardinality > cardinality_threshold:
+        if len(category_values) and cardinality > len(category_values):
             literals = ", ".join([_sql_literal(value) for value in category_values])
             add_select(
-                f"CASE WHEN {col} NOT IN ({literals}) THEN 1 ELSE 0 END",
+                f"CASE WHEN {render_identifier(col)} NOT IN ({literals}) THEN 1 ELSE 0 END",
                 f"{alias_col}{AUTO_ANNOTATED_MARKER}is_other",
             )
 
@@ -916,7 +1043,7 @@ def _sql_auto_annotate_ops(
             if pd.isna(value):
                 continue
             category_alias = _safe_sql_alias_part(value)
-            condition = f"{cat_col} = {_sql_literal(value)}"
+            condition = f"{render_identifier(cat_col)} = {_sql_literal(value)}"
             for numeric_col in numeric_cols:
                 if numeric_col == cat_col:
                     continue
@@ -925,7 +1052,10 @@ def _sql_auto_annotate_ops(
                     f"{numeric_alias}{AUTO_ANNOTATED_MARKER}"
                     f"when_{cat_alias_col}_{category_alias}"
                 )
-                add_select(f"CASE WHEN {condition} THEN {numeric_col} END", alias)
+                add_select(
+                    f"CASE WHEN {condition} THEN {render_identifier(numeric_col)} END",
+                    alias,
+                )
 
     return ops if len(ops) > 1 else []
 
@@ -1037,10 +1167,18 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         catalog_client: typing.Any = None,
         # The time-series period in days to use.
         ts_periods: list = [1, 3, 4, 7, 14, 30, 60, 90, 180, 365, 730],
+        # Event-relative positions and row windows for ordered state features.
+        state_lags: typing.Sequence[int] = (1, 2, 3, 5),
+        state_windows: typing.Sequence[int] = (3, 5, 10),
         type_func_map: dict = {},
         categorical_cardinality_threshold: int = 20,
         categorical_top_k: int = 20,
+        high_cardinality_policy: str = "skip",
+        categorical_low_cardinality_policy: str = "top_k",
+        categorical_tie_break: str = "value",
+        categorical_tie_break_seed: int = 0,
         auto_text_features: bool = True,
+        text_categorical_fallback: bool = False,
         auto_annotate_features: bool = False,
         auto_annotate_max_categorical_columns: int = 20,
         auto_annotate_max_text_columns: typing.Optional[int] = None,
@@ -1059,7 +1197,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         auto_base_predicate_max: int = 2,
         base_predicate_windows: typing.Sequence[int] = (7, 14, 30, 60),
         base_predicates: typing.Optional[typing.Sequence[EqualityPredicate]] = None,
+        cutoff_boundary: str = "strict",
         execution_namespace: typing.Optional[str] = None,
+        base_distribution_features: bool = True,
     ):
         """
         Constructor
@@ -1117,12 +1257,36 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
         self._catalog_client = catalog_client
         self.ts_periods = list(ts_periods or [])
+        self.state_lags = list(
+            dict.fromkeys(int(lag) for lag in state_lags if int(lag) > 0)
+        )
+        self.state_windows = list(
+            dict.fromkeys(int(window) for window in state_windows if int(window) > 0)
+        )
         self.type_func_map = type_func_map
         self.categorical_cardinality_threshold = categorical_cardinality_threshold
         self.categorical_top_k = categorical_top_k
+        if high_cardinality_policy not in {"skip", "top_k"}:
+            raise ValueError("high_cardinality_policy must be either 'skip' or 'top_k'")
+        self.high_cardinality_policy = high_cardinality_policy
+        if categorical_low_cardinality_policy not in {"top_k", "all"}:
+            raise ValueError(
+                "categorical_low_cardinality_policy must be either 'top_k' or 'all'"
+            )
+        self.categorical_low_cardinality_policy = categorical_low_cardinality_policy
+        if categorical_tie_break not in {"value", "appearance", "hash", "legacy"}:
+            raise ValueError(
+                "categorical_tie_break must be 'value', 'appearance', 'hash', "
+                "or 'legacy'"
+            )
+        self.categorical_tie_break = categorical_tie_break
+        self.categorical_tie_break_seed = int(categorical_tie_break_seed)
         self.auto_text_features = auto_text_features
+        self.text_categorical_fallback = bool(text_categorical_fallback)
         self.auto_annotate_features = auto_annotate_features
-        self.auto_annotate_max_categorical_columns = auto_annotate_max_categorical_columns
+        self.auto_annotate_max_categorical_columns = (
+            auto_annotate_max_categorical_columns
+        )
         self.auto_annotate_max_text_columns = (
             None
             if auto_annotate_max_text_columns is None
@@ -1141,6 +1305,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 f"expected one of {sorted(FEATURE_FAMILY_NAMES)}"
             )
         self.feature_families = tuple(dict.fromkeys(feature_families))
+        self.base_distribution_features = bool(base_distribution_features)
         self.annotation_expressions = annotation_expressions or {}
         self.annotation_expressions_only = annotation_expressions_only
         self.context_keys = tuple(context_keys or ())
@@ -1158,9 +1323,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         self.auto_base_predicate_max = max(0, int(auto_base_predicate_max))
         self.base_predicate_windows = list(
             dict.fromkeys(
-                int(period)
-                for period in base_predicate_windows
-                if int(period) > 0
+                int(period) for period in base_predicate_windows if int(period) > 0
             )
         )
         self.base_predicates = (
@@ -1171,6 +1334,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             for predicate in self.base_predicates
         ):
             raise TypeError("base_predicates must contain EqualityPredicate values")
+        if cutoff_boundary not in {"strict", "inclusive", "exact"}:
+            raise ValueError("cutoff_boundary must be 'strict', 'inclusive', or 'exact'")
+        self.cutoff_boundary = cutoff_boundary
 
         self.is_date_node = is_date_node
 
@@ -1243,7 +1409,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             )
             prefix = f"{self.prefix}_"
             self.columns = [
-                column[len(prefix):]
+                column[len(prefix) :]
                 if sample_is_prefixed and column.startswith(prefix)
                 else column
                 for column in manifest.graph_columns
@@ -1289,9 +1455,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             elif self.compute_layer == ComputeLayerEnum.spark:
                 _require_backend(pyspark, "spark", "spark")
                 grouped = (
-                    self.df.groupBy(*reduce_columns)
-                    .agg(F.count(F.lit(1)))
-                    .count()
+                    self.df.groupBy(*reduce_columns).agg(F.count(F.lit(1))).count()
                 )
                 n = self.df.count()
                 if n and float(grouped) / float(n) < 0.9:
@@ -1537,8 +1701,18 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             ComputeLayerEnum.duckdb,
         ]:
             sample_df = self.get_inference_sample()
+            distribution_sample = None
+            if self.base_distribution_features and "base" in self.feature_families:
+                columns = self._base_distribution_columns(sample_df, reduce_key)
+                if columns:
+                    distribution_sample = self.get_base_distribution_sample(
+                        columns, source_columns=sample_df.columns
+                    )
             return self.sql_auto_features(
-                sample_df, reduce_key=reduce_key, type_func_map=type_func_map
+                sample_df,
+                reduce_key=reduce_key,
+                type_func_map=type_func_map,
+                distribution_sample=distribution_sample,
             )
         elif self.compute_layer == ComputeLayerEnum.daft:
             return self.daft_auto_features(
@@ -1689,9 +1863,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     .reset_index()
                 )
                 # join this back to the main dataset.
-                grouped = grouped.merge(
-                    days_group, on=list(reduce_columns), how="left"
-                )
+                grouped = grouped.merge(days_group, on=list(reduce_columns), how="left")
             logger.info(f"merged all ts groupings to {self}")
         return grouped
 
@@ -1836,14 +2008,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     & (feat_prepped[self.colabbr("time_since_cut")] <= (d * 86400))
                 )
                 days_group = sub.groupBy(*reduce_columns).agg(
-                    F.count(F.lit(1)).alias(
-                        self.colabbr(f"{d}d_num_events")
-                    )
+                    F.count(F.lit(1)).alias(self.colabbr(f"{d}d_num_events"))
                 )
                 # join this back to the main dataset.
-                grouped = grouped.join(
-                    days_group, on=list(reduce_columns), how="left"
-                )
+                grouped = grouped.join(days_group, on=list(reduce_columns), how="left")
             logger.info(f"merged all ts groupings to {self}")
         if "cut_date" in grouped.columns:
             grouped = grouped.drop(F.col("cut_date"))
@@ -1871,12 +2039,33 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 f"_date_subtract_days not implemented for {self.__class__.__name__}"
             )
 
+    def _base_distribution_columns(self, sample, reduce_key):
+        """Bound numeric payloads without treating structural keys as signals."""
+        structural = set(key_parts(reduce_key)) | set(self.colabbrs(reduce_key))
+        for key in (self.pk, self.date_key, *self.context_keys):
+            if key:
+                structural.update(key_parts(key))
+                structural.update(self.colabbrs(key))
+        return [
+            column
+            for column in sample.columns
+            if column not in structural
+            and not self._is_identifier(column)
+            and not _column_name_looks_like_categorical_identifier(column)
+            and not is_base_cdf_column(column)
+            and _propagated_aggregate_function(column) is None
+            and not column.endswith("_label")
+            and not pd.api.types.is_bool_dtype(sample[column])
+            and _sample_has_numeric_values(sample[column])
+        ][: min(self.feature_family_max_columns, BASE_CDF_MAX_COLUMNS)]
+
     def sql_auto_features(
         self,
         table_df_sample: typing.Union[pd.DataFrame, dd.DataFrame],
         reduce_key: KeySpec,
         type_func_map: dict = {},
         feature_families: typing.Optional[typing.Sequence[str]] = None,
+        distribution_sample: typing.Optional[pd.DataFrame] = None,
     ) -> typing.List[sqlop]:
         """
         SQL dialect implementation of automated
@@ -1908,11 +2097,17 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
           - ``conditional``: point-in-time counts, shares, presence, and changes
             for categorical values and boolean annotations.
           - ``base``: lifetime aggregates, relationship diversity/repetition,
-            and exposure-normalized activity for dated relationships.
+            bounded numeric CDFs, and exposure-normalized activity for dated
+            relationships. The normal SQL path supplies a separate historical
+            ``distribution_sample``; direct callers must supply an eligible
+            training sample (or use an already eligible ``table_df_sample``).
           - ``temporal``: windowed numeric aggregates, variance and trends,
             relationship diversity/repetition, and per-day activity.
           - ``sequence``: normalized activity rates, activity shares, burst
             ratios, and active-span features over configured periods.
+          - ``state``: latest values, ordered lags, and trailing last-N row
+            summaries. Unlike ``temporal``, these windows are event-relative
+            and therefore remain meaningful across irregular cadences.
           - ``episode``: row and distinct-primary-key counts, including windows.
           - ``context``: row-level peer-group sizes and numeric deltas for
             caller-configured ``context_keys`` before child rows are reduced.
@@ -1941,9 +2136,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             return added
 
         selected_families = (
-            self.feature_families
-            if feature_families is None
-            else feature_families
+            self.feature_families if feature_families is None else feature_families
         )
         if isinstance(selected_families, str):
             selected_families = (selected_families,)
@@ -1962,6 +2155,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         temporal_numeric_cols: list[str] = []
         semantic_temporal_cols: list[str] = []
         generic_temporal_cols: list[str] = []
+        state_numeric_cols: list[str] = []
+        state_categorical_cols: list[str] = []
         reduce_columns = self.colabbrs(reduce_key)
         reduce_column_names = set(reduce_columns) | set(key_parts(reduce_key))
         # Always need to update this
@@ -1998,9 +2193,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             ][: self.feature_family_max_columns]
         if "base" in families and ts_data:
             if self.base_predicates is not None:
-                for predicate in self.base_predicates[
-                    : self.auto_base_predicate_max
-                ]:
+                for predicate in self.base_predicates[: self.auto_base_predicate_max]:
                     column = (
                         predicate.column
                         if predicate.column in table_df_sample.columns
@@ -2015,7 +2208,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     base_predicate_specs.append(
                         (
                             alias,
-                            f"{column} = {_sql_literal(predicate.value)}",
+                            f"{self.render_identifier(column)} = {_sql_literal(predicate.value)}",
                             column,
                         )
                     )
@@ -2026,7 +2219,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     excluded_columns=reduce_column_names,
                     date_column=self.colabbr(self.date_key) if self.date_key else None,
                     max_predicates=self.auto_base_predicate_max,
+                    cardinality_threshold=self.categorical_cardinality_threshold,
                     categorical_top_k=self.categorical_top_k,
+                    high_cardinality_policy=self.high_cardinality_policy,
+                    categorical_tie_break=self.categorical_tie_break,
+                    categorical_tie_break_seed=self.categorical_tie_break_seed,
+                    render_identifier=self.render_identifier,
                 )
             base_predicate_specs = _uniquify_predicate_specs(base_predicate_specs)
         if "temporal" in families and ts_data:
@@ -2035,15 +2233,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     continue
                 if col == self.colabbr(self.date_key):
                     continue
-                if _is_auto_annotated_feature_col(col) or (
-                    (
-                        str(stype) == "numerical"
-                        or pd.api.types.is_bool_dtype(table_df_sample[col])
-                    )
-                    and (
-                        pd.api.types.is_numeric_dtype(table_df_sample[col])
-                        or _sample_is_numeric_object_series(table_df_sample[col])
-                    )
+                if _sample_has_numeric_values(table_df_sample[col]) and (
+                    _is_auto_annotated_feature_col(col)
+                    or str(stype) == "numerical"
+                    or pd.api.types.is_bool_dtype(table_df_sample[col])
                 ):
                     if _is_auto_annotated_feature_col(col):
                         semantic_temporal_cols.append(col)
@@ -2057,6 +2250,63 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             )
             temporal_numeric_cols += generic_temporal_cols[:remaining_temporal]
 
+        if "state" in families and ts_data:
+            primary_key_names = set()
+            if self.pk:
+                primary_key_names.update(key_parts(self.pk, name="pk"))
+                primary_key_names.update(self.colabbrs(self.pk))
+            date_column = self.colabbr(self.date_key)
+
+            # Caller-provided context keys are relationship state (for example,
+            # the constructor attached to a driver's latest qualifying row).
+            # Put them first and keep them outside the payload ranking order.
+            for context_key in self.context_keys:
+                candidates = (context_key, self.colabbr(context_key))
+                resolved = next(
+                    (
+                        candidate
+                        for candidate in candidates
+                        if candidate in self._stypes
+                    ),
+                    None,
+                )
+                if (
+                    resolved is not None
+                    and resolved not in reduce_column_names
+                    and resolved not in primary_key_names
+                    and resolved != date_column
+                    and resolved not in state_categorical_cols
+                ):
+                    state_categorical_cols.append(resolved)
+
+            for col, stype in self._stypes.items():
+                if (
+                    col in reduce_column_names
+                    or col in primary_key_names
+                    or col == date_column
+                    or _is_collection_series(table_df_sample[col])
+                ):
+                    continue
+                series = table_df_sample[col]
+                is_numeric = (
+                    pd.api.types.is_numeric_dtype(series) and not series.dropna().empty
+                ) or _sample_is_numeric_object_series(series)
+                if is_numeric and not self._is_identifier(col):
+                    state_numeric_cols.append(col)
+                    continue
+                semantic_type = str(stype)
+                if self._is_identifier(col) or (
+                    semantic_type == "categorical"
+                    and not _series_looks_like_text(col, series, semantic_type)
+                ):
+                    if col not in state_categorical_cols:
+                        state_categorical_cols.append(col)
+
+            state_numeric_cols = state_numeric_cols[: self.feature_family_max_columns]
+            state_categorical_cols = state_categorical_cols[
+                : self.feature_family_max_columns
+            ]
+
         if "conditional" in families:
             for col, stype in self._stypes.items():
                 if (
@@ -2067,15 +2317,16 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     continue
                 if self.date_key and col == self.colabbr(self.date_key):
                     continue
-                if _is_auto_predicate_feature_col(col) and (
-                    pd.api.types.is_numeric_dtype(table_df_sample[col])
-                    or _sample_is_numeric_object_series(table_df_sample[col])
+                if _is_auto_predicate_feature_col(col) and _sample_has_numeric_values(
+                    table_df_sample[col]
                 ):
-                    semantic_conditional_specs.append((
-                        _safe_sql_alias_part(col),
-                        f"{col} = 1",
-                        col,
-                    ))
+                    semantic_conditional_specs.append(
+                        (
+                            _safe_sql_alias_part(col),
+                            f"{col} = 1",
+                            col,
+                        )
+                    )
                     continue
                 semantic_type = str(stype)
                 if (
@@ -2087,14 +2338,22 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     table_df_sample[col].dtype
                 ) not in {"object", "string"}:
                     continue
-                if _series_looks_like_text(
-                    col, table_df_sample[col], semantic_type
-                ):
+                if _series_looks_like_text(col, table_df_sample[col], semantic_type):
                     continue
                 non_null = table_df_sample[col].dropna()
                 if len(non_null) == 0:
                     continue
-                values = list(non_null.value_counts().head(self.categorical_top_k).index)
+                value_counts = _deterministic_value_counts(
+                    non_null,
+                    tie_break=self.categorical_tie_break,
+                    tie_break_seed=self.categorical_tie_break_seed,
+                )
+                if (
+                    len(value_counts) > self.categorical_cardinality_threshold
+                    and self.high_cardinality_policy == "skip"
+                ):
+                    continue
+                values = list(value_counts.head(self.categorical_top_k).index)
                 for value in values:
                     if pd.isna(value):
                         continue
@@ -2129,6 +2388,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         # Add only 1 count column.
         counted = False
         for col, stype in self._stypes.items():
+            sql_col = self.render_identifier(col)
             last_function = _propagated_aggregate_function(col)
             # Check if it is a label first.
             if "_label" in col:
@@ -2139,9 +2399,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     "max": "max",
                 }
             _type = str(stype)
-            if (
-                _type == "numerical"
-                and _column_name_looks_like_categorical_identifier(col)
+            if _type == "numerical" and _column_name_looks_like_categorical_identifier(
+                col
             ):
                 _type = "categorical"
             if col in reduce_column_names:
@@ -2154,14 +2413,15 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     agg_funcs.append(
                         sqlop(
                             optype=SQLOpType.aggfunc,
-                            opval=f"{func}" + f"({col}) as {col_new}",
+                            opval=f"{func}({sql_col}) as {self.render_identifier(col_new)}",
                         )
                     )
                     counted = True
             elif type_func_map.get(_type) or _type in TEXT_STYPES:
-                if _is_auto_annotated_feature_col(col) and (
-                    pd.api.types.is_numeric_dtype(table_df_sample[col])
-                    or _sample_is_numeric_object_series(table_df_sample[col])
+                if (
+                    _is_auto_annotated_feature_col(col)
+                    and not is_base_cdf_column(col)
+                    and _sample_has_numeric_values(table_df_sample[col])
                 ):
                     source_ops = []
                     for func in ["sum", "avg", "min", "max"]:
@@ -2169,7 +2429,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         source_ops.append(
                             sqlop(
                                 optype=SQLOpType.aggfunc,
-                                opval=f"{func}({col}) as {col_new}",
+                                opval=f"{func}({sql_col}) as {self.render_identifier(col_new)}",
                             )
                         )
                     append_source_ops(source_ops, family="base", column=col)
@@ -2184,16 +2444,16 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         (
                             sqlop(
                                 optype=SQLOpType.aggfunc,
-                                opval=f"{expression} as {col}_{suffix}",
+                                opval=f"{expression} as {self.render_identifier(f'{col}_{suffix}')}",
                             )
                             for suffix, expression in [
                                 (
                                     "sum",
-                                    f"SUM(CASE WHEN {col} THEN 1 ELSE 0 END)",
+                                    f"SUM(CASE WHEN {sql_col} THEN 1 ELSE 0 END)",
                                 ),
                                 (
                                     "share",
-                                    f"AVG(CASE WHEN {col} THEN 1.0 ELSE 0.0 END)",
+                                    f"AVG(CASE WHEN {sql_col} THEN 1.0 ELSE 0.0 END)",
                                 ),
                             ]
                         ),
@@ -2202,13 +2462,15 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     )
                     continue
 
-                if self.auto_text_features and _series_looks_like_text(
-                    col, table_df_sample[col], _type
-                ):
-                    append_source_ops(
-                        _sql_text_aggregate_ops(col), family="base", column=col
-                    )
-                    continue
+                if _series_looks_like_text(col, table_df_sample[col], _type):
+                    if self.auto_text_features:
+                        append_source_ops(
+                            _sql_text_aggregate_ops(col, self.render_identifier),
+                            family="base", column=col
+                        )
+                        continue
+                    if not self.text_categorical_fallback:
+                        continue
 
                 if _type == "categorical":
                     append_source_ops(
@@ -2217,6 +2479,15 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             series=table_df_sample[col],
                             cardinality_threshold=self.categorical_cardinality_threshold,
                             top_k=self.categorical_top_k,
+                            high_cardinality_policy=self.high_cardinality_policy,
+                            categorical_low_cardinality_policy=(
+                                self.categorical_low_cardinality_policy
+                            ),
+                            categorical_tie_break=self.categorical_tie_break,
+                            categorical_tie_break_seed=(
+                                self.categorical_tie_break_seed
+                            ),
+                            render_identifier=self.render_identifier,
                         ),
                         family="base",
                         column=col,
@@ -2224,9 +2495,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     continue
 
                 configured_functions = list(type_func_map.get(_type, []))
-                propagation_limit = (
-                    self.feature_propagation_max_functions_per_column
-                )
+                propagation_limit = self.feature_propagation_max_functions_per_column
                 if last_function and propagation_limit is not None:
                     canonical = _canonical_propagation_function(last_function)
 
@@ -2286,7 +2555,6 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     ):
                         func = "sum"
 
-
                     if func:
                         if func == "count" and counted:
                             continue
@@ -2303,7 +2571,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                 col_new = f"{col}_{func}"
                                 op = sqlop(
                                     optype=SQLOpType.aggfunc,
-                                    opval=f"{func}" + f"({col}) as {col_new}",
+                                    opval=f"{func}({sql_col}) as {self.render_identifier(col_new)}",
                                 )
                                 added = append_source_ops(
                                     [op], family="base", column=col
@@ -2313,7 +2581,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                 col_new = f"{col}_avg"
                                 op = sqlop(
                                     optype=SQLOpType.aggfunc,
-                                    opval=f"{func}" + f"({col}) as {col_new}",
+                                    opval=f"{func}({sql_col}) as {self.render_identifier(col_new)}",
                                 )
                                 added = append_source_ops(
                                     [op], family="base", column=col
@@ -2322,11 +2590,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             col_new = f"{col}_{func}"
                             op = sqlop(
                                 optype=SQLOpType.aggfunc,
-                                opval=f"{func}" + f"({col}) as {col_new}",
+                                opval=f"{func}({sql_col}) as {self.render_identifier(col_new)}",
                             )
-                            added = append_source_ops(
-                                [op], family="base", column=col
-                            )
+                            added = append_source_ops([op], family="base", column=col)
 
                         if func == "count" and added:
                             counted = True
@@ -2334,8 +2600,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
         if "base" in families:
             for col in relationship_identifier_cols:
                 safe_col = _safe_sql_alias_part(col)
-                count_expr = f"COUNT({col})"
-                distinct_expr = f"COUNT(DISTINCT {col})"
+                count_expr = f"COUNT({self.render_identifier(col)})"
+                distinct_expr = f"COUNT(DISTINCT {self.render_identifier(col)})"
                 append_source_ops(
                     (
                         sqlop(
@@ -2367,8 +2633,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
                 if self.__class__.__name__ in {"SQLNode", "SQLiteNode"}:
                     observed_seconds = (
-                        f"(julianday({reference}) - julianday({first_event})) "
-                        "* 86400.0"
+                        f"(julianday({reference}) - julianday({first_event})) * 86400.0"
                     )
                 elif self.__class__.__name__ in {
                     "DuckdbNode",
@@ -2476,9 +2741,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
             elif self.__class__.__name__ == "TrinoNode":
                 aggfunc = sqlop(
-                        optype=SQLOpType.aggfunc,
-                        opval=f"date_diff('second', TRY_CAST({max_col} AS TIMESTAMP), {ref_col}) AS {self.prefix}_seconds_since_last"
-                        )
+                    optype=SQLOpType.aggfunc,
+                    opval=f"date_diff('second', TRY_CAST({max_col} AS TIMESTAMP), {ref_col}) AS {self.prefix}_seconds_since_last",
+                )
 
             else:
                 raise NotImplementedError(
@@ -2600,13 +2865,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 last_match = f"MAX(CASE WHEN {condition} THEN {date_col} END)"
                 if self.__class__.__name__ == "SQLNode":
                     recency_expr = (
-                        f"(julianday({base_ref_agg}) - "
-                        f"julianday({last_match})) * 86400"
+                        f"(julianday({base_ref_agg}) - julianday({last_match})) * 86400"
                     )
                 elif self.__class__.__name__ in {"DuckdbNode", "AthenaNode"}:
-                    recency_expr = (
-                        f"date_diff('second', {last_match}, {base_ref_agg})"
-                    )
+                    recency_expr = f"date_diff('second', {last_match}, {base_ref_agg})"
                 elif self.__class__.__name__ in {"PostgresNode", "RedshiftNode"}:
                     recency_expr = (
                         f"EXTRACT(EPOCH FROM ({base_ref_agg} - {last_match}))"
@@ -2690,9 +2952,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     f"julianday(MIN({date_col}))) * 86400.0"
                 )
             elif self.__class__.__name__ in {"DuckdbNode", "AthenaNode", "TrinoNode"}:
-                span_seconds = (
-                    f"date_diff('second', MIN({date_col}), MAX({date_col}))"
-                )
+                span_seconds = f"date_diff('second', MIN({date_col}), MAX({date_col}))"
             elif self.__class__.__name__ in {"PostgresNode", "RedshiftNode"}:
                 span_seconds = (
                     f"EXTRACT(EPOCH FROM (MAX({date_col}) - MIN({date_col})))"
@@ -2716,9 +2976,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 agg_funcs.append(
                     sqlop(
                         optype=SQLOpType.aggfunc,
-                        opval=(
-                            f"{span_seconds} as {self.prefix}_active_span_seconds"
-                        ),
+                        opval=(f"{span_seconds} as {self.prefix}_active_span_seconds"),
                     )
                 )
                 agg_funcs.append(
@@ -2731,6 +2989,173 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         ),
                     )
                 )
+
+        if (
+            "state" in families
+            and ts_data
+            and (state_numeric_cols or state_categorical_cols)
+        ):
+            # Rank rows after point-in-time filters but before the reduction.
+            # This makes the features event-relative: an off-season does not
+            # erase the last observed race, purchase, visit, or treatment.
+            date_col = self.colabbr(self.date_key)
+            rank_alias = f"__gr_state_rank_{_safe_sql_alias_part(self.prefix)}"
+            order_columns = [date_col]
+            if self.pk:
+                order_columns.extend(
+                    col
+                    for col in self.colabbrs(self.pk)
+                    if col in table_df_sample.columns and col not in order_columns
+                )
+            # Keyless event tables can contain many rows at the same timestamp.
+            # Their state lags must not depend on the execution order of the SQL
+            # engine.  The bounded payload columns provide a total order over
+            # every value that can affect a state feature; rows still tied after
+            # these columns produce identical state values.
+            if not self.pk:
+                order_columns.extend(
+                    col
+                    for col in (*state_numeric_cols, *state_categorical_cols)
+                    if col not in order_columns
+                )
+            partition = ", ".join(self.render_identifier(col) for col in reduce_columns)
+            ordering = ", ".join(
+                f"{self.render_identifier(col)} DESC" for col in order_columns
+            )
+            agg_funcs.append(
+                sqlop(
+                    optype=SQLOpType.window,
+                    opval=(
+                        "ROW_NUMBER() OVER (PARTITION BY "
+                        f"{partition} ORDER BY {ordering}) AS {rank_alias}"
+                    ),
+                )
+            )
+
+            for col in state_numeric_cols:
+                safe_col = _safe_sql_alias_part(col)
+                sql_col = self.render_identifier(col)
+                is_boolean = pd.api.types.is_bool_dtype(table_df_sample[col])
+                numeric_value = (
+                    f"CASE WHEN {sql_col} THEN 1.0 ELSE 0.0 END" if is_boolean else sql_col
+                )
+
+                def ranked_numeric(position: int) -> str:
+                    return (
+                        "MAX(CASE WHEN "
+                        f"{rank_alias} = {position} THEN {numeric_value} END)"
+                    )
+
+                source_ops: list[sqlop] = [
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(f"{ranked_numeric(1)} as {safe_col}_state_latest"),
+                    )
+                ]
+                for lag in self.state_lags:
+                    if lag <= 1:
+                        continue
+                    source_ops.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=(
+                                f"{ranked_numeric(lag)} as {safe_col}_state_lag{lag}"
+                            ),
+                        )
+                    )
+
+                if 2 in self.state_lags:
+                    source_ops.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=(
+                                f"({ranked_numeric(1)} - {ranked_numeric(2)}) as "
+                                f"{safe_col}_state_latest_delta"
+                            ),
+                        )
+                    )
+
+                for window in self.state_windows:
+                    recent_value = (
+                        f"CASE WHEN {rank_alias} <= {window} THEN {numeric_value} END"
+                    )
+                    recent_mean = f"AVG({recent_value})"
+                    recent_second_moment = (
+                        "AVG(CASE WHEN "
+                        f"{rank_alias} <= {window} THEN ({numeric_value}) * "
+                        f"({numeric_value}) END)"
+                    )
+                    prior_mean = (
+                        "AVG(CASE WHEN "
+                        f"{rank_alias} > {window} AND "
+                        f"{rank_alias} <= {window * 2} "
+                        f"THEN {numeric_value} END)"
+                    )
+                    for suffix, expression in (
+                        ("avg", recent_mean),
+                        ("min", f"MIN({recent_value})"),
+                        ("max", f"MAX({recent_value})"),
+                        ("count", f"COUNT({recent_value})"),
+                        (
+                            "variance",
+                            f"({recent_second_moment} - "
+                            f"({recent_mean} * {recent_mean}))",
+                        ),
+                        ("trend", f"({recent_mean} - {prior_mean})"),
+                    ):
+                        source_ops.append(
+                            sqlop(
+                                optype=SQLOpType.aggfunc,
+                                opval=(
+                                    f"{expression} as "
+                                    f"{safe_col}_state_last{window}_{suffix}"
+                                ),
+                            )
+                        )
+                append_source_ops(source_ops, family="state", column=col)
+
+            for col in state_categorical_cols:
+                safe_col = _safe_sql_alias_part(col)
+
+                def ranked_category(position: int) -> str:
+                    return (
+                        f"MAX(CASE WHEN {rank_alias} = {position} "
+                        f"THEN {self.render_identifier(col)} END)"
+                    )
+
+                latest = ranked_category(1)
+                previous = ranked_category(2)
+                source_ops = [
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(f"CAST({latest} AS VARCHAR) as {safe_col}_state_latest"),
+                    ),
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(f"CAST({previous} AS VARCHAR) as {safe_col}_state_lag2"),
+                    ),
+                    sqlop(
+                        optype=SQLOpType.aggfunc,
+                        opval=(
+                            "CASE WHEN "
+                            f"{latest} IS NULL OR {previous} IS NULL THEN NULL "
+                            f"WHEN {latest} <> {previous} THEN 1 ELSE 0 END as "
+                            f"{safe_col}_state_changed"
+                        ),
+                    ),
+                ]
+                for window in self.state_windows:
+                    source_ops.append(
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=(
+                                "COUNT(DISTINCT CASE WHEN "
+                                f"{rank_alias} <= {window} THEN {self.render_identifier(col)} END) as "
+                                f"{safe_col}_state_last{window}_nunique"
+                            ),
+                        )
+                    )
+                append_source_ops(source_ops, family="state", column=col)
 
         # Feature families extend the conservative legacy aggregates with
         # point-in-time relational features. They are expressed as SQL
@@ -2770,9 +3195,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     for suffix in ("share", "count", "any"):
                         for period in self.ts_periods:
                             window = window_condition(period)
-                            denominator = (
-                                f"SUM(CASE WHEN {window} THEN 1 ELSE 0 END)"
-                            )
+                            denominator = f"SUM(CASE WHEN {window} THEN 1 ELSE 0 END)"
                             for alias, condition in specs:
                                 count_expr = (
                                     f"SUM(CASE WHEN ({window}) AND ({condition}) "
@@ -2781,8 +3204,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                 expression = {
                                     "count": count_expr,
                                     "share": (
-                                        f"{count_expr} * 1.0 / "
-                                        f"NULLIF({denominator}, 0)"
+                                        f"{count_expr} * 1.0 / NULLIF({denominator}, 0)"
                                     ),
                                     "any": (
                                         f"MAX(CASE WHEN ({window}) AND "
@@ -2798,9 +3220,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                         ),
                                     )
                                 )
-                    for period1, period2 in zip(
-                        self.ts_periods, self.ts_periods[1:]
-                    ):
+                    for period1, period2 in zip(self.ts_periods, self.ts_periods[1:]):
                         window1 = window_condition(period1)
                         window2 = window_condition(period2)
                         for alias, condition in specs:
@@ -2843,9 +3263,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
 
                     for col in relationship_identifier_cols:
                         safe_col = _safe_sql_alias_part(col)
-                        count_expr = (
-                            f"COUNT(CASE WHEN {window} THEN {col} END)"
-                        )
+                        count_expr = f"COUNT(CASE WHEN {window} THEN {col} END)"
                         distinct_expr = (
                             f"COUNT(DISTINCT CASE WHEN {window} THEN {col} END)"
                         )
@@ -2876,9 +3294,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     source_ops: list[sqlop] = []
                     is_boolean = pd.api.types.is_bool_dtype(table_df_sample[col])
                     numeric_value = (
-                        f"CASE WHEN {col} THEN 1.0 ELSE 0.0 END"
-                        if is_boolean
-                        else col
+                        f"CASE WHEN {col} THEN 1.0 ELSE 0.0 END" if is_boolean else col
                     )
                     # Preserve all lookback scales before adding lower-priority
                     # summaries. This makes small per-column caps span the
@@ -2902,17 +3318,14 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                     f"{window} THEN ({numeric_value}) * "
                                     f"({numeric_value}) END)"
                                 )
-                                expression = (
-                                    f"({second_moment} - ({mean} * {mean}))"
-                                )
+                                expression = f"({second_moment} - ({mean} * {mean}))"
                             else:
                                 expression = f"{function}({value})"
                             source_ops.append(
                                 sqlop(
                                     optype=SQLOpType.aggfunc,
                                     opval=(
-                                        f"{expression} as "
-                                        f"{safe_col}_{suffix}_{period}d"
+                                        f"{expression} as {safe_col}_{suffix}_{period}d"
                                     ),
                                 )
                             )
@@ -2925,8 +3338,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                         recent_window = window_condition(recent_period)
                         prior_window = window_condition(prior_period)
                         recent_avg = (
-                            "AVG(CASE WHEN "
-                            f"{recent_window} THEN {numeric_value} END)"
+                            f"AVG(CASE WHEN {recent_window} THEN {numeric_value} END)"
                         )
                         prior_avg = (
                             "AVG(CASE WHEN "
@@ -2985,7 +3397,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     if dynamic_ref:
                         threshold = self._date_subtract_days(ref_ts, period)
                     else:
-                        threshold = f"'{self.cut_date - datetime.timedelta(days=period)}'"
+                        threshold = (
+                            f"'{self.cut_date - datetime.timedelta(days=period)}'"
+                        )
                     window = f"{date_col} >= {threshold}"
                     agg_funcs.append(
                         sqlop(
@@ -3007,6 +3421,31 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                                 ),
                             )
                         )
+
+        if "base" in families and self.base_distribution_features:
+            calibration = (
+                table_df_sample if distribution_sample is None else distribution_sample
+            )
+            for col in self._base_distribution_columns(table_df_sample, reduce_key):
+                if col not in calibration:
+                    continue
+                expressions = base_cdf_expressions(
+                    calibration[col], self.render_identifier(col)
+                )
+                # Append after the existing base operations: a tight budget
+                # must never displace an established feature with a new sketch.
+                append_source_ops(
+                    (
+                        sqlop(
+                            optype=SQLOpType.aggfunc,
+                            opval=f"{expression} as "
+                            f"{self.render_identifier(f'{col}__cdf_{suffix}_avg')}",
+                        )
+                        for suffix, expression in expressions
+                    ),
+                    family="base",
+                    column=col,
+                )
 
         if not len(agg_funcs):
             logger.info(f"No aggregations for {self}")
@@ -3140,8 +3579,8 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                             func = "count_distinct"
                         col_new = f"{col}_{func}_label"
                         agg_funcs.append(getattr(F, func)(F.col(col)).alias(col_new))
-        return self.prep_for_labels().groupby(*self.colabbrs(reduce_key)).agg(
-            *agg_funcs
+        return (
+            self.prep_for_labels().groupby(*self.colabbrs(reduce_key)).agg(*agg_funcs)
         )
 
     @abc.abstractmethod
@@ -3168,8 +3607,7 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
     def colabbr(self, col: str) -> str:
         if not isinstance(col, str):
             raise TypeError(
-                "colabbr() accepts one column name; use colabbrs() for a "
-                "composite key"
+                "colabbr() accepts one column name; use colabbrs() for a composite key"
             )
         prefix = f"{self.prefix}_"
         if col.startswith(prefix):
@@ -3223,6 +3661,20 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
             return (self.label_period_val * 7) * 1440
         elif self.label_period_unit == PeriodUnit.month:
             return (self.label_period_val * 30.417) * 1440
+
+    def _feature_cutoff_operator(self) -> str:
+        """Return the temporal upper-bound operator for feature history."""
+
+        return {"inclusive": "<=", "exact": "="}.get(self.cutoff_boundary, "<")
+
+    def _before_feature_cutoff(self, values, cutoff):
+        """Apply this node's feature-history boundary to a dataframe column."""
+
+        if self.cutoff_boundary == "exact":
+            return values == cutoff
+        return (
+            values <= cutoff if self.cutoff_boundary == "inclusive" else values < cutoff
+        )
 
     def prep_for_features(
         self,
@@ -3294,7 +3746,12 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     )
 
                 return [
-                    sqlop(optype=SQLOpType.where, opval=f"{date_col} < {cutoff_col}"),
+                    sqlop(
+                        optype=SQLOpType.where,
+                        opval=(
+                            f"{date_col} {self._feature_cutoff_operator()} {cutoff_col}"
+                        ),
+                    ),
                     sqlop(optype=SQLOpType.where, opval=f"{date_col} > {lower_bound}"),
                 ]
 
@@ -3318,7 +3775,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     return [
                         sqlop(
                             optype=SQLOpType.where,
-                            opval=f"{self.colabbr(self.date_key)} < '{str(self.cut_date)}'",
+                            opval=(
+                                f"{self.colabbr(self.date_key)} "
+                                f"{self._feature_cutoff_operator()} "
+                                f"'{str(self.cut_date)}'"
+                            ),
                         ),
                         sqlop(
                             optype=SQLOpType.where,
@@ -3331,7 +3792,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 ):
                     return self.df[
                         (
-                            (self.df[self.colabbr(self.date_key)] < str(self.cut_date))
+                            self._before_feature_cutoff(
+                                self.df[self.colabbr(self.date_key)],
+                                str(self.cut_date),
+                            )
                             & (
                                 self.df[self.colabbr(self.date_key)]
                                 > str(
@@ -3347,7 +3811,9 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 elif isinstance(self.df, SPARK_DF_TYPES):
                     return self.df.filter(
                         (
-                            (self.df[self.colabbr(self.date_key)] < self.cut_date)
+                            self._before_feature_cutoff(
+                                self.df[self.colabbr(self.date_key)], self.cut_date
+                            )
                             & (
                                 self.df[self.colabbr(self.date_key)]
                                 > (
@@ -3363,7 +3829,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                 elif isinstance(self.df, DAFT_DF_TYPES):
                     return self.df.filter(
                         (
-                            (self.df[self.colabbr(self.date_key)] < str(self.cut_date))
+                            self._before_feature_cutoff(
+                                self.df[self.colabbr(self.date_key)],
+                                str(self.cut_date),
+                            )
                             & (
                                 self.df[self.colabbr(self.date_key)]
                                 > str(
@@ -3394,7 +3863,11 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     return [
                         sqlop(
                             optype=SQLOpType.where,
-                            opval=f"{self.colabbr(self.date_key)} < '{str(datetime.datetime.now())}'",
+                            opval=(
+                                f"{self.colabbr(self.date_key)} "
+                                f"{self._feature_cutoff_operator()} "
+                                f"'{str(datetime.datetime.now())}'"
+                            ),
                         ),
                         sqlop(
                             optype=SQLOpType.where,
@@ -3408,8 +3881,10 @@ class GraphReduceNode(metaclass=abc.ABCMeta):
                     return self.df[
                         (
                             (
-                                self.df[self.colabbr(self.date_key)]
-                                < datetime.datetime.now()
+                                self._before_feature_cutoff(
+                                    self.df[self.colabbr(self.date_key)],
+                                    datetime.datetime.now(),
+                                )
                             )
                             & (
                                 self.df[self.colabbr(self.date_key)]
@@ -4064,8 +4539,7 @@ class SQLNode(GraphReduceNode):
         namespace_suffix = f"_{namespace}" if namespace else ""
         if schema:
             ref_name = (
-                f"{schema}.{fpath}_{self.prefix}_{func_name}"
-                f"{namespace_suffix}_grtemp"
+                f"{schema}.{fpath}_{self.prefix}_{func_name}{namespace_suffix}_grtemp"
             )
         else:
             ref_name = f"{fpath}_{self.prefix}_{func_name}{namespace_suffix}_grtemp"
@@ -4219,6 +4693,14 @@ class SQLNode(GraphReduceNode):
             self._stypes = infer_df_stype(samp)
         return samp
 
+    def get_schema_frame(self) -> pd.DataFrame:
+        """Return column metadata while preserving backend sampling semantics.
+
+        The default keeps existing engines and custom sampling overrides intact.
+        Callers must consume only columns/dtypes, not depend on sampled values.
+        """
+        return self.get_sample()
+
     def _sample_identifier(self, identifier: str) -> str:
         """
         Format an identifier for SQL sampling queries.
@@ -4230,6 +4712,33 @@ class SQLNode(GraphReduceNode):
 
     def _sample_table(self, table: str = None) -> str:
         return table if table else self.get_current_ref()
+
+    def _sample_tie_break_columns(
+        self,
+        columns: typing.Sequence[str],
+    ) -> typing.List[str]:
+        """Return stable key/date columns present in an inference relation.
+
+        ``ORDER BY`` on population score alone leaves every equally complete
+        row unordered. A bounded ``LIMIT`` can then observe a different value
+        distribution under different SQL worker schedules, changing inferred
+        categorical features. Primary keys make the sample total-order stable;
+        dates provide a deterministic fallback for keyless event tables.
+        """
+
+        available = set(columns)
+        candidates: typing.List[str] = []
+        raw_candidates: typing.List[str] = []
+        if self.pk is not None:
+            raw_candidates.extend(key_parts(self.pk, name="pk"))
+        if self.date_key is not None:
+            raw_candidates.append(self.date_key)
+        for raw in raw_candidates:
+            for candidate in (self.colabbr(raw), raw):
+                if candidate in available and candidate not in candidates:
+                    candidates.append(candidate)
+                    break
+        return candidates
 
     def get_most_populated_sample(
         self,
@@ -4253,10 +4762,15 @@ class SQLNode(GraphReduceNode):
                 for col in columns
             ]
         )
+        tie_breakers = self._sample_tie_break_columns(columns)
+        ordering = [f"({score}) DESC"]
+        ordering.extend(
+            f"{self._sample_identifier(column)} ASC" for column in tie_breakers
+        )
         qry = f"""
             SELECT *
             FROM {table}
-            ORDER BY ({score}) DESC
+            ORDER BY {", ".join(ordering)}
             LIMIT {n}
             """
         return self.execute_query(qry)
@@ -4272,13 +4786,45 @@ class SQLNode(GraphReduceNode):
         """
         table = self._sample_table(table)
         col = self._sample_identifier(column)
+        preview = self.get_sample(n=1, table=table)
+        tie_breakers = self._sample_tie_break_columns(preview.columns)
+        order_sql = (
+            " ORDER BY "
+            + ", ".join(
+                f"{self._sample_identifier(value)} ASC" for value in tie_breakers
+            )
+            if tie_breakers
+            else ""
+        )
         qry = f"""
             SELECT *
             FROM {table}
             WHERE {col} IS NOT NULL
+            {order_sql}
             LIMIT {n}
             """
         return self.execute_query(qry)
+
+    def get_base_distribution_sample(self, columns, *, source_columns):
+        """Calibrate only on eligible history, with bounded deterministic rows.
+
+        Reuse exactly the reduction's cutoff/lookback predicates, including
+        per-example date-node cutoffs. In particular, filter BEFORE LIMIT.
+        Frozen-plan replay bypasses this method and reuses training literals.
+        """
+        filters = self.prep_for_features() or []
+        where = " AND ".join(f"({op.opval})" for op in filters) or "1=1"
+        ordering = list(
+            dict.fromkeys([*self._sample_tie_break_columns(source_columns), *columns])
+        )
+        select = ", ".join(self.render_identifier(column) for column in columns)
+        order = ", ".join(
+            f"{self.render_identifier(column)} ASC" for column in ordering
+        )
+        return self.execute_query(
+            f"SELECT {select} FROM {self.get_current_ref()} WHERE {where} "
+            f"ORDER BY {order} LIMIT {BASE_CDF_MAX_FIT_ROWS}"
+        )
 
     def get_inference_sample(
         self,
@@ -4294,9 +4840,7 @@ class SQLNode(GraphReduceNode):
         """
         table = self._sample_table(table)
         sample = self.get_most_populated_sample(n=n, table=table)
-        missing_cols = [
-            col for col in sample.columns if sample[col].notna().sum() == 0
-        ]
+        missing_cols = [col for col in sample.columns if sample[col].notna().sum() == 0]
         if not missing_cols:
             return sample
 
@@ -4304,7 +4848,9 @@ class SQLNode(GraphReduceNode):
             self.get_non_null_sample(col, n=backfill_per_column, table=table)
             for col in missing_cols
         ]
-        populated_backfills = [df for df in backfills if df is not None and not df.empty]
+        populated_backfills = [
+            df for df in backfills if df is not None and not df.empty
+        ]
         if not populated_backfills:
             return sample
 
@@ -4378,6 +4924,23 @@ class SQLNode(GraphReduceNode):
             else:
                 wheres = " and ".join([_x.opval for _x in wheres])
 
+            # Ordered state features need a row position inside each entity
+            # after cutoff predicates have been applied. Window expressions
+            # cannot be referenced by aggregates in the same SELECT, so use a
+            # portable derived table and perform the reduction outside it.
+            windows = [_x for _x in ops if _x.optype == SQLOpType.window]
+            if windows:
+                window_selects = ", ".join(_x.opval for _x in windows)
+                from_ = sqlop(
+                    optype=SQLOpType.from_,
+                    opval=(
+                        "(SELECT *, "
+                        f"{window_selects} FROM {from_.opval} "
+                        f"WHERE {wheres}) AS __gr_windowed"
+                    ),
+                )
+                wheres = "true"
+
             return group_anatomy.format(
                 selects=agg,
                 aggfuncs=aggfuncs,
@@ -4389,6 +4952,7 @@ class SQLNode(GraphReduceNode):
         # Otherwise go with standard select anatomy.
         else:
             selects = [_x for _x in ops if _x.optype == SQLOpType.select]
+            selects.extend(_x for _x in ops if _x.optype == SQLOpType.window)
             # IF not select statements, select *.
             if not len(selects):
                 selects = [sqlop(optype=SQLOpType.select, opval="*")]
@@ -4451,6 +5015,12 @@ class SQLNode(GraphReduceNode):
             stypes=self._stypes,
             cardinality_threshold=self.categorical_cardinality_threshold,
             top_k=self.categorical_top_k,
+            high_cardinality_policy=self.high_cardinality_policy,
+            categorical_low_cardinality_policy=(
+                self.categorical_low_cardinality_policy
+            ),
+            categorical_tie_break=self.categorical_tie_break,
+            categorical_tie_break_seed=self.categorical_tie_break_seed,
             max_categorical_columns=self.auto_annotate_max_categorical_columns,
             max_text_columns=self.auto_annotate_max_text_columns,
             max_gated_numeric_cols=self.auto_annotate_max_gated_numeric_cols,
@@ -4471,6 +5041,7 @@ class SQLNode(GraphReduceNode):
             context_keys=self.context_keys,
             context_pk=self.pk,
             context_max_numeric_columns=self.feature_family_max_columns,
+            render_identifier=self.render_identifier,
         )
         return self._append_parent_age_annotation(ops)
 
@@ -4513,8 +5084,7 @@ class SQLNode(GraphReduceNode):
             expression = f"datediff({timestamp}, {date_col})"
         else:
             raise NotImplementedError(
-                "parent age annotation is not implemented for "
-                f"{self.compute_layer}"
+                f"parent age annotation is not implemented for {self.compute_layer}"
             )
 
         return sqlop(
@@ -4544,10 +5114,12 @@ class SQLNode(GraphReduceNode):
         """
         if self.do_annotate_ops:
             return self._append_parent_age_annotation(self.do_annotate_ops)
-        semantic_requested = (
-            "semantic" in self.feature_families and bool(self.annotation_expressions)
+        semantic_requested = "semantic" in self.feature_families and bool(
+            self.annotation_expressions
         )
-        context_requested = "context" in self.feature_families and bool(self.context_keys)
+        context_requested = "context" in self.feature_families and bool(
+            self.context_keys
+        )
         if self.auto_annotate_features or semantic_requested or context_requested:
             if self.dry_run:
                 return None
@@ -4672,7 +5244,11 @@ class AthenaNode(SQLNode):
                 ),
                 sqlop(
                     optype=SQLOpType.where,
-                    opval=f"{self.colabbr(self.date_key)} < timestamp '{str(self.cut_date)}'",
+                    opval=(
+                        f"{self.colabbr(self.date_key)} "
+                        f"{self._feature_cutoff_operator()} timestamp "
+                        f"'{str(self.cut_date)}'"
+                    ),
                 ),
             ]
         else:
@@ -4880,9 +5456,8 @@ class RedshiftNode(SQLNode):
                 last_function = None
 
             _type = str(stype)
-            if (
-                _type == "numerical"
-                and _column_name_looks_like_categorical_identifier(col)
+            if _type == "numerical" and _column_name_looks_like_categorical_identifier(
+                col
             ):
                 _type = "categorical"
             if col in reduce_column_names:
@@ -5156,6 +5731,21 @@ class DuckdbNode(SQLNode):
             self.get_client().sql(qry)
         else:
             return self.get_client().sql(qry).to_df()
+
+    def get_schema_frame(self) -> pd.DataFrame:
+        """Avoid decoding rows when join planning only needs column names.
+
+        First-use semantic inference and customized sampling retain the original
+        sample. Never cache a schema across changing temporary-table references.
+        """
+        if (
+            not self._stypes
+            or self.dry_run
+            or getattr(self.get_sample, "__func__", None) is not SQLNode.get_sample
+        ):
+            return self.get_sample()
+        table = self._cur_data_ref if self._cur_data_ref else self.fpath
+        return self.execute_query(f"SELECT * FROM {table} LIMIT 0")
 
     def _clean_refs(self):
         # Get all views and find the ones

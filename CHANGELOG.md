@@ -4,6 +4,27 @@ Notable changes to GraphReduce are documented here. The package build appends
 this file to the README shown on PyPI, and the same notes should be copied into
 the corresponding GitHub Release.
 
+## [1.10.18rc1] - 2026-10-22
+
+### Added
+
+- Bounded base CDF sketches with training-fitted cutpoints and frozen replay.
+- Relational distribution sketches, learned-message pooling, and neighbor-context
+  helpers used by downstream relational representation search.
+- Explicit strict/inclusive event cutoffs and finer-grained source visibility.
+
+### Changed
+
+- SQL feature inference supports bounded state/context and configurable
+  categorical/text handling without forcing every representation into one graph.
+- DuckDB joins inspect schema metadata after semantic types have been initialized,
+  avoiding repeated sample materialization. Cold inference and custom node sample
+  overrides retain their original behavior.
+
+This is a release candidate, not a published stable release. The metadata-only
+execution change passed exact classification and regression pipeline checks;
+complete benchmark coverage remains outstanding in the downstream submission.
+
 ## [1.10.14] - 2026-09-01
 
 ### Changed
