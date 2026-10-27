@@ -30,8 +30,9 @@ the corresponding GitHub Release.
   on their existing paths; schema inspection does not replace value discovery.
 
 This release is prepared in the review branch. The downstream KurveRSC campaign
-has 20 of 21 tasks completed at the October 27 snapshot; final performance and
-resource tables will follow the last task. Release metadata is separate from
+completed all 21 tasks without failures. The qualified release checks pass
+157 tests (2 skipped); full classification/regression smokes through the current
+RelArena adapter preserve the frozen payload's keyed predictions exactly. Release metadata is separate from
 PyPI publication.
 
 ## [1.10.14] - 2026-09-01
