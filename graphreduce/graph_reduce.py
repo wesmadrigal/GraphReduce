@@ -123,7 +123,11 @@ def _infer_ts_periods_from_cadence(
     remaining = [period for period in periods if period not in required]
     slots = max(0, target - len(required))
     if slots:
-        indices = [round(i * (len(remaining) - 1) / (slots - 1)) for i in range(slots)] if slots > 1 else [len(remaining) // 2]
+        indices = (
+            [round(i * (len(remaining) - 1) / (slots - 1)) for i in range(slots)]
+            if slots > 1
+            else [len(remaining) // 2]
+        )
         required.update(remaining[index] for index in sorted(set(indices)))
     return sorted(required)[:target]
 
@@ -227,13 +231,21 @@ class GraphReduce(nx.DiGraph):
         *args,
         # Optional graph-wide overrides for node auto-feature settings.
         feature_families: typing.Optional[typing.Sequence[str]] = None,
+        base_distribution_features: typing.Optional[bool] = None,
         feature_family_max_columns: typing.Optional[int] = None,
         feature_family_max_features_per_column: typing.Optional[int] = None,
         feature_propagation_max_functions_per_column: typing.Optional[int] = None,
         ts_periods: typing.Optional[typing.Sequence[int]] = None,
+        state_lags: typing.Optional[typing.Sequence[int]] = None,
+        state_windows: typing.Optional[typing.Sequence[int]] = None,
         infer_ts_periods: bool = False,
         categorical_cardinality_threshold: typing.Optional[int] = None,
         categorical_top_k: typing.Optional[int] = None,
+        high_cardinality_policy: typing.Optional[str] = None,
+        categorical_low_cardinality_policy: typing.Optional[str] = None,
+        categorical_tie_break: typing.Optional[str] = None,
+        categorical_tie_break_seed: typing.Optional[int] = None,
+        text_categorical_fallback: typing.Optional[bool] = None,
         auto_base_predicate_max: typing.Optional[int] = None,
         base_predicate_windows: typing.Optional[typing.Sequence[int]] = None,
         auto_text_features: typing.Optional[bool] = None,
@@ -275,9 +287,16 @@ class GraphReduce(nx.DiGraph):
             feature_family_max_features_per_column: optional graph-wide cap on derived features emitted by each selected source column within a family
             feature_propagation_max_functions_per_column: optional graph-wide cap on aggregate functions emitted when an already-derived feature propagates through another reduction
             ts_periods: optional graph-wide override for node time-series lookback periods
+            state_lags: optional graph-wide ordered event positions retained by the ``state`` family
+            state_windows: optional graph-wide trailing row counts summarized by the ``state`` family
             infer_ts_periods: infer relationship-specific lookback periods from observed cadence
             categorical_cardinality_threshold: optional graph-wide categorical cardinality threshold
-            categorical_top_k: optional graph-wide top-value budget for categorical features
+            categorical_top_k: optional graph-wide top-value budget per eligible categorical column
+            high_cardinality_policy: optional graph-wide policy for columns above the cardinality threshold; ``"skip"`` retains the current bounded feature-space behavior and ``"top_k"`` restores bounded top-value features
+            categorical_low_cardinality_policy: optional graph-wide policy for accepted low-cardinality columns; ``"top_k"`` keeps the bounded representation and ``"all"`` restores the 1.10.14 expansion
+            categorical_tie_break: optional graph-wide ordering for equal-frequency category values; ``"value"`` is process-independent, ``"appearance"`` follows stable input order, and ``"legacy"`` restores pandas' 1.10.14-era plan ordering
+            categorical_tie_break_seed: optional graph-wide seed for deterministic ``"hash"`` tie ordering
+            text_categorical_fallback: optional graph-wide switch allowing detected text to use the bounded categorical fallback when automatic text summaries are disabled
             auto_base_predicate_max: optional graph-wide cap on automatically selected base predicates per node
             base_predicate_windows: optional graph-wide windows for bounded base predicate trajectories
             auto_text_features: optional graph-wide switch for automatic text summaries
@@ -342,10 +361,30 @@ class GraphReduce(nx.DiGraph):
             if feature_propagation_max_functions_per_column is None
             else max(0, int(feature_propagation_max_functions_per_column))
         )
+        self.base_distribution_features = base_distribution_features
         self.ts_periods = None if ts_periods is None else list(ts_periods)
+        self.state_lags = (
+            None
+            if state_lags is None
+            else list(
+                dict.fromkeys(int(value) for value in state_lags if int(value) > 0)
+            )
+        )
+        self.state_windows = (
+            None
+            if state_windows is None
+            else list(
+                dict.fromkeys(int(value) for value in state_windows if int(value) > 0)
+            )
+        )
         self.infer_ts_periods = bool(infer_ts_periods)
         self.categorical_cardinality_threshold = categorical_cardinality_threshold
         self.categorical_top_k = categorical_top_k
+        self.high_cardinality_policy = high_cardinality_policy
+        self.categorical_low_cardinality_policy = categorical_low_cardinality_policy
+        self.categorical_tie_break = categorical_tie_break
+        self.categorical_tie_break_seed = categorical_tie_break_seed
+        self.text_categorical_fallback = text_categorical_fallback
         self.auto_base_predicate_max = (
             None
             if auto_base_predicate_max is None
@@ -370,20 +409,26 @@ class GraphReduce(nx.DiGraph):
             if auto_annotate_max_text_columns is None
             else max(0, int(auto_annotate_max_text_columns))
         )
-        self.auto_annotate_max_gated_numeric_cols = (
-            auto_annotate_max_gated_numeric_cols
-        )
+        self.auto_annotate_max_gated_numeric_cols = auto_annotate_max_gated_numeric_cols
         self.auto_annotate_gated_numeric_top_k = auto_annotate_gated_numeric_top_k
         self._node_feature_overrides = {
             name: value
             for name, value in {
                 "feature_families": self.feature_families,
+                "base_distribution_features": self.base_distribution_features,
                 "feature_family_max_columns": self.feature_family_max_columns,
                 "feature_family_max_features_per_column": self.feature_family_max_features_per_column,
                 "feature_propagation_max_functions_per_column": self.feature_propagation_max_functions_per_column,
                 "ts_periods": self.ts_periods,
+                "state_lags": self.state_lags,
+                "state_windows": self.state_windows,
                 "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
                 "categorical_top_k": self.categorical_top_k,
+                "high_cardinality_policy": self.high_cardinality_policy,
+                "categorical_low_cardinality_policy": self.categorical_low_cardinality_policy,
+                "categorical_tie_break": self.categorical_tie_break,
+                "categorical_tie_break_seed": self.categorical_tie_break_seed,
+                "text_categorical_fallback": self.text_categorical_fallback,
                 "auto_base_predicate_max": self.auto_base_predicate_max,
                 "base_predicate_windows": self.base_predicate_windows,
                 "auto_text_features": self.auto_text_features,
@@ -495,13 +540,21 @@ class GraphReduce(nx.DiGraph):
             "feature_stype_map": self.feature_stype_map,
             "date_filters_on_agg": self.date_filters_on_agg,
             "feature_families": self.feature_families,
+            "base_distribution_features": self.base_distribution_features,
             "feature_family_max_columns": self.feature_family_max_columns,
             "feature_family_max_features_per_column": self.feature_family_max_features_per_column,
             "feature_propagation_max_functions_per_column": self.feature_propagation_max_functions_per_column,
             "ts_periods": self.ts_periods,
+            "state_lags": self.state_lags,
+            "state_windows": self.state_windows,
             "infer_ts_periods": self.infer_ts_periods,
             "categorical_cardinality_threshold": self.categorical_cardinality_threshold,
             "categorical_top_k": self.categorical_top_k,
+            "high_cardinality_policy": self.high_cardinality_policy,
+            "categorical_low_cardinality_policy": self.categorical_low_cardinality_policy,
+            "categorical_tie_break": self.categorical_tie_break,
+            "categorical_tie_break_seed": self.categorical_tie_break_seed,
+            "text_categorical_fallback": self.text_categorical_fallback,
             "auto_base_predicate_max": self.auto_base_predicate_max,
             "base_predicate_windows": self.base_predicate_windows,
             "auto_text_features": self.auto_text_features,
@@ -548,7 +601,9 @@ class GraphReduce(nx.DiGraph):
         node: GraphReduceNode,
         method_name: str,
         ops: typing.Optional[typing.Union[sqlop, typing.List[sqlop]]] = None,
-        date_filter_ops: typing.Optional[typing.Union[sqlop, typing.List[sqlop]]] = None,
+        date_filter_ops: typing.Optional[
+            typing.Union[sqlop, typing.List[sqlop]]
+        ] = None,
         sql: typing.Optional[str] = None,
         auto_generated: bool = False,
         edge: typing.Optional[typing.Tuple[GraphReduceNode, GraphReduceNode]] = None,
@@ -619,7 +674,9 @@ class GraphReduce(nx.DiGraph):
         """
         Pop the next frozen execution record for a node / method / edge combination.
         """
-        queue_key = self._planned_queue_key(node=node, method_name=method_name, edge=edge)
+        queue_key = self._planned_queue_key(
+            node=node, method_name=method_name, edge=edge
+        )
         queue = self._execution_plan_queues.get(queue_key)
         if queue:
             return queue.pop(0)
@@ -636,10 +693,14 @@ class GraphReduce(nx.DiGraph):
         """
         records = self.executed_op_records
         if method_name is not None:
-            records = [record for record in records if record["method_name"] == method_name]
+            records = [
+                record for record in records if record["method_name"] == method_name
+            ]
         if auto_generated is not None:
             records = [
-                record for record in records if record["auto_generated"] == auto_generated
+                record
+                for record in records
+                if record["auto_generated"] == auto_generated
             ]
         if not exclude_date_filters:
             return list(records)
@@ -706,9 +767,10 @@ class GraphReduce(nx.DiGraph):
                 - datetime.timedelta(minutes=node.compute_period_minutes())
             )
 
-        if hasattr(node, "label_period_minutes") and getattr(
-            node, "label_period_val", None
-        ) is not None:
+        if (
+            hasattr(node, "label_period_minutes")
+            and getattr(node, "label_period_val", None) is not None
+        ):
             replacements[
                 str(
                     original_cut_date
@@ -722,9 +784,9 @@ class GraphReduce(nx.DiGraph):
         rebound_periods = set(getattr(node, "ts_periods", []) or [])
         rebound_periods.update(getattr(node, "base_predicate_windows", []) or [])
         for period in sorted(rebound_periods):
-            replacements[
-                str(original_cut_date - datetime.timedelta(days=period))
-            ] = str(current_cut_date - datetime.timedelta(days=period))
+            replacements[str(original_cut_date - datetime.timedelta(days=period))] = (
+                str(current_cut_date - datetime.timedelta(days=period))
+            )
 
         for op in rebound_ops:
             for old_val, new_val in sorted(
@@ -883,9 +945,9 @@ class GraphReduce(nx.DiGraph):
             PeriodUnit.year: 365,
         }
         try:
-            days = float(self.compute_period_val) * days_per_unit[
-                self.compute_period_unit
-            ]
+            days = (
+                float(self.compute_period_val) * days_per_unit[self.compute_period_unit]
+            )
         except (KeyError, TypeError, ValueError):
             raise ValueError(
                 "compute_period_val and compute_period_unit must define a valid "
@@ -1061,9 +1123,7 @@ class GraphReduce(nx.DiGraph):
 
         conditions = [
             left_df[left_column] == right_df[right_column]
-            for left_column, right_column in zip(
-                left_columns, resolved_right_columns
-            )
+            for left_column, right_column in zip(left_columns, resolved_right_columns)
         ]
         condition = functools.reduce(operator.and_, conditions)
         joined = left_df.join(right_df, on=condition, how=how)
@@ -1109,8 +1169,7 @@ class GraphReduce(nx.DiGraph):
             key_parts(from_node_key, name="from_node_key")
         ):
             raise ValueError(
-                "to_node_key and from_node_key must contain the same number "
-                "of columns"
+                "to_node_key and from_node_key must contain the same number of columns"
             )
         to_columns = self._resolve_prefixed_columns(
             to_node,
@@ -1312,6 +1371,12 @@ class GraphReduce(nx.DiGraph):
     # If that is the case we can either extend
     # this method or add engine-specific methods
     # to engine-specific nodes (e.g., `SnowflakeNode.join_sql`)
+    @staticmethod
+    def _join_schema_frame(node):
+        """Retain compatibility with custom SQL nodes exposing only samples."""
+        schema = getattr(node, "get_schema_frame", None)
+        return schema() if callable(schema) else node.get_sample()
+
     def join_sql(
         self,
         parent_node: GraphReduceNode,
@@ -1356,8 +1421,7 @@ class GraphReduce(nx.DiGraph):
             key_parts(relation_fk, name="relation_key")
         ):
             raise ValueError(
-                "parent and relation join keys must contain the same number "
-                "of columns"
+                "parent and relation join keys must contain the same number of columns"
             )
 
         parent_table = (
@@ -1373,8 +1437,8 @@ class GraphReduce(nx.DiGraph):
         logger.info(f"parent table: {parent_table} relation table: {relation_table}")
         # Check if the relation foreign key is already
         # in the parent and, if so, rename it.
-        parent_samp = parent_node.get_sample()
-        relation_samp = relation_node.get_sample()
+        parent_samp = self._join_schema_frame(parent_node)
+        relation_samp = self._join_schema_frame(relation_node)
         logger.info(f"parent columns: {parent_samp.columns}")
         logger.info(f"relation columns: {relation_samp.columns}")
         parent_pk_cols = self._resolve_prefixed_columns(
@@ -1384,10 +1448,9 @@ class GraphReduce(nx.DiGraph):
             relation_node, relation_fk, relation_samp.columns
         )
         join_predicate = " AND ".join(
-            f"parent.{parent_col} = relation.{relation_col}"
-            for parent_col, relation_col in zip(
-                parent_pk_cols, relation_fk_cols
-            )
+            f"parent.{parent_node.render_identifier(parent_col)} = "
+            f"relation.{relation_node.render_identifier(relation_col)}"
+            for parent_col, relation_col in zip(parent_pk_cols, relation_fk_cols)
         )
         parent_cols_lower = {_x.lower() for _x in parent_samp.columns}
         duplicate_relation_cols = [
@@ -1399,7 +1462,7 @@ class GraphReduce(nx.DiGraph):
                 columns=duplicate_relation_cols,
             )
             relation_cols = [
-                f"relation.{c}"
+                f"relation.{relation_node.render_identifier(c)}"
                 for c in relation_samp.columns
                 if c.lower() not in parent_cols_lower
             ]
@@ -1427,7 +1490,7 @@ class GraphReduce(nx.DiGraph):
             dry=self.dry_run,
         )
         # Get the table after the join.
-        parent_samp = parent_node.get_sample()
+        parent_samp = self._join_schema_frame(parent_node)
         self.sql_ops.append(JOIN_SQL)
         if parent_node._ref_sql:
             self.sql_ops.append(parent_node._ref_sql)
@@ -1547,7 +1610,9 @@ class GraphReduce(nx.DiGraph):
         """Infer a node's lookback windows from its materialized event history."""
         if not self.infer_ts_periods or getattr(node, "is_date_node", False):
             return
-        if not getattr(node, "date_key", None) or not getattr(node, "_cur_data_ref", None):
+        if not getattr(node, "date_key", None) or not getattr(
+            node, "_cur_data_ref", None
+        ):
             return
         if self.dry_run:
             return
@@ -1607,7 +1672,9 @@ class GraphReduce(nx.DiGraph):
                 relation_node.colabbr(relation_node.date_key)
             )
             key_cols = relation_node.colabbrs(relation_key)
-            key_sql = ", ".join(relation_node.render_identifier(col) for col in key_cols)
+            key_sql = ", ".join(
+                relation_node.render_identifier(col) for col in key_cols
+            )
             stats = relation_node.execute_query(
                 f"SELECT {key_sql}, MIN({date_col}) AS first_ts, "
                 f"MAX({date_col}) AS last_ts, COUNT(*) AS num_events "
@@ -1631,8 +1698,12 @@ class GraphReduce(nx.DiGraph):
                 relation_node.ts_periods = periods
                 logger.info(
                     "inferred relationship ts_periods",
-                    parent=getattr(parent_node, "prefix", parent_node.__class__.__name__),
-                    relation=getattr(relation_node, "prefix", relation_node.__class__.__name__),
+                    parent=getattr(
+                        parent_node, "prefix", parent_node.__class__.__name__
+                    ),
+                    relation=getattr(
+                        relation_node, "prefix", relation_node.__class__.__name__
+                    ),
                     relation_key=relation_key,
                     periods=periods,
                     compute_horizon_days=self.compute_period_days(),
@@ -1640,7 +1711,9 @@ class GraphReduce(nx.DiGraph):
         except Exception as exc:  # pragma: no cover - backend-specific failures
             logger.warning(
                 "relationship_ts_period_inference_failed",
-                relation=getattr(relation_node, "prefix", relation_node.__class__.__name__),
+                relation=getattr(
+                    relation_node, "prefix", relation_node.__class__.__name__
+                ),
                 error=f"{type(exc).__name__}: {exc}",
             )
 
@@ -1688,9 +1761,13 @@ class GraphReduce(nx.DiGraph):
                 node=node,
                 method_name="do_data",
                 ops=planned_data["method_ops"] if planned_data else ops,
-                date_filter_ops=planned_data["date_filter_ops"] if planned_data else None,
+                date_filter_ops=planned_data["date_filter_ops"]
+                if planned_data
+                else None,
                 sql=data_sql,
-                auto_generated=planned_data["auto_generated"] if planned_data else False,
+                auto_generated=planned_data["auto_generated"]
+                if planned_data
+                else False,
             )
 
             logger.debug(f"do data: {data_sql}")
@@ -1717,12 +1794,16 @@ class GraphReduce(nx.DiGraph):
             self._record_executed_ops(
                 node=node,
                 method_name="do_annotate",
-                ops=planned_annotate["method_ops"] if planned_annotate else annotate_ops,
+                ops=planned_annotate["method_ops"]
+                if planned_annotate
+                else annotate_ops,
                 date_filter_ops=(
                     planned_annotate["date_filter_ops"] if planned_annotate else None
                 ),
                 sql=annotate_sql,
-                auto_generated=planned_annotate["auto_generated"] if planned_annotate else False,
+                auto_generated=planned_annotate["auto_generated"]
+                if planned_annotate
+                else False,
             )
             logger.debug(f"do annotate: {annotate_sql}")
             self.sql_ops.append(annotate_sql)
@@ -1747,9 +1828,13 @@ class GraphReduce(nx.DiGraph):
                 node=node,
                 method_name="do_filters",
                 ops=planned_filters["method_ops"] if planned_filters else filter_ops,
-                date_filter_ops=planned_filters["date_filter_ops"] if planned_filters else None,
+                date_filter_ops=planned_filters["date_filter_ops"]
+                if planned_filters
+                else None,
                 sql=filter_sql,
-                auto_generated=planned_filters["auto_generated"] if planned_filters else False,
+                auto_generated=planned_filters["auto_generated"]
+                if planned_filters
+                else False,
             )
             logger.debug(f"do filters: {filter_sql}")
             self.sql_ops.append(filter_sql)
@@ -1773,12 +1858,16 @@ class GraphReduce(nx.DiGraph):
             self._record_executed_ops(
                 node=node,
                 method_name="do_normalize",
-                ops=planned_normalize["method_ops"] if planned_normalize else normalize_ops,
+                ops=planned_normalize["method_ops"]
+                if planned_normalize
+                else normalize_ops,
                 date_filter_ops=(
                     planned_normalize["date_filter_ops"] if planned_normalize else None
                 ),
                 sql=normalize_sql,
-                auto_generated=planned_normalize["auto_generated"] if planned_normalize else False,
+                auto_generated=planned_normalize["auto_generated"]
+                if planned_normalize
+                else False,
             )
             self.sql_ops.append(normalize_sql)
             node.create_ref(
@@ -1858,15 +1947,12 @@ class GraphReduce(nx.DiGraph):
                         my_parent, parent_pk
                     )
                     propagated_key_select = ",\n                                ".join(
-                        f"{parent_col} as "
-                        f"{parent_date_node.prefix}_{parent_key_part}"
+                        f"{parent_col} as {parent_date_node.prefix}_{parent_key_part}"
                         for parent_col, parent_key_part in zip(
                             propagated_parent_key_cols, parent_pk_parts
                         )
                     )
-                    propagated_key_group = ", ".join(
-                        propagated_parent_key_cols
-                    )
+                    propagated_key_group = ", ".join(propagated_parent_key_cols)
                     # Grab the date data from the parent and merge
                     # it.
                     dn = my_parent.__class__(
@@ -1994,11 +2080,12 @@ class GraphReduce(nx.DiGraph):
                     logger.info(f"performing auto_features on node {relation_node}")
                     auto_feature_ops = self._normalize_sqlop_list(
                         relation_node.auto_features(
-                        reduce_key=edge_data["relation_key"],
-                        # type_func_map=self.feature_typefunc_map,
-                        type_func_map=self.feature_stype_map,
-                        compute_layer=self.compute_layer,
-                    ))
+                            reduce_key=edge_data["relation_key"],
+                            # type_func_map=self.feature_typefunc_map,
+                            type_func_map=self.feature_stype_map,
+                            compute_layer=self.compute_layer,
+                        )
+                    )
                     auto_feature_date_filters = [
                         op for op in auto_feature_ops if op.optype == SQLOpType.where
                     ]
@@ -2040,9 +2127,7 @@ class GraphReduce(nx.DiGraph):
                     # NOTE: we do not automatically do date filtering
                     # here so maybe that should be a top-level parameter
                     # for when we have a custom reduce implementation?
-                    reduce_base_ops = self._normalize_sqlop_list(
-                        reduce_method_ops
-                    )
+                    reduce_base_ops = self._normalize_sqlop_list(reduce_method_ops)
                     reduce_ops = list(reduce_base_ops)
                     if self.date_filters_on_agg:
                         reduce_ops = reduce_ops + tfilt
@@ -2095,18 +2180,15 @@ class GraphReduce(nx.DiGraph):
                     else relation_node.do_labels(edge_data["relation_key"])
                 )
             # Target variables.
-            if (
-                self.train
-                and (
-                    (
-                        self.label_node
-                        and (
-                            self.label_node == relation_node
-                            or relation_node.label_field is not None
-                        )
+            if self.train and (
+                (
+                    self.label_node
+                    and (
+                        self.label_node == relation_node
+                        or relation_node.label_field is not None
                     )
-                    or label_method_ops is not None
                 )
+                or label_method_ops is not None
             ):
                 logger.info(f"Had label node {self.label_node}")
 
@@ -2191,9 +2273,7 @@ class GraphReduce(nx.DiGraph):
                         tfilt = None
                     tfilt = self._normalize_sqlop_list(tfilt)
 
-                    label_base_ops = self._normalize_sqlop_list(
-                        label_method_ops
-                    )
+                    label_base_ops = self._normalize_sqlop_list(label_method_ops)
                     ops = list(label_base_ops)
                     if tfilt:
                         ops = ops + tfilt
@@ -2442,9 +2522,7 @@ class GraphReduce(nx.DiGraph):
                             join_df = join_df.join(
                                 child_df,
                                 on=list(
-                                    relation_node.colabbrs(
-                                        edge_data["relation_key"]
-                                    )
+                                    relation_node.colabbrs(edge_data["relation_key"])
                                 ),
                                 how="left",
                             )
@@ -2467,9 +2545,13 @@ class GraphReduce(nx.DiGraph):
             parent_node.df = joined_df
 
             # Target variables.
-            if self.train and self.label_node and (
-                self.label_node == relation_node
-                or relation_node.label_field is not None
+            if (
+                self.train
+                and self.label_node
+                and (
+                    self.label_node == relation_node
+                    or relation_node.label_field is not None
+                )
             ):
                 logger.info(f"Had label node {self.label_node}")
                 # Automatic label generation.

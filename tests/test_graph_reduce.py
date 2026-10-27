@@ -11,14 +11,29 @@ import pandas as pd
 from icecream import ic
 import duckdb
 
-from graphreduce.node import GraphReduceNode, DynamicNode, SQLNode, DuckdbNode, AthenaNode, RedshiftNode
+from graphreduce.node import (
+    GraphReduceNode,
+    DynamicNode,
+    SQLNode,
+    DuckdbNode,
+    AthenaNode,
+    RedshiftNode,
+    _deterministic_value_counts,
+    _sql_context_annotation_ops,
+)
 from graphreduce.graph_reduce import GraphReduce, _infer_ts_periods_from_cadence
-from graphreduce.enum import ComputeLayerEnum, PeriodUnit, StorageFormatEnum, ProviderEnum, SQLOpType
+from graphreduce.enum import (
+    ComputeLayerEnum,
+    PeriodUnit,
+    StorageFormatEnum,
+    ProviderEnum,
+    SQLOpType,
+)
 from graphreduce.models import sqlop
 from graphreduce.predicates import EqualityPredicate
 
 
-data_path = '/'.join(os.path.abspath(__file__).split('/')[0:-1]) + '/data/cust_data'
+data_path = "/".join(os.path.abspath(__file__).split("/")[0:-1]) + "/data/cust_data"
 print(data_path)
 
 
@@ -47,7 +62,9 @@ def test_is_ts_data_returns_false_for_empty_sql_relation():
     assert node.is_ts_data("parent_id") is False
 
 
-def test_sql_auto_features_skips_numeric_aggs_for_string_backed_numerical_stype(monkeypatch):
+def test_sql_auto_features_skips_numeric_aggs_for_string_backed_numerical_stype(
+    monkeypatch,
+):
     sample = pd.DataFrame(
         {
             "tran_order_id": [1, 1, 2],
@@ -98,9 +115,7 @@ def test_sql_auto_features_skips_numeric_aggs_for_all_null_sql_sample(monkeypatc
             # SQL VARCHAR columns containing only NULL in an inference window
             # are commonly materialized by pandas with a numeric placeholder
             # dtype. The backing column is still not valid input to AVG/SUM.
-            "comment_user_display_name": pd.Series(
-                [None, None, None], dtype="float64"
-            ),
+            "comment_user_display_name": pd.Series([None, None, None], dtype="float64"),
         }
     )
     monkeypatch.setattr(
@@ -129,6 +144,38 @@ def test_sql_auto_features_skips_numeric_aggs_for_all_null_sql_sample(monkeypatc
     agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
 
     assert not any("comment_user_display_name" in op for op in agg_sql)
+
+
+def test_sql_auto_features_skips_all_null_auto_annotation_at_full_rerank(monkeypatch):
+    """An annotated VARCHAR can look numeric when its inference sample is NULL."""
+
+    annotated_col = "evt_notes__gr_when_evt_notes_text_a_little_bit_more"
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1, 1],
+            "evt_id": [10, 11],
+            "evt_created_at": pd.to_datetime(["2020-01-01", "2020-01-02"]),
+            annotated_col: pd.Series([None, None], dtype="float64"),
+        }
+    )
+    node = DuckdbNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="created_at",
+        compute_layer=ComputeLayerEnum.duckdb,
+        feature_families=("base", "temporal"),
+    )
+    monkeypatch.setattr(node, "is_ts_data", lambda _reduce_key: True)
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["mean", "sum", "min", "max"]},
+    )
+    agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+
+    assert not any(annotated_col in sql for sql in agg_sql)
 
 
 def test_sql_auto_features_treats_zip_like_numerical_stype_as_categorical(monkeypatch):
@@ -207,6 +254,256 @@ def test_sql_auto_features_generates_propagating_categorical_and_text_ops():
     assert any("evt_comment_text_empty_share" in op for op in agg_sql)
     assert any("evt_comment_text_url_count" in op for op in agg_sql)
     assert any("evt_comment_text_number_share" in op for op in agg_sql)
+
+
+def test_sql_auto_features_enforces_categorical_cardinality_and_top_k_limits():
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1] * 10,
+            "evt_status": ["paid"] * 4 + ["failed"] * 3 + ["pending"] * 2 + ["new"],
+            "evt_token": [f"opaque-token-{index}" for index in range(10)],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        categorical_cardinality_threshold=5,
+        categorical_top_k=2,
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+
+    assert "COUNT(DISTINCT evt_status) as evt_status_nunique" in agg_sql
+    assert any("evt_status_paid_count" in op for op in agg_sql)
+    assert any("evt_status_failed_count" in op for op in agg_sql)
+    assert not any("evt_status_pending_count" in op for op in agg_sql)
+    assert any("evt_status_other_count" in op for op in agg_sql)
+    assert not any("evt_token" in op for op in agg_sql)
+
+
+def test_categorical_ties_are_deterministic_under_row_permutation():
+    values = pd.Series(["gamma", "alpha", "beta", "gamma", "alpha", "beta"])
+
+    forward = _deterministic_value_counts(values)
+    reverse = _deterministic_value_counts(values.iloc[::-1])
+
+    assert list(forward.items()) == [("alpha", 2), ("beta", 2), ("gamma", 2)]
+    assert list(reverse.items()) == list(forward.items())
+
+
+def test_categorical_ties_can_preserve_legacy_appearance_order():
+    values = pd.Series(["gamma", "alpha", "beta", "gamma", "alpha", "beta"])
+
+    counts = _deterministic_value_counts(values, tie_break="appearance")
+
+    assert list(counts.items()) == [("gamma", 2), ("alpha", 2), ("beta", 2)]
+
+
+def test_categorical_ties_can_replay_legacy_pandas_order():
+    values = pd.Series(["gamma", "alpha", "beta", "gamma", "alpha", "beta"])
+
+    counts = _deterministic_value_counts(values, tie_break="legacy")
+
+    assert counts.equals(values.value_counts())
+
+
+def test_categorical_ties_can_use_seeded_stable_hash_order():
+    values = pd.Series(["gamma", "alpha", "beta", "gamma", "alpha", "beta"])
+
+    first = _deterministic_value_counts(values, tie_break="hash", tie_break_seed=7)
+    permuted = _deterministic_value_counts(
+        values.iloc[::-1], tie_break="hash", tie_break_seed=7
+    )
+    alternate = _deterministic_value_counts(values, tie_break="hash", tie_break_seed=11)
+
+    assert list(first.items()) == list(permuted.items())
+    assert set(first.index) == set(alternate.index)
+    assert list(first.index) != list(alternate.index)
+
+
+def test_categorical_feature_plans_are_invariant_to_tied_value_appearance():
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1] * 6,
+            "evt_status": ["gamma", "alpha", "beta", "gamma", "alpha", "beta"],
+            "evt_amount": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        feature_families=("base", "conditional"),
+        auto_annotate_features=True,
+        categorical_cardinality_threshold=3,
+        categorical_top_k=2,
+        auto_base_predicate_max=2,
+    )
+
+    def plan(frame):
+        annotations = [op.opval for op in node.sql_auto_annotate(frame)]
+        features = [
+            op.opval
+            for op in node.sql_auto_features(
+                table_df_sample=frame,
+                reduce_key="user_id",
+                type_func_map={
+                    "categorical": ["count", "nunique"],
+                    "numerical": ["mean"],
+                },
+            )
+        ]
+        return annotations, features
+
+    assert plan(sample) == plan(sample.iloc[::-1].reset_index(drop=True))
+
+
+def test_sql_auto_features_can_restore_all_low_cardinality_values():
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1] * 10,
+            "evt_status": ["paid"] * 4 + ["failed"] * 3 + ["pending"] * 2 + ["new"],
+            "evt_token": [f"opaque-token-{index}" for index in range(10)],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        categorical_cardinality_threshold=5,
+        categorical_top_k=2,
+        categorical_low_cardinality_policy="all",
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+
+    assert any("evt_status_paid_count" in op for op in agg_sql)
+    assert any("evt_status_failed_count" in op for op in agg_sql)
+    assert any("evt_status_pending_count" in op for op in agg_sql)
+    assert any("evt_status_new_count" in op for op in agg_sql)
+    assert not any("evt_status_other_count" in op for op in agg_sql)
+    assert not any("evt_token" in op for op in agg_sql)
+
+    with pytest.raises(ValueError, match="categorical_low_cardinality_policy"):
+        SQLNode(
+            fpath="events",
+            pk="id",
+            prefix="evt",
+            compute_layer=ComputeLayerEnum.sqlite,
+            categorical_low_cardinality_policy="invalid",
+        )
+    with pytest.raises(ValueError, match="categorical_tie_break"):
+        SQLNode(
+            fpath="events",
+            pk="id",
+            prefix="evt",
+            compute_layer=ComputeLayerEnum.sqlite,
+            categorical_tie_break="invalid",
+        )
+
+
+def test_sql_auto_features_can_restore_top_k_for_high_cardinality_categories():
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1] * 10,
+            "evt_token": [f"opaque-token-{index}" for index in range(10)],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        categorical_cardinality_threshold=5,
+        categorical_top_k=2,
+        high_cardinality_policy="top_k",
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    agg_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
+
+    assert any("evt_token_nunique" in op for op in agg_sql)
+    assert any("evt_token_opaque_token_0_count" in op for op in agg_sql)
+    assert any("evt_token_other_count" in op for op in agg_sql)
+
+
+def test_disabling_text_features_does_not_reclassify_text_as_categorical():
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1, 1],
+            "evt_order_status_url": [
+                "https://example.com/orders/first/authenticate?key=one",
+                "https://example.com/orders/second/authenticate?key=two",
+            ],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        categorical_cardinality_threshold=5,
+        auto_text_features=False,
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    agg_sql = [op.opval for op in (ops or []) if op.optype == SQLOpType.aggfunc]
+
+    assert not any("evt_order_status_url" in op for op in agg_sql)
+
+
+def test_disabling_text_features_can_restore_categorical_fallback():
+    sample = pd.DataFrame(
+        {
+            "evt_user_id": [1, 1],
+            "evt_order_status_url": [
+                "https://example.com/orders/first/authenticate?key=one",
+                "https://example.com/orders/second/authenticate?key=two",
+            ],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        categorical_cardinality_threshold=5,
+        categorical_top_k=2,
+        high_cardinality_policy="top_k",
+        auto_text_features=False,
+        text_categorical_fallback=True,
+    )
+
+    ops = node.sql_auto_features(
+        table_df_sample=sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    agg_sql = [op.opval for op in (ops or []) if op.optype == SQLOpType.aggfunc]
+
+    assert any("evt_order_status_url_nunique" in op for op in agg_sql)
 
 
 def test_sql_auto_features_categorical_text_sql_executes_on_sqlite():
@@ -318,6 +615,30 @@ def test_sql_auto_annotate_limits_text_columns_when_configured():
 
     assert any("evt_first_notes__gr_length" in op for op in select_sql)
     assert not any("evt_second_notes__gr_length" in op for op in select_sql)
+
+
+def test_sql_auto_annotate_skips_high_cardinality_columns():
+    sample = pd.DataFrame(
+        {
+            "evt_status": ["paid", "paid", "failed", "failed", "paid", "failed"],
+            "evt_token": [f"opaque-token-{index}" for index in range(6)],
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        compute_layer=ComputeLayerEnum.sqlite,
+        auto_annotate_features=True,
+        categorical_cardinality_threshold=2,
+        categorical_top_k=2,
+    )
+
+    ops = node.sql_auto_annotate(sample)
+    select_sql = [op.opval for op in ops if op.optype == SQLOpType.select]
+
+    assert any("evt_status__gr_is_paid" in op for op in select_sql)
+    assert not any("evt_token__gr_is" in op for op in select_sql)
 
 
 def test_graph_parent_date_key_auto_annotates_age_days():
@@ -480,8 +801,13 @@ def test_graph_feature_settings_override_every_node_when_provided():
         feature_family_max_features_per_column=6,
         feature_propagation_max_functions_per_column=1,
         ts_periods=(1, 30, 90),
+        state_lags=(1, 2, 5),
+        state_windows=(3, 8),
         categorical_cardinality_threshold=12,
         categorical_top_k=5,
+        categorical_low_cardinality_policy="all",
+        categorical_tie_break="appearance",
+        categorical_tie_break_seed=17,
         auto_base_predicate_max=2,
         base_predicate_windows=(7, 14, 30, 60),
         auto_text_features=False,
@@ -501,8 +827,13 @@ def test_graph_feature_settings_override_every_node_when_provided():
         assert node.feature_family_max_features_per_column == 6
         assert node.feature_propagation_max_functions_per_column == 1
         assert node.ts_periods == [1, 30, 90]
+        assert node.state_lags == [1, 2, 5]
+        assert node.state_windows == [3, 8]
         assert node.categorical_cardinality_threshold == 12
         assert node.categorical_top_k == 5
+        assert node.categorical_low_cardinality_policy == "all"
+        assert node.categorical_tie_break == "appearance"
+        assert node.categorical_tie_break_seed == 17
         assert node.auto_base_predicate_max == 2
         assert node.base_predicate_windows == [7, 14, 30, 60]
         assert node.auto_text_features is False
@@ -704,9 +1035,7 @@ def test_sql_auto_feature_families_generate_temporal_conditionals_and_episodes()
     )
     node._cur_data_ref = "events"
 
-    annotated = pd.read_sql_query(
-        node.build_query(node.sql_auto_annotate(rows)), conn
-    )
+    annotated = pd.read_sql_query(node.build_query(node.sql_auto_annotate(rows)), conn)
     annotated.to_sql("annotated_events", conn, index=False)
     feature_ops = node.sql_auto_features(
         annotated,
@@ -1168,9 +1497,18 @@ def test_sql_auto_annotate_can_run_semantic_expressions_only():
         annotation_expressions_only=True,
     )
 
-    select_sql = [op.opval for op in node.sql_auto_annotate(sample) if op.optype == SQLOpType.select]
-    assert "CASE WHEN res_statusId <> 1 THEN 1 ELSE 0 END as res__gr_did_not_finish" in select_sql
-    assert "CASE WHEN res_position <= 3 THEN 1 ELSE 0 END as res__gr_is_top3" in select_sql
+    select_sql = [
+        op.opval
+        for op in node.sql_auto_annotate(sample)
+        if op.optype == SQLOpType.select
+    ]
+    assert (
+        "CASE WHEN res_statusId <> 1 THEN 1 ELSE 0 END as res__gr_did_not_finish"
+        in select_sql
+    )
+    assert (
+        "CASE WHEN res_position <= 3 THEN 1 ELSE 0 END as res__gr_is_top3" in select_sql
+    )
     assert not any("res_statusId__gr_is_" in op for op in select_sql)
 
 
@@ -1221,8 +1559,7 @@ def test_sql_auto_feature_families_keep_value_annotations_out_of_predicates():
     )
     feature_sql = [op.opval for op in ops if op.optype == SQLOpType.aggfunc]
     assert any(
-        "evt_gr_value_serious_subjects_affected_sum_7d" in op
-        for op in feature_sql
+        "evt_gr_value_serious_subjects_affected_sum_7d" in op for op in feature_sql
     )
     assert not any(
         "value_serious_subjects_affected_count_7d" in op for op in feature_sql
@@ -1248,10 +1585,14 @@ def test_sql_auto_semantic_family_compiles_configured_annotations():
     )
 
     select_sql = [
-        op.opval for op in node.sql_auto_annotate(sample) if op.optype == SQLOpType.select
+        op.opval
+        for op in node.sql_auto_annotate(sample)
+        if op.optype == SQLOpType.select
     ]
 
-    assert "CASE WHEN res_position <= 3 THEN 1 ELSE 0 END as res__gr_is_top3" in select_sql
+    assert (
+        "CASE WHEN res_position <= 3 THEN 1 ELSE 0 END as res__gr_is_top3" in select_sql
+    )
     assert not any("res_position_top3" in op for op in select_sql)
 
 
@@ -1293,6 +1634,110 @@ def test_sql_auto_sequence_family_generates_rates_and_activity_span():
     result = pd.read_sql_query(node.build_query(feature_ops), conn)
     assert result.loc[0, "evt_activity_rate_7d"] > 0
     assert result.loc[0, "evt_active_span_seconds"] > 0
+    conn.close()
+
+
+def test_sql_auto_state_family_preserves_ordered_values_and_relationship_state():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2, 3, 4, 5],
+            "evt_user_id": [1, 1, 1, 1, 2],
+            "evt_team_id": [10, 10, 20, 20, 30],
+            "evt_value": [100.0, 2.0, 6.0, 8.0, 5.0],
+            "evt_ts": pd.to_datetime(
+                [
+                    "2023-12-20",
+                    "2024-01-05",
+                    "2024-01-08",
+                    "2024-01-09",
+                    "2024-01-09",
+                ]
+            ),
+        }
+    )
+    sample.to_sql("events", conn, index=False)
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 10),
+        feature_families=("state",),
+        feature_family_max_columns=2,
+        context_keys=("team_id",),
+        state_lags=(1, 2, 3),
+        state_windows=(3, 5),
+        ts_periods=[7],
+    )
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"numerical": ["mean", "sum", "min", "max"]},
+    )
+    assert any(op.optype == SQLOpType.window for op in feature_ops)
+    query = node.build_query(feature_ops)
+    assert "ROW_NUMBER() OVER" in query
+    assert query.index("WHERE") < query.index("GROUP BY")
+
+    result = pd.read_sql_query(query, conn)
+    user_1 = result[result["evt_user_id"] == 1].iloc[0]
+    assert user_1["evt_value_state_latest"] == pytest.approx(8.0)
+    assert user_1["evt_value_state_lag2"] == pytest.approx(6.0)
+    assert user_1["evt_value_state_lag3"] == pytest.approx(2.0)
+    assert user_1["evt_value_state_last3_avg"] == pytest.approx(16 / 3)
+    assert user_1["evt_value_state_last3_min"] == pytest.approx(2.0)
+    assert user_1["evt_value_state_last3_max"] == pytest.approx(8.0)
+    assert user_1["evt_team_id_state_latest"] == "20"
+    assert user_1["evt_team_id_state_lag2"] == "20"
+    assert user_1["evt_team_id_state_changed"] == 0
+    assert user_1["evt_team_id_state_last5_nunique"] == 2
+    conn.close()
+
+
+def test_sql_auto_state_family_orders_keyless_timestamp_ties_by_payload():
+    conn = sqlite3.connect(":memory:")
+    results = []
+    for name, values in (("events_a", [2.0, 9.0, 5.0]), ("events_b", [5.0, 2.0, 9.0])):
+        sample = pd.DataFrame(
+            {
+                "evt_user_id": [1, 1, 1],
+                "evt_value": values,
+                "evt_ts": pd.to_datetime(["2024-01-09"] * 3),
+            }
+        )
+        sample.to_sql(name, conn, index=False)
+        node = SQLNode(
+            fpath=name,
+            pk=None,
+            prefix="evt",
+            date_key="ts",
+            client=conn,
+            compute_layer=ComputeLayerEnum.sqlite,
+            cut_date=datetime.datetime(2024, 1, 10),
+            feature_families=("state",),
+            feature_family_max_columns=1,
+            state_lags=(1, 2, 3),
+            state_windows=(3,),
+        )
+        node._cur_data_ref = name
+        query = node.build_query(
+            node.sql_auto_features(
+                sample,
+                reduce_key="user_id",
+                type_func_map={"numerical": ["mean"]},
+            )
+        )
+        assert "ORDER BY evt_ts DESC, evt_value DESC" in query
+        results.append(pd.read_sql_query(query, conn).iloc[0])
+    for row in results:
+        assert row["evt_value_state_latest"] == pytest.approx(9.0)
+        assert row["evt_value_state_lag2"] == pytest.approx(5.0)
+        assert row["evt_value_state_lag3"] == pytest.approx(2.0)
     conn.close()
 
 
@@ -1387,6 +1832,47 @@ def test_sql_auto_base_predicate_budget_can_be_disabled():
     conn.close()
 
 
+def test_sql_auto_base_predicates_skip_high_cardinality_columns():
+    conn = sqlite3.connect(":memory:")
+    sample = pd.DataFrame(
+        {
+            "evt_id": range(1, 7),
+            "evt_user_id": [1] * 6,
+            "evt_status": ["paid", "paid", "paid", "paid", "failed", "failed"],
+            "evt_token": [f"opaque-token-{index}" for index in range(6)],
+            "evt_ts": pd.date_range("2024-01-01", periods=6),
+        }
+    )
+    node = SQLNode(
+        fpath="events",
+        pk="id",
+        prefix="evt",
+        date_key="ts",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        cut_date=datetime.datetime(2024, 1, 7),
+        feature_families=("base",),
+        categorical_cardinality_threshold=2,
+        categorical_top_k=1,
+        auto_base_predicate_max=2,
+        base_predicate_windows=(7,),
+        ts_periods=(7,),
+    )
+    sample.to_sql("events", conn, index=False)
+    node._cur_data_ref = "events"
+
+    feature_ops = node.sql_auto_features(
+        sample,
+        reduce_key="user_id",
+        type_func_map={"categorical": ["count", "nunique"]},
+    )
+    feature_sql = [op.opval for op in feature_ops if op.optype == SQLOpType.aggfunc]
+
+    assert any("evt_status_paid_count_7d" in op for op in feature_sql)
+    assert not any("evt_token" in op for op in feature_sql)
+    conn.close()
+
+
 def test_sql_auto_predicate_aliases_are_unique_after_value_sanitization():
     conn = sqlite3.connect(":memory:")
     sample = pd.DataFrame(
@@ -1444,7 +1930,14 @@ def test_sql_auto_base_uses_explicit_predicates_over_sample_frequency():
             "evt_user_id": [1] * 6,
             "evt_status": ["yes", "yes", "yes", "yes", "yes", "invited"],
             "evt_ts": pd.to_datetime(
-                ["2024-01-09", "2024-01-08", "2024-01-07", "2024-01-06", "2024-01-05", "2024-01-04"]
+                [
+                    "2024-01-09",
+                    "2024-01-08",
+                    "2024-01-07",
+                    "2024-01-06",
+                    "2024-01-05",
+                    "2024-01-04",
+                ]
             ),
         }
     )
@@ -1508,8 +2001,35 @@ def test_sql_auto_context_family_preserves_peer_relative_numeric_signal():
     assert "res_raceId__gr_context_size" in annotated.columns
     assert "res_position__gr_context_res_raceid_delta" in annotated.columns
     assert annotated.loc[0, "res_raceId__gr_context_size"] == 3
-    assert annotated.loc[0, "res_position__gr_context_res_raceid_delta"] == pytest.approx(-4 / 3)
+    assert annotated.loc[
+        0, "res_position__gr_context_res_raceid_delta"
+    ] == pytest.approx(-4 / 3)
     conn.close()
+
+
+def test_sql_auto_context_family_skips_all_null_varchar_inferred_as_numeric():
+    """A sampled NULL VARCHAR must never produce AVG(varchar) at refit."""
+
+    sample = pd.DataFrame(
+        {
+            "evt_id": [1, 2],
+            "evt_user_id": [10, 10],
+            # DuckDB can materialize an all-null VARCHAR sample as float64.
+            "evt_search_query": [float("nan"), float("nan")],
+        }
+    )
+    ops = _sql_context_annotation_ops(
+        sample,
+        {
+            "evt_id": "categorical",
+            "evt_user_id": "categorical",
+            "evt_search_query": "numerical",
+        },
+        context_keys=("user_id",),
+        pk="id",
+        max_numeric_columns=4,
+    )
+    assert not any("evt_search_query - AVG" in op.opval for op in ops)
 
 
 def test_sql_auto_context_family_does_not_infer_peer_keys():
@@ -1535,23 +2055,29 @@ def test_custom_node_definition():
     class CustNode(GraphReduceNode):
         def do_filters(self):
             pass
+
         def do_annotate(self):
             pass
+
         def do_normalize(self):
             pass
+
         def do_reduce(self, reduce_key):
             pass
+
         def do_labels(self, reduce_key):
             pass
+
         def do_post_join_annotate(self):
             pass
+
     cust = CustNode(
-            fpath=os.path.join(data_path, 'cust.csv'),
-            fmt = 'csv',
-            prefix='cust',
-            compute_layer=ComputeLayerEnum.pandas,
-            date_key=None
-            )
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        prefix="cust",
+        compute_layer=ComputeLayerEnum.pandas,
+        date_key=None,
+    )
     assert isinstance(cust, CustNode)
 
 
@@ -1559,87 +2085,107 @@ def test_custom_node_graph():
     class CustNode(GraphReduceNode):
         def do_filters(self):
             pass
+
         def do_annotate(self):
             pass
+
         def do_normalize(self):
             pass
+
         def do_reduce(self, reduce_key):
             pass
+
         def do_labels(self, reduce_key):
             pass
+
         def do_post_join_annotate(self):
             pass
+
     cust = CustNode(
-            fpath=os.path.join(data_path, 'cust.csv'),
-            fmt = 'csv',
-            prefix='cust',
-            compute_layer=ComputeLayerEnum.pandas,
-            date_key=None
-            )
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        prefix="cust",
+        compute_layer=ComputeLayerEnum.pandas,
+        date_key=None,
+    )
+
     class OrderNode(GraphReduceNode):
         def do_filters(self):
             pass
+
         def do_annotate(self):
             pass
+
         def do_normalize(self):
             pass
+
         def do_reduce(self, reduce_key):
-            return self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(**{
-                self.colabbr("num_orders"): pd.NamedAgg(column=self.colabbr(self.pk), aggfunc="count")
-                }).reset_index()
+            return (
+                self.prep_for_features()
+                .groupby(self.colabbr(reduce_key))
+                .agg(
+                    **{
+                        self.colabbr("num_orders"): pd.NamedAgg(
+                            column=self.colabbr(self.pk), aggfunc="count"
+                        )
+                    }
+                )
+                .reset_index()
+            )
+
         def do_labels(self, reduce_key):
             pass
+
         def do_post_join_annotate(self):
             pass
+
     order = OrderNode(
-            fpath=os.path.join(data_path, 'orders.csv'),
-            pk='id',
-            fmt = 'csv',
-            prefix='ord',
-            compute_layer=ComputeLayerEnum.pandas,
-            date_key='ts'
-            )
+        fpath=os.path.join(data_path, "orders.csv"),
+        pk="id",
+        fmt="csv",
+        prefix="ord",
+        compute_layer=ComputeLayerEnum.pandas,
+        date_key="ts",
+    )
     gr = GraphReduce(
-            name='test_two_node_graph',
-            parent_node=cust,
-            compute_layer=ComputeLayerEnum.pandas,
-            cut_date=datetime.datetime(2023, 6, 1)
-            )
+        name="test_two_node_graph",
+        parent_node=cust,
+        compute_layer=ComputeLayerEnum.pandas,
+        cut_date=datetime.datetime(2023, 6, 1),
+    )
     ic(gr.params)
     gr.add_entity_edge(
-            parent_node=cust,
-            relation_node=order,
-            parent_key='id',
-            relation_key='customer_id',
-            relation_type='parent_child',
-            reduce=True,
-            )
+        parent_node=cust,
+        relation_node=order,
+        parent_key="id",
+        relation_key="customer_id",
+        relation_type="parent_child",
+        reduce=True,
+    )
     gr.do_transformations()
     ic(gr.parent_node.df.head())
     assert len(gr.parent_node.df) == 4
 
 
-
-
 def test_dynamic_node_instance():
     node = DynamicNode(
-            fpath=os.path.join(data_path, 'cust.csv'),
-            fmt='csv',
-            prefix='cust',
-            compute_layer=ComputeLayerEnum.pandas,
-            date_key=None
-            )
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        prefix="cust",
+        compute_layer=ComputeLayerEnum.pandas,
+        date_key=None,
+    )
     assert isinstance(node, DynamicNode)
 
 
 def test_get_data():
     node = DynamicNode(
-            fpath=os.path.join(data_path, 'cust.csv'),
-            fmt='csv',
-            prefix='cust',
-            compute_layer=ComputeLayerEnum.pandas,
-            date_key=None
-            )
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        prefix="cust",
+        compute_layer=ComputeLayerEnum.pandas,
+        date_key=None,
+    )
     node.do_data()
     print(node.df)
     assert len(node.df) == 4
@@ -1647,12 +2193,12 @@ def test_get_data():
 
 def test_filter_data():
     node = DynamicNode(
-            fpath=os.path.join(data_path, 'cust.csv'),
-            fmt='csv',
-            prefix='cust',
-            compute_layer=ComputeLayerEnum.pandas,
-            date_key=None
-            )
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        prefix="cust",
+        compute_layer=ComputeLayerEnum.pandas,
+        date_key=None,
+    )
     node.do_data()
     node.do_filters()
     print(node.df)
@@ -1662,48 +2208,48 @@ def test_filter_data():
 def test_multi_node_customer():
 
     cust_node = DynamicNode(
-            fpath=os.path.join(data_path, 'cust.csv'),
-            fmt='csv',
-            prefix='cust',
-            date_key=None,
-            pk='id',
-            )
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        prefix="cust",
+        date_key=None,
+        pk="id",
+    )
 
     orders_node = DynamicNode(
-            fpath=os.path.join(data_path, 'orders.csv'),
-            fmt='csv',
-            prefix='ord',
-            date_key='ts',
-            pk='id',
-            )
+        fpath=os.path.join(data_path, "orders.csv"),
+        fmt="csv",
+        prefix="ord",
+        date_key="ts",
+        pk="id",
+    )
 
     nots_node = DynamicNode(
-            fpath=os.path.join(data_path, 'notifications.csv'),
-            fmt='csv',
-            prefix='not',
-            date_key='ts',
-            pk='id',
-            )
+        fpath=os.path.join(data_path, "notifications.csv"),
+        fmt="csv",
+        prefix="not",
+        date_key="ts",
+        pk="id",
+    )
 
     gr = GraphReduce(
-            parent_node=cust_node,
-            fmt='csv',
-            compute_layer=ComputeLayerEnum.pandas,
-            auto_features=True,
-            auto_labels=True,
-            cut_date=datetime.datetime(2023, 6, 30),
+        parent_node=cust_node,
+        fmt="csv",
+        compute_layer=ComputeLayerEnum.pandas,
+        auto_features=True,
+        auto_labels=True,
+        cut_date=datetime.datetime(2023, 6, 30),
         # Feature parameters.
         compute_period_unit=PeriodUnit.day,
         compute_period_val=365,
         # Label parameters.
         label_node=orders_node,
-        label_field='id',
-        label_operation='count',
+        label_field="id",
+        label_operation="count",
         label_period_unit=PeriodUnit.day,
         label_period_val=30,
         auto_feature_hops_back=3,
-        auto_feature_hops_front=0
-            )
+        auto_feature_hops_front=0,
+    )
     gr.add_node(cust_node)
     gr.add_node(orders_node)
     gr.add_node(nots_node)
@@ -1711,77 +2257,76 @@ def test_multi_node_customer():
     assert len(gr) == 3
 
     gr.add_entity_edge(
-            parent_node=cust_node,
-            relation_node=orders_node,
-            parent_key='id',
-            relation_key='customer_id',
-            relation_type='parent_child',
-            reduce=True
-            )
+        parent_node=cust_node,
+        relation_node=orders_node,
+        parent_key="id",
+        relation_key="customer_id",
+        relation_type="parent_child",
+        reduce=True,
+    )
     gr.add_entity_edge(
-            parent_node=cust_node,
-            relation_node=nots_node,
-            parent_key='id',
-            relation_key='customer_id',
-            relation_type='parent_child',
-            reduce=True
-            )
+        parent_node=cust_node,
+        relation_node=nots_node,
+        parent_key="id",
+        relation_key="customer_id",
+        relation_type="parent_child",
+        reduce=True,
+    )
 
     gr.do_transformations()
     assert len(gr.parent_node.df) == 4
 
 
-
 def test_multi_node():
 
     cust_node = DynamicNode(
-            fpath=os.path.join(data_path, 'cust.csv'),
-            fmt='csv',
-            prefix='cust',
-            date_key=None,
-            pk='customer_id',
-            )
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        prefix="cust",
+        date_key=None,
+        pk="customer_id",
+    )
     ord_node = DynamicNode(
-            fpath=os.path.join(data_path, 'orders.csv'),
-            fmt='csv',
-            prefix='ord',
-            date_key='ts',
-            pk='id',
-            )
+        fpath=os.path.join(data_path, "orders.csv"),
+        fmt="csv",
+        prefix="ord",
+        date_key="ts",
+        pk="id",
+    )
     not_node = DynamicNode(
-            fpath=os.path.join(data_path, 'notifications.csv'),
-            fmt='csv',
-            prefix='not',
-            date_key='ts',
-            pk='id'
-            )
+        fpath=os.path.join(data_path, "notifications.csv"),
+        fmt="csv",
+        prefix="not",
+        date_key="ts",
+        pk="id",
+    )
     ni_node = DynamicNode(
-            fpath=os.path.join(data_path, 'notification_interactions.csv'),
-            fmt='csv',
-            prefix='ni',
-            date_key='ts',
-            pk='id'
-            )
+        fpath=os.path.join(data_path, "notification_interactions.csv"),
+        fmt="csv",
+        prefix="ni",
+        date_key="ts",
+        pk="id",
+    )
 
     gr = GraphReduce(
-            parent_node=cust_node,
-            fmt='csv',
-            compute_layer=ComputeLayerEnum.pandas,
-            auto_features=True,
-            auto_labels=True,
-            cut_date=datetime.datetime(2023, 6, 30),
+        parent_node=cust_node,
+        fmt="csv",
+        compute_layer=ComputeLayerEnum.pandas,
+        auto_features=True,
+        auto_labels=True,
+        cut_date=datetime.datetime(2023, 6, 30),
         # Feature parameters.
         compute_period_unit=PeriodUnit.day,
         compute_period_val=365,
         # Label parameters.
         label_node=ord_node,
-        label_field='id',
-        label_operation='count',
+        label_field="id",
+        label_operation="count",
         label_period_unit=PeriodUnit.day,
         label_period_val=30,
         auto_feature_hops_back=3,
-        auto_feature_hops_front=1
-            )
+        auto_feature_hops_front=1,
+    )
     gr.add_node(cust_node)
     gr.add_node(ord_node)
     gr.add_node(not_node)
@@ -1790,43 +2335,43 @@ def test_multi_node():
     assert len(gr) == 4
 
     gr.add_entity_edge(
-            parent_node=cust_node,
-            relation_node=ord_node,
-            parent_key='id',
-            relation_key='customer_id',
-            relation_type='parent_child',
-            reduce=True
-            )
+        parent_node=cust_node,
+        relation_node=ord_node,
+        parent_key="id",
+        relation_key="customer_id",
+        relation_type="parent_child",
+        reduce=True,
+    )
     gr.add_entity_edge(
-            parent_node=cust_node,
-            relation_node=not_node,
-            parent_key='id',
-            relation_key='customer_id',
-            relation_type='parent_child',
-            reduce=True
-            )
+        parent_node=cust_node,
+        relation_node=not_node,
+        parent_key="id",
+        relation_key="customer_id",
+        relation_type="parent_child",
+        reduce=True,
+    )
     gr.add_entity_edge(
-            parent_node=not_node,
-            relation_node=ni_node,
-            parent_key='id',
-            relation_key='notification_id',
-            relation_type='parent_child',
-            reduce=True
-            )
+        parent_node=not_node,
+        relation_node=ni_node,
+        parent_key="id",
+        relation_key="notification_id",
+        relation_type="parent_child",
+        reduce=True,
+    )
 
     gr.do_transformations()
     assert len(gr.parent_node.df) == 4
 
 
-
 def _setup_sqlite():
     conn = sqlite3.connect(":memory:")
-    files = [x for x in os.listdir(data_path) if x.endswith('.csv')]
+    files = [x for x in os.listdir(data_path) if x.endswith(".csv")]
     for f in files:
         df = pd.read_csv(f"{data_path}/{f}")
-        name = f.split('.')[0]
-        df.to_sql(name, conn, if_exists='replace', index=False)
+        name = f.split(".")[0]
+        df.to_sql(name, conn, if_exists="replace", index=False)
     return conn
+
 
 def _teardown_sqlite(conn):
     try:
@@ -1838,17 +2383,17 @@ def _teardown_sqlite(conn):
 class CustNode(SQLNode):
     def do_annotate(self) -> typing.Union[sqlop, typing.List[sqlop]]:
         return [
-            sqlop(optype=SQLOpType.select, opval=f"*, LENGTH({self.colabbr('name')}) as {self.colabbr('name_length')}")
+            sqlop(
+                optype=SQLOpType.select,
+                opval=f"*, LENGTH({self.colabbr('name')}) as {self.colabbr('name_length')}",
+            )
         ]
 
     def do_filters(self) -> typing.Union[sqlop, typing.List[sqlop]]:
-        return [
-            sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('id')} < 3")
-        ]
+        return [sqlop(optype=SQLOpType.where, opval=f"{self.colabbr('id')} < 3")]
 
     def do_normalize(self):
         pass
-
 
     def do_reduce(self, reduce_key):
         pass
@@ -1863,7 +2408,10 @@ class CustNode(SQLNode):
 class NotificationNode(SQLNode):
     def do_annotate(self) -> typing.List[sqlop]:
         return [
-            sqlop(optype=SQLOpType.select, opval=f"*, strftime('%m', {self.colabbr('ts')})")
+            sqlop(
+                optype=SQLOpType.select,
+                opval=f"*, strftime('%m', {self.colabbr('ts')})",
+            )
         ]
 
     def do_filters(self) -> typing.List[sqlop]:
@@ -1877,98 +2425,113 @@ class NotificationNode(SQLNode):
     def do_reduce(self, reduce_key):
         return [
             # Shouldn't this just be a select?
-            sqlop(optype=SQLOpType.aggfunc, opval=f"count(*) as {self.colabbr('num_notifications')}"),
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval=f"count(*) as {self.colabbr('num_notifications')}",
+            ),
             sqlop(optype=SQLOpType.agg, opval=f"{self.colabbr(reduce_key)}"),
         ]
 
 
-
-
 def test_sql_node_definition():
     conn = _setup_sqlite()
-    cust = CustNode(fpath='cust',
-                prefix='cust',
-                client=conn,
-                compute_layer=ComputeLayerEnum.sqlite,
-                columns=['id','name'])
-    notif = NotificationNode(fpath='notifications',
-                prefix='not',
-                client=conn,
-                compute_layer=ComputeLayerEnum.sqlite,
-                columns=['id', 'customer_id', 'ts'],
-                date_key='ts'
-        )
+    cust = CustNode(
+        fpath="cust",
+        prefix="cust",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        columns=["id", "name"],
+    )
+    notif = NotificationNode(
+        fpath="notifications",
+        prefix="not",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        columns=["id", "customer_id", "ts"],
+        date_key="ts",
+    )
     _teardown_sqlite(conn)
     assert isinstance(cust, CustNode)
 
 
-
 def test_sql_graph_transform():
     conn = _setup_sqlite()
-    cust = CustNode(fpath='cust',
-                prefix='cust',
-                client=conn,
-                compute_layer=ComputeLayerEnum.sqlite,
-                columns=['id','name'])
-    notif = NotificationNode(fpath='notifications',
-                prefix='not',
-                client=conn,
-                compute_layer=ComputeLayerEnum.sqlite,
-                columns=['id', 'customer_id', 'ts'],
-                date_key='ts'
-        )
+    cust = CustNode(
+        fpath="cust",
+        prefix="cust",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        columns=["id", "name"],
+    )
+    notif = NotificationNode(
+        fpath="notifications",
+        prefix="not",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        columns=["id", "customer_id", "ts"],
+        date_key="ts",
+    )
     gr = GraphReduce(
-            name='sql_dialect_example',
-            parent_node=cust,
-            compute_layer=ComputeLayerEnum.sqlite,
-            use_temp_tables=True,
-            lazy_execution=False,
-            sql_client=conn,
-            )
+        name="sql_dialect_example",
+        parent_node=cust,
+        compute_layer=ComputeLayerEnum.sqlite,
+        use_temp_tables=True,
+        lazy_execution=False,
+        sql_client=conn,
+    )
     gr.add_node(cust)
     gr.add_node(notif)
-    gr.add_entity_edge(cust, notif, parent_key='id', relation_key='customer_id', reduce=True)
+    gr.add_entity_edge(
+        cust, notif, parent_key="id", relation_key="customer_id", reduce=True
+    )
     gr.do_transformations_sql()
     _teardown_sqlite(conn)
     assert len(gr) == 2
 
 
-
 def test_sql_graph_auto_fe():
     conn = _setup_sqlite()
-    cust = SQLNode(fpath='cust',
-                pk='id',
-                prefix='cust',
-                client=conn,
-                compute_layer=ComputeLayerEnum.sqlite,
-                columns=['id','name'])
+    cust = SQLNode(
+        fpath="cust",
+        pk="id",
+        prefix="cust",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        columns=["id", "name"],
+    )
 
-    notif = SQLNode(fpath='notifications',
-                    prefix='not',
-                    pk='id',
-                    client=conn,
-                    compute_layer=ComputeLayerEnum.sqlite,
-                    columns=['id','customer_id','ts'],
-                    date_key='ts')
+    notif = SQLNode(
+        fpath="notifications",
+        prefix="not",
+        pk="id",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        columns=["id", "customer_id", "ts"],
+        date_key="ts",
+    )
 
-    ni = SQLNode(fpath='notification_interactions',
-                    prefix='ni',
-                    pk='id',
-                    client=conn,
-                    compute_layer=ComputeLayerEnum.sqlite,
-                    columns=['id','notification_id','interaction_type_id','ts'],
-                    date_key='ts')
+    ni = SQLNode(
+        fpath="notification_interactions",
+        prefix="ni",
+        pk="id",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        columns=["id", "notification_id", "interaction_type_id", "ts"],
+        date_key="ts",
+    )
 
-    order = SQLNode(fpath='orders',
-                   pk='id',
-                   prefix='ord',
-                   client=conn,
-                   compute_layer=ComputeLayerEnum.sqlite,
-                   columns=['id','customer_id','ts','amount','type','is_online','is_store'],
-                    date_key='ts')
+    order = SQLNode(
+        fpath="orders",
+        pk="id",
+        prefix="ord",
+        client=conn,
+        compute_layer=ComputeLayerEnum.sqlite,
+        columns=["id", "customer_id", "ts", "amount", "type", "is_online", "is_store"],
+        date_key="ts",
+    )
 
     gr = GraphReduce(
-        name='sql_autofe',
+        name="sql_autofe",
         parent_node=cust,
         # Cut date for filtering.
         cut_date=datetime.datetime(2023, 6, 30),
@@ -1977,8 +2540,8 @@ def test_sql_graph_auto_fe():
         compute_period_val=730,
         # Label parameters.
         label_node=order,
-        label_field='id',
-        label_operation='bool',
+        label_field="id",
+        label_operation="bool",
         label_period_unit=PeriodUnit.day,
         label_period_val=90,
         compute_layer=ComputeLayerEnum.sqlite,
@@ -1989,7 +2552,7 @@ def test_sql_graph_auto_fe():
         auto_feature_hops_back=3,
         auto_feature_hops_front=1,
         sql_client=conn,
-        dry=False
+        dry=False,
     )
     gr.add_node(cust)
     gr.add_node(order)
@@ -1997,34 +2560,22 @@ def test_sql_graph_auto_fe():
     gr.add_node(ni)
 
     gr.add_entity_edge(
-        cust,
-        notif,
-        parent_key='id',
-        relation_key='customer_id',
-        reduce=True
+        cust, notif, parent_key="id", relation_key="customer_id", reduce=True
     )
 
     gr.add_entity_edge(
-        notif,
-        ni,
-        parent_key='id',
-        relation_key='notification_id',
-        reduce=True
+        notif, ni, parent_key="id", relation_key="notification_id", reduce=True
     )
 
     gr.add_entity_edge(
-        cust,
-        order,
-        parent_key='id',
-        relation_key='customer_id',
-        reduce=True
+        cust, order, parent_key="id", relation_key="customer_id", reduce=True
     )
-    gr.plot_graph('cust_graph.html')
+    gr.plot_graph("cust_graph.html")
     gr.do_transformations_sql()
     for node in gr.nodes():
         print(node._temp_refs)
     d = pd.read_sql_query(f"select * from {gr.parent_node._cur_data_ref}", conn)
-    d.to_csv('sql_df_out.csv')
+    d.to_csv("sql_df_out.csv")
     ic(d.columns)
     ic(d)
     _teardown_sqlite(conn)
@@ -2035,58 +2586,77 @@ def test_train_false_skips_custom_labels_pandas():
     class ScoreCustNode(GraphReduceNode):
         def do_filters(self):
             pass
+
         def do_annotate(self):
             pass
+
         def do_normalize(self):
             pass
+
         def do_reduce(self, reduce_key):
             pass
+
         def do_labels(self, reduce_key):
             pass
+
         def do_post_join_annotate(self):
             pass
 
     class ScoreOrderNode(GraphReduceNode):
         def do_filters(self):
             pass
+
         def do_annotate(self):
             pass
+
         def do_normalize(self):
             pass
+
         def do_reduce(self, reduce_key):
-            return self.prep_for_features().groupby(self.colabbr(reduce_key)).agg(**{
-                self.colabbr("num_orders"): pd.NamedAgg(column=self.colabbr(self.pk), aggfunc="count")
-            }).reset_index()
+            return (
+                self.prep_for_features()
+                .groupby(self.colabbr(reduce_key))
+                .agg(
+                    **{
+                        self.colabbr("num_orders"): pd.NamedAgg(
+                            column=self.colabbr(self.pk), aggfunc="count"
+                        )
+                    }
+                )
+                .reset_index()
+            )
+
         def do_labels(self, reduce_key):
             raise AssertionError("do_labels should not run when train=False")
+
         def do_post_join_annotate(self):
             pass
 
     cust = ScoreCustNode(
-        fpath=os.path.join(data_path, 'cust.csv'),
-        fmt='csv',
-        pk='id',
-        prefix='cust',
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        pk="id",
+        prefix="cust",
         compute_layer=ComputeLayerEnum.pandas,
         date_key=None,
     )
     orders = ScoreOrderNode(
-        fpath=os.path.join(data_path, 'orders.csv'),
-        fmt='csv',
-        pk='id',
-        prefix='ord',
+        fpath=os.path.join(data_path, "orders.csv"),
+        fmt="csv",
+        pk="id",
+        prefix="ord",
         compute_layer=ComputeLayerEnum.pandas,
-        date_key='ts',
+        date_key="ts",
     )
 
     gr = GraphReduce(
-        name='score_without_labels_pandas',
+        name="score_without_labels_pandas",
         parent_node=cust,
         compute_layer=ComputeLayerEnum.pandas,
         cut_date=datetime.datetime(2023, 6, 30),
         label_node=orders,
-        label_field='id',
-        label_operation='count',
+        label_field="id",
+        label_operation="count",
         label_period_unit=PeriodUnit.day,
         label_period_val=30,
         train=False,
@@ -2096,9 +2666,9 @@ def test_train_false_skips_custom_labels_pandas():
     gr.add_entity_edge(
         parent_node=cust,
         relation_node=orders,
-        parent_key='id',
-        relation_key='customer_id',
-        relation_type='parent_child',
+        parent_key="id",
+        relation_key="customer_id",
+        relation_type="parent_child",
         reduce=True,
     )
 
@@ -2111,25 +2681,28 @@ def test_train_false_skips_custom_labels_pandas():
 def test_sql_op_execution_log_by_method():
     conn = _setup_sqlite()
     order = SQLNode(
-        fpath='orders',
-        pk='id',
-        prefix='ord',
+        fpath="orders",
+        pk="id",
+        prefix="ord",
         client=conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts', 'amount'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts", "amount"],
+        date_key="ts",
     )
 
     cust = SQLNode(
-        fpath='cust',
-        pk='id',
-        prefix='cust',
+        fpath="cust",
+        pk="id",
+        prefix="cust",
         client=conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'name'],
+        columns=["id", "name"],
         do_post_join_annotate_ops=[
             sqlop(optype=SQLOpType.select, opval="*"),
-            sqlop(optype=SQLOpType.select, opval="case when ord_id_label > 0 then 1 else 0 end as has_order_label"),
+            sqlop(
+                optype=SQLOpType.select,
+                opval="case when ord_id_label > 0 then 1 else 0 end as has_order_label",
+            ),
         ],
         do_post_join_filters_ops=[
             sqlop(optype=SQLOpType.where, opval="cust_id >= 1"),
@@ -2138,13 +2711,13 @@ def test_sql_op_execution_log_by_method():
     )
 
     notif = SQLNode(
-        fpath='notifications',
-        prefix='not',
-        pk='id',
+        fpath="notifications",
+        prefix="not",
+        pk="id",
         client=conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts"],
+        date_key="ts",
         do_reduce_ops=[
             sqlop(optype=SQLOpType.aggfunc, opval="count(*) as not_num_notifications"),
             sqlop(optype=SQLOpType.agg, opval="not_customer_id"),
@@ -2152,14 +2725,14 @@ def test_sql_op_execution_log_by_method():
     )
 
     gr = GraphReduce(
-        name='sql_op_execution_log',
+        name="sql_op_execution_log",
         parent_node=cust,
         cut_date=datetime.datetime(2023, 6, 30),
         compute_period_unit=PeriodUnit.day,
         compute_period_val=730,
         label_node=order,
-        label_field='id',
-        label_operation='bool',
+        label_field="id",
+        label_operation="bool",
         label_period_unit=PeriodUnit.day,
         label_period_val=90,
         compute_layer=ComputeLayerEnum.sqlite,
@@ -2177,27 +2750,21 @@ def test_sql_op_execution_log_by_method():
     gr.add_node(notif)
 
     gr.add_entity_edge(
-        cust,
-        notif,
-        parent_key='id',
-        relation_key='customer_id',
-        reduce=True
+        cust, notif, parent_key="id", relation_key="customer_id", reduce=True
     )
     gr.add_entity_edge(
-        cust,
-        order,
-        parent_key='id',
-        relation_key='customer_id',
-        reduce=True
+        cust, order, parent_key="id", relation_key="customer_id", reduce=True
     )
 
     gr.do_transformations_sql()
 
     sql_ops_by_method = gr.get_executed_sqlops_by_method(exclude_date_filters=True)
-    ic({
-        method: [f"{op.optype.value}:{op.opval}" for op in ops]
-        for method, ops in sql_ops_by_method.items()
-    })
+    ic(
+        {
+            method: [f"{op.optype.value}:{op.opval}" for op in ops]
+            for method, ops in sql_ops_by_method.items()
+        }
+    )
 
     assert "do_data" in sql_ops_by_method
     assert "do_reduce" in sql_ops_by_method
@@ -2205,9 +2772,7 @@ def test_sql_op_execution_log_by_method():
     assert "do_post_join_annotate" in sql_ops_by_method
     assert "do_post_join_filters" in sql_ops_by_method
     assert all(
-        isinstance(op, sqlop)
-        for ops in sql_ops_by_method.values()
-        for op in ops
+        isinstance(op, sqlop) for ops in sql_ops_by_method.values() for op in ops
     )
     assert not any(
         op.optype == SQLOpType.where and "2023-06-30" in op.opval
@@ -2225,32 +2790,32 @@ def test_train_false_skips_custom_labels_sql():
             raise AssertionError("do_labels should not run when train=False")
 
     cust = SQLNode(
-        fpath='cust',
-        pk='id',
-        prefix='cust',
+        fpath="cust",
+        pk="id",
+        prefix="cust",
         client=conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'name'],
+        columns=["id", "name"],
     )
     orders = ScoreOrderNode(
-        fpath='orders',
-        pk='id',
-        prefix='ord',
+        fpath="orders",
+        pk="id",
+        prefix="ord",
         client=conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts', 'amount'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts", "amount"],
+        date_key="ts",
     )
 
     gr = GraphReduce(
-        name='score_without_labels_sql',
+        name="score_without_labels_sql",
         parent_node=cust,
         cut_date=datetime.datetime(2023, 6, 30),
         compute_period_unit=PeriodUnit.day,
         compute_period_val=730,
         label_node=orders,
-        label_field='id',
-        label_operation='bool',
+        label_field="id",
+        label_operation="bool",
         label_period_unit=PeriodUnit.day,
         label_period_val=90,
         compute_layer=ComputeLayerEnum.sqlite,
@@ -2261,7 +2826,9 @@ def test_train_false_skips_custom_labels_sql():
     )
     gr.add_node(cust)
     gr.add_node(orders)
-    gr.add_entity_edge(cust, orders, parent_key='id', relation_key='customer_id', reduce=True)
+    gr.add_entity_edge(
+        cust, orders, parent_key="id", relation_key="customer_id", reduce=True
+    )
 
     gr.do_transformations_sql()
 
@@ -2302,7 +2869,9 @@ def test_athena_execute_query_raises_on_failed_state():
         columns=["id"],
     )
 
-    with pytest.raises(Exception, match="Query select missing_column FAILED: missing column"):
+    with pytest.raises(
+        Exception, match="Query select missing_column FAILED: missing column"
+    ):
         node.execute_query("select missing_column")
 
 
@@ -2332,47 +2901,50 @@ def test_apply_frozen_execution_plan():
     train_cut_date = datetime.datetime(2023, 6, 30)
 
     original_train_order = SQLNode(
-        fpath='orders',
-        pk='id',
-        prefix='ord',
+        fpath="orders",
+        pk="id",
+        prefix="ord",
         client=original_train_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts', 'amount'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts", "amount"],
+        date_key="ts",
     )
 
     original_train_cust = SQLNode(
-        fpath='cust',
-        pk='id',
-        prefix='cust',
+        fpath="cust",
+        pk="id",
+        prefix="cust",
         client=original_train_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'name'],
+        columns=["id", "name"],
         do_post_join_annotate_ops=[
             sqlop(optype=SQLOpType.select, opval="*"),
-            sqlop(optype=SQLOpType.select, opval="case when ord_id_label > 0 then 1 else 0 end as has_order_label"),
+            sqlop(
+                optype=SQLOpType.select,
+                opval="case when ord_id_label > 0 then 1 else 0 end as has_order_label",
+            ),
         ],
         do_post_join_annotate_requires=[original_train_order],
     )
     original_train_notif = SQLNode(
-        fpath='notifications',
-        prefix='not',
-        pk='id',
+        fpath="notifications",
+        prefix="not",
+        pk="id",
         client=original_train_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts"],
+        date_key="ts",
     )
 
     original_train_gr = GraphReduce(
-        name='sql_freeze_original_train',
+        name="sql_freeze_original_train",
         parent_node=original_train_cust,
         cut_date=train_cut_date,
         compute_period_unit=PeriodUnit.day,
         compute_period_val=730,
         label_node=original_train_order,
-        label_field='id',
-        label_operation='bool',
+        label_field="id",
+        label_operation="bool",
         label_period_unit=PeriodUnit.day,
         label_period_val=90,
         compute_layer=ComputeLayerEnum.sqlite,
@@ -2389,58 +2961,76 @@ def test_apply_frozen_execution_plan():
     original_train_gr.add_node(original_train_cust)
     original_train_gr.add_node(original_train_order)
     original_train_gr.add_node(original_train_notif)
-    original_train_gr.add_entity_edge(original_train_cust, original_train_notif, parent_key='id', relation_key='customer_id', reduce=True)
-    original_train_gr.add_entity_edge(original_train_cust, original_train_order, parent_key='id', relation_key='customer_id', reduce=True)
+    original_train_gr.add_entity_edge(
+        original_train_cust,
+        original_train_notif,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
+    original_train_gr.add_entity_edge(
+        original_train_cust,
+        original_train_order,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
     original_train_gr.do_transformations_sql()
-    original_train_df = pd.read_sql_query(
-        f"select * from {original_train_gr.parent_node._cur_data_ref}",
-        original_train_conn,
-    ).sort_values("cust_id").reset_index(drop=True)
+    original_train_df = (
+        pd.read_sql_query(
+            f"select * from {original_train_gr.parent_node._cur_data_ref}",
+            original_train_conn,
+        )
+        .sort_values("cust_id")
+        .reset_index(drop=True)
+    )
     frozen_plan = original_train_gr.freeze_execution_plan()
-    ic({
-        method: [f"{op.optype.value}:{op.opval}" for op in ops]
-        for method, ops in frozen_plan["ops_by_method"].items()
-    })
+    ic(
+        {
+            method: [f"{op.optype.value}:{op.opval}" for op in ops]
+            for method, ops in frozen_plan["ops_by_method"].items()
+        }
+    )
     _teardown_sqlite(original_train_conn)
 
     replay_train_conn = _setup_sqlite()
     replay_train_order = SQLNode(
-        fpath='orders',
-        pk='id',
-        prefix='ord',
+        fpath="orders",
+        pk="id",
+        prefix="ord",
         client=replay_train_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts', 'amount'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts", "amount"],
+        date_key="ts",
     )
     replay_train_cust = SQLNode(
-        fpath='cust',
-        pk='id',
-        prefix='cust',
+        fpath="cust",
+        pk="id",
+        prefix="cust",
         client=replay_train_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'name'],
+        columns=["id", "name"],
         do_post_join_annotate_requires=[replay_train_order],
     )
     replay_train_notif = SQLNode(
-        fpath='notifications',
-        prefix='not',
-        pk='id',
+        fpath="notifications",
+        prefix="not",
+        pk="id",
         client=replay_train_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts"],
+        date_key="ts",
     )
 
     replay_train_gr = GraphReduce(
-        name='sql_freeze_replay_train',
+        name="sql_freeze_replay_train",
         parent_node=replay_train_cust,
         cut_date=train_cut_date,
         compute_period_unit=PeriodUnit.day,
         compute_period_val=730,
         label_node=replay_train_order,
-        label_field='id',
-        label_operation='bool',
+        label_field="id",
+        label_operation="bool",
         label_period_unit=PeriodUnit.day,
         label_period_val=90,
         compute_layer=ComputeLayerEnum.sqlite,
@@ -2456,20 +3046,38 @@ def test_apply_frozen_execution_plan():
     replay_train_gr.add_node(replay_train_cust)
     replay_train_gr.add_node(replay_train_order)
     replay_train_gr.add_node(replay_train_notif)
-    replay_train_gr.add_entity_edge(replay_train_cust, replay_train_notif, parent_key='id', relation_key='customer_id', reduce=True)
-    replay_train_gr.add_entity_edge(replay_train_cust, replay_train_order, parent_key='id', relation_key='customer_id', reduce=True)
+    replay_train_gr.add_entity_edge(
+        replay_train_cust,
+        replay_train_notif,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
+    replay_train_gr.add_entity_edge(
+        replay_train_cust,
+        replay_train_order,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
     replay_train_gr.apply_execution_plan(frozen_plan)
     replay_train_gr.do_transformations_sql()
 
-    replay_train_df = pd.read_sql_query(
-        f"select * from {replay_train_gr.parent_node._cur_data_ref}",
-        replay_train_conn,
-    ).sort_values("cust_id").reset_index(drop=True)
+    replay_train_df = (
+        pd.read_sql_query(
+            f"select * from {replay_train_gr.parent_node._cur_data_ref}",
+            replay_train_conn,
+        )
+        .sort_values("cust_id")
+        .reset_index(drop=True)
+    )
     replay_train_sql_ops_by_method = replay_train_gr.get_executed_sqlops_by_method()
-    ic({
-        method: [f"{op.optype.value}:{op.opval}" for op in ops]
-        for method, ops in replay_train_sql_ops_by_method.items()
-    })
+    ic(
+        {
+            method: [f"{op.optype.value}:{op.opval}" for op in ops]
+            for method, ops in replay_train_sql_ops_by_method.items()
+        }
+    )
 
     pd.testing.assert_frame_equal(
         original_train_df.sort_index(axis=1),
@@ -2482,40 +3090,40 @@ def test_apply_frozen_execution_plan():
 
     score_conn = _setup_sqlite()
     score_cust = SQLNode(
-        fpath='cust',
-        pk='id',
-        prefix='cust',
+        fpath="cust",
+        pk="id",
+        prefix="cust",
         client=score_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'name'],
+        columns=["id", "name"],
     )
     score_order = SQLNode(
-        fpath='orders',
-        pk='id',
-        prefix='ord',
+        fpath="orders",
+        pk="id",
+        prefix="ord",
         client=score_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts', 'amount'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts", "amount"],
+        date_key="ts",
     )
     score_notif = SQLNode(
-        fpath='notifications',
-        prefix='not',
-        pk='id',
+        fpath="notifications",
+        prefix="not",
+        pk="id",
         client=score_conn,
         compute_layer=ComputeLayerEnum.sqlite,
-        columns=['id', 'customer_id', 'ts'],
-        date_key='ts',
+        columns=["id", "customer_id", "ts"],
+        date_key="ts",
     )
 
     score_gr = GraphReduce(
-        name='sql_freeze_score',
+        name="sql_freeze_score",
         parent_node=score_cust,
         compute_period_unit=PeriodUnit.day,
         compute_period_val=730,
         label_node=score_order,
-        label_field='id',
-        label_operation='bool',
+        label_field="id",
+        label_operation="bool",
         label_period_unit=PeriodUnit.day,
         label_period_val=90,
         compute_layer=ComputeLayerEnum.sqlite,
@@ -2532,24 +3140,42 @@ def test_apply_frozen_execution_plan():
     score_gr.add_node(score_cust)
     score_gr.add_node(score_order)
     score_gr.add_node(score_notif)
-    score_gr.add_entity_edge(score_cust, score_notif, parent_key='id', relation_key='customer_id', reduce=True)
-    score_gr.add_entity_edge(score_cust, score_order, parent_key='id', relation_key='customer_id', reduce=True)
+    score_gr.add_entity_edge(
+        score_cust,
+        score_notif,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
+    score_gr.add_entity_edge(
+        score_cust,
+        score_order,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
     score_gr.apply_execution_plan(frozen_plan)
     score_gr.do_transformations_sql()
 
     score_sql_ops_by_method = score_gr.get_executed_sqlops_by_method()
-    ic({
-        method: [f"{op.optype.value}:{op.opval}" for op in ops]
-        for method, ops in score_sql_ops_by_method.items()
-    })
+    ic(
+        {
+            method: [f"{op.optype.value}:{op.opval}" for op in ops]
+            for method, ops in score_sql_ops_by_method.items()
+        }
+    )
 
     assert "do_reduce" in score_sql_ops_by_method
     assert "do_labels" not in score_sql_ops_by_method
     assert "do_post_join_annotate" not in score_sql_ops_by_method
-    score_df = pd.read_sql_query(
-        f"select * from {score_gr.parent_node._cur_data_ref}",
-        score_conn,
-    ).sort_values("cust_id").reset_index(drop=True)
+    score_df = (
+        pd.read_sql_query(
+            f"select * from {score_gr.parent_node._cur_data_ref}",
+            score_conn,
+        )
+        .sort_values("cust_id")
+        .reset_index(drop=True)
+    )
     assert len(score_df) == 4
     assert not any(
         "2023-06-30" in op.opval
@@ -2563,41 +3189,41 @@ def test_apply_frozen_execution_plan():
 @pytest.mark.skip(reason="Not implemented yet")
 def test_daft_graph():
     cust_node = DynamicNode(
-            fpath=os.path.join(data_path, 'cust.csv'),
-            fmt='csv',
-            prefix='cust',
-            date_key=None,
-            pk='id',
-            )
+        fpath=os.path.join(data_path, "cust.csv"),
+        fmt="csv",
+        prefix="cust",
+        date_key=None,
+        pk="id",
+    )
 
     order_node = DynamicNode(
-            fpath=os.path.join(data_path, 'orders.csv'),
-            fmt='csv',
-            prefix='ord',
-            date_key='ts',
-            pk='id',
-            )
+        fpath=os.path.join(data_path, "orders.csv"),
+        fmt="csv",
+        prefix="ord",
+        date_key="ts",
+        pk="id",
+    )
 
     gr = GraphReduce(
-            parent_node=cust_node,
-            fmt='csv',
-            compute_layer=ComputeLayerEnum.daft,
-            auto_features=True,
-            compute_period_val=730
-            )
+        parent_node=cust_node,
+        fmt="csv",
+        compute_layer=ComputeLayerEnum.daft,
+        auto_features=True,
+        compute_period_val=730,
+    )
     gr.add_node(cust_node)
     gr.add_node(order_node)
 
     assert len(gr) == 2
 
     gr.add_entity_edge(
-            parent_node=cust_node,
-            relation_node=order_node,
-            parent_key='id',
-            relation_key='customer_id',
-            relation_type='parent_child',
-            reduce=True
-            )
+        parent_node=cust_node,
+        relation_node=order_node,
+        parent_key="id",
+        relation_key="customer_id",
+        relation_type="parent_child",
+        reduce=True,
+    )
 
     gr.do_transformations()
     print(gr.parent_node.df.show(10))
@@ -2612,16 +3238,16 @@ def test_duckdb_node():
     con = duckdb.connect()
 
     node = DuckdbNode(
-            #fpath=os.path.join(data_path, 'cust.csv'),
-            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
-            pk='id',
-            prefix='cust',
-            compute_layer=ComputeLayerEnum.duckdb,
-            client=con,
-            columns=['id', 'name'],
-            # Needed for filesystem tables.
-            table_name='customer'
-            )
+        # fpath=os.path.join(data_path, 'cust.csv'),
+        fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+        pk="id",
+        prefix="cust",
+        compute_layer=ComputeLayerEnum.duckdb,
+        client=con,
+        columns=["id", "name"],
+        # Needed for filesystem tables.
+        table_name="customer",
+    )
     print(node.build_query(node.do_data()))
     con.close()
     assert node.do_data() != None
@@ -2631,22 +3257,22 @@ def test_duckdb_node():
 def test_duckdb_graph_noreduce():
     con = duckdb.connect()
     cust = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
-            prefix='cust',
-            pk='id',
-            columns=['id','name'],
-            table_name='customer'
-            )
+        fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+        prefix="cust",
+        pk="id",
+        columns=["id", "name"],
+        table_name="customer",
+    )
     orders = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
-            prefix='ord',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts'],
-            table_name='orders'
-            )
+        fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+        prefix="ord",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts"],
+        table_name="orders",
+    )
     gr = GraphReduce(
-        name='duckdb test',
+        name="duckdb test",
         parent_node=cust,
         compute_period_val=365,
         compute_period_unit=PeriodUnit.day,
@@ -2656,11 +3282,17 @@ def test_duckdb_graph_noreduce():
         label_field=None,
         label_op=None,
         compute_layer=ComputeLayerEnum.duckdb,
-        sql_client=con
-        )
+        sql_client=con,
+    )
     gr.add_node(cust)
     gr.add_node(orders)
-    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=False)
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=orders,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=False,
+    )
     gr.do_transformations_sql()
     res = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
     ic(res)
@@ -2672,22 +3304,22 @@ def test_duckdb_graph_noreduce():
 def test_duckdb_graph_reduce():
     con = duckdb.connect()
     cust = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
-            prefix='cust',
-            pk='id',
-            columns=['id','name'],
-            table_name='customer'
-            )
+        fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+        prefix="cust",
+        pk="id",
+        columns=["id", "name"],
+        table_name="customer",
+    )
     orders = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
-            prefix='ord',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts', 'amount'],
-            table_name='orders'
-            )
+        fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+        prefix="ord",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts", "amount"],
+        table_name="orders",
+    )
     gr = GraphReduce(
-        name='duckdb test',
+        name="duckdb test",
         parent_node=cust,
         compute_period_val=365,
         compute_period_unit=PeriodUnit.day,
@@ -2695,16 +3327,22 @@ def test_duckdb_graph_reduce():
         auto_features=True,
         auto_labels=True,
         label_node=orders,
-        label_field='id',
-        label_operation='count',
+        label_field="id",
+        label_operation="count",
         label_period_val=90,
         label_period_unit=PeriodUnit.day,
         compute_layer=ComputeLayerEnum.duckdb,
-        sql_client=con
-        )
+        sql_client=con,
+    )
     gr.add_node(cust)
     gr.add_node(orders)
-    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=True)
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=orders,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
     gr.do_transformations_sql()
     res = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
 
@@ -2754,7 +3392,7 @@ def test_date_node_propagates_through_undated_intermediate_sql_node():
                 SELECT
                     customer_id AS cd_customer_id,
                     min(ts) AS cd_first_order_date
-                FROM '{os.path.join(data_path, 'orders.csv')}'
+                FROM '{os.path.join(data_path, "orders.csv")}'
                 GROUP BY customer_id
             """,
         ),
@@ -2810,26 +3448,26 @@ def test_date_node_propagates_through_undated_intermediate_sql_node():
 def test_duckdb_graph_raises_on_erroneous_sqlop():
     con = duckdb.connect()
     cust = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
-            prefix='cust',
-            pk='id',
-            columns=['id','name'],
-            table_name='customer',
-            do_annotate_ops=[
-                sqlop(optype=SQLOpType.select, opval="*"),
-                sqlop(optype=SQLOpType.select, opval="missing_column as bad_col"),
-                ]
-            )
+        fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+        prefix="cust",
+        pk="id",
+        columns=["id", "name"],
+        table_name="customer",
+        do_annotate_ops=[
+            sqlop(optype=SQLOpType.select, opval="*"),
+            sqlop(optype=SQLOpType.select, opval="missing_column as bad_col"),
+        ],
+    )
     orders = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
-            prefix='ord',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts', 'amount'],
-            table_name='orders'
-            )
+        fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+        prefix="ord",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts", "amount"],
+        table_name="orders",
+    )
     gr = GraphReduce(
-        name='duckdb bad sqlop test',
+        name="duckdb bad sqlop test",
         parent_node=cust,
         compute_period_val=365,
         compute_period_unit=PeriodUnit.day,
@@ -2837,16 +3475,22 @@ def test_duckdb_graph_raises_on_erroneous_sqlop():
         auto_features=True,
         auto_labels=True,
         label_node=orders,
-        label_field='id',
-        label_operation='count',
+        label_field="id",
+        label_operation="count",
         label_period_val=90,
         label_period_unit=PeriodUnit.day,
         compute_layer=ComputeLayerEnum.duckdb,
-        sql_client=con
-        )
+        sql_client=con,
+    )
     gr.add_node(cust)
     gr.add_node(orders)
-    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=True)
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=orders,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
 
     try:
         with pytest.raises(Exception, match="missing_column"):
@@ -2891,51 +3535,80 @@ def test_duckdb_inference_sample_prefers_and_backfills_populated_rows():
         con.close()
 
 
+def test_duckdb_inference_sample_breaks_population_ties_by_primary_key():
+    con = duckdb.connect()
+    try:
+        con.sql("CREATE TABLE tied_sample (id INTEGER, category VARCHAR)")
+        con.sql("INSERT INTO tied_sample VALUES (4, 'd'), (2, 'b'), (3, 'c'), (1, 'a')")
+        node = DuckdbNode(
+            fpath="tied_sample",
+            prefix="ts",
+            pk="id",
+            compute_layer=ComputeLayerEnum.duckdb,
+            client=con,
+            columns=["id", "category"],
+        )
+
+        first = node.get_inference_sample(n=2)
+        second = node.get_inference_sample(n=2)
+
+        assert first["id"].tolist() == [1, 2]
+        assert second.equals(first)
+    finally:
+        con.close()
+
+
 def test_duckdb_join_deps():
     con = duckdb.connect()
     orders = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
-            prefix='ord',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts', 'amount'],
-            table_name='orders',
-            do_reduce_ops=[
-                sqlop(optype=SQLOpType.agg, opval="ord_customer_id"),
-                sqlop(optype=SQLOpType.aggfunc, opval="count(ord_id) as ord_num_orders")
-                ]
-            )
+        fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+        prefix="ord",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts", "amount"],
+        table_name="orders",
+        do_reduce_ops=[
+            sqlop(optype=SQLOpType.agg, opval="ord_customer_id"),
+            sqlop(optype=SQLOpType.aggfunc, opval="count(ord_id) as ord_num_orders"),
+        ],
+    )
     notif = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'notifications.csv')}'",
-            prefix='notif',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts'],
-            table_name='notifications',
-            do_reduce_ops=[
-                sqlop(optype=SQLOpType.agg, opval="notif_customer_id"),
-                sqlop(optype=SQLOpType.aggfunc, opval="count(notif_id) as notif_num_notifications")
-                ]
-            )
+        fpath=f"'{os.path.join(data_path, 'notifications.csv')}'",
+        prefix="notif",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts"],
+        table_name="notifications",
+        do_reduce_ops=[
+            sqlop(optype=SQLOpType.agg, opval="notif_customer_id"),
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval="count(notif_id) as notif_num_notifications",
+            ),
+        ],
+    )
     cust = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
-            prefix='cust',
-            pk='id',
-            columns=['id','name'],
-            table_name='customer',
-            do_post_join_annotate_ops=[
-                sqlop(optype=SQLOpType.select, opval="*"),
-                sqlop(optype=SQLOpType.select, opval="notif_num_notifications / ord_num_orders as notifs_per_order")
-                ],
-            do_post_join_filters_ops=[
-                sqlop(optype=SQLOpType.where, opval="notifs_per_order >= 2")
-                ],
-            do_post_join_annotate_requires=[orders,notif],
-            do_post_join_filters_requires=[orders, notif]
-            )
+        fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+        prefix="cust",
+        pk="id",
+        columns=["id", "name"],
+        table_name="customer",
+        do_post_join_annotate_ops=[
+            sqlop(optype=SQLOpType.select, opval="*"),
+            sqlop(
+                optype=SQLOpType.select,
+                opval="notif_num_notifications / ord_num_orders as notifs_per_order",
+            ),
+        ],
+        do_post_join_filters_ops=[
+            sqlop(optype=SQLOpType.where, opval="notifs_per_order >= 2")
+        ],
+        do_post_join_annotate_requires=[orders, notif],
+        do_post_join_filters_requires=[orders, notif],
+    )
 
     gr = GraphReduce(
-        name='duckdb test',
+        name="duckdb test",
         parent_node=cust,
         compute_period_val=365,
         compute_period_unit=PeriodUnit.day,
@@ -2943,18 +3616,30 @@ def test_duckdb_join_deps():
         auto_features=True,
         auto_labels=True,
         label_node=orders,
-        label_field='id',
-        label_operation='count',
+        label_field="id",
+        label_operation="count",
         label_period_val=90,
         label_period_unit=PeriodUnit.day,
         compute_layer=ComputeLayerEnum.duckdb,
-        sql_client=con
-        )
+        sql_client=con,
+    )
     gr.add_node(cust)
     gr.add_node(orders)
     gr.add_node(notif)
-    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=True)
-    gr.add_entity_edge(parent_node=cust,relation_node=notif,parent_key='id',relation_key='customer_id',reduce=True)
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=orders,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=notif,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
     gr.do_transformations_sql()
     res = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
     ic(res)
@@ -2966,48 +3651,54 @@ def test_duckdb_join_deps():
 def test_duckdb_join_deps2():
     con = duckdb.connect()
     orders = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
-            prefix='ord',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts', 'amount'],
-            table_name='orders',
-            do_reduce_ops=[
-                sqlop(optype=SQLOpType.agg, opval="ord_customer_id"),
-                sqlop(optype=SQLOpType.aggfunc, opval="count(ord_id) as ord_num_orders")
-                ]
-            )
+        fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+        prefix="ord",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts", "amount"],
+        table_name="orders",
+        do_reduce_ops=[
+            sqlop(optype=SQLOpType.agg, opval="ord_customer_id"),
+            sqlop(optype=SQLOpType.aggfunc, opval="count(ord_id) as ord_num_orders"),
+        ],
+    )
     notif = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'notifications.csv')}'",
-            prefix='notif',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts'],
-            table_name='notifications',
-            do_reduce_ops=[
-                sqlop(optype=SQLOpType.agg, opval="notif_customer_id"),
-                sqlop(optype=SQLOpType.aggfunc, opval="count(notif_id) as notif_num_notifications")
-                ]
-            )
+        fpath=f"'{os.path.join(data_path, 'notifications.csv')}'",
+        prefix="notif",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts"],
+        table_name="notifications",
+        do_reduce_ops=[
+            sqlop(optype=SQLOpType.agg, opval="notif_customer_id"),
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval="count(notif_id) as notif_num_notifications",
+            ),
+        ],
+    )
     cust = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
-            prefix='cust',
-            pk='id',
-            columns=['id','name'],
-            table_name='customer',
-            do_post_join_annotate_ops=[
-                sqlop(optype=SQLOpType.select, opval="*"),
-                sqlop(optype=SQLOpType.select, opval="case when ord_num_orders > 2 then 1 else 0 end as had_prior_orders")
-                ],
-            #do_post_join_filters_ops=[
-            #    sqlop(optype=SQLOpType.where, opval="notifs_per_order >= 2")
-            #    ],
-            do_post_join_annotate_requires=[orders],#,notif],
-            #do_post_join_filters_requires=[orders, notif]
-            )
+        fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+        prefix="cust",
+        pk="id",
+        columns=["id", "name"],
+        table_name="customer",
+        do_post_join_annotate_ops=[
+            sqlop(optype=SQLOpType.select, opval="*"),
+            sqlop(
+                optype=SQLOpType.select,
+                opval="case when ord_num_orders > 2 then 1 else 0 end as had_prior_orders",
+            ),
+        ],
+        # do_post_join_filters_ops=[
+        #    sqlop(optype=SQLOpType.where, opval="notifs_per_order >= 2")
+        #    ],
+        do_post_join_annotate_requires=[orders],  # ,notif],
+        # do_post_join_filters_requires=[orders, notif]
+    )
 
     gr = GraphReduce(
-        name='duckdb test',
+        name="duckdb test",
         parent_node=cust,
         compute_period_val=365,
         compute_period_unit=PeriodUnit.day,
@@ -3015,77 +3706,100 @@ def test_duckdb_join_deps2():
         auto_features=True,
         auto_labels=True,
         label_node=orders,
-        label_field='id',
-        label_operation='count',
+        label_field="id",
+        label_operation="count",
         label_period_val=90,
         label_period_unit=PeriodUnit.day,
         compute_layer=ComputeLayerEnum.duckdb,
-        sql_client=con
-        )
+        sql_client=con,
+    )
     gr.add_node(cust)
     gr.add_node(orders)
     gr.add_node(notif)
-    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=True)
-    gr.add_entity_edge(parent_node=cust,relation_node=notif,parent_key='id',relation_key='customer_id',reduce=True)
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=orders,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=notif,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
     gr.do_transformations_sql()
     res = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
     ic(res)
     ic(res.columns)
     ic(res.shape)
-    assert res.shape == (4,8)
-
+    assert res.shape == (4, 8)
 
 
 def test_date_filters_on_agg():
     con = duckdb.connect()
-    cut_date=datetime.datetime(2023, 7, 1)
+    cut_date = datetime.datetime(2023, 7, 1)
     orders = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
-            prefix='ord',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts', 'amount'],
-            table_name='orders',
-            do_reduce_ops=[
-                sqlop(optype=SQLOpType.agg, opval="ord_customer_id"),
-                sqlop(optype=SQLOpType.aggfunc, opval="count(ord_id) as ord_num_orders"),
-                sqlop(optype=SQLOpType.aggfunc, opval="MAX(ord_ts) as ord_max_ts")
-                ]
-            )
+        fpath=f"'{os.path.join(data_path, 'orders.csv')}'",
+        prefix="ord",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts", "amount"],
+        table_name="orders",
+        do_reduce_ops=[
+            sqlop(optype=SQLOpType.agg, opval="ord_customer_id"),
+            sqlop(optype=SQLOpType.aggfunc, opval="count(ord_id) as ord_num_orders"),
+            sqlop(optype=SQLOpType.aggfunc, opval="MAX(ord_ts) as ord_max_ts"),
+        ],
+    )
     notif = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'notifications.csv')}'",
-            prefix='notif',
-            pk='id',
-            date_key='ts',
-            columns=['id','customer_id','ts'],
-            table_name='notifications',
-            do_reduce_ops=[
-                sqlop(optype=SQLOpType.agg, opval="notif_customer_id"),
-                sqlop(optype=SQLOpType.aggfunc, opval="count(notif_id) as notif_num_notifications"),
-                sqlop(optype=SQLOpType.aggfunc, opval="max(notif_ts) as notif_max_ts")
-                ]
-            )
+        fpath=f"'{os.path.join(data_path, 'notifications.csv')}'",
+        prefix="notif",
+        pk="id",
+        date_key="ts",
+        columns=["id", "customer_id", "ts"],
+        table_name="notifications",
+        do_reduce_ops=[
+            sqlop(optype=SQLOpType.agg, opval="notif_customer_id"),
+            sqlop(
+                optype=SQLOpType.aggfunc,
+                opval="count(notif_id) as notif_num_notifications",
+            ),
+            sqlop(optype=SQLOpType.aggfunc, opval="max(notif_ts) as notif_max_ts"),
+        ],
+    )
     cust = DuckdbNode(
-            fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
-            prefix='cust',
-            pk='id',
-            columns=['id','name'],
-            table_name='customer',
-            do_post_join_annotate_ops=[
-                sqlop(optype=SQLOpType.select, opval="*"),
-                sqlop(optype=SQLOpType.select, opval="case when ord_num_orders > 2 then 1 else 0 end as had_prior_orders"),
-                sqlop(optype=SQLOpType.select, opval=f"DATE_DIFF('DAY', ord_max_ts, '{str(cut_date)}') as time_since_order"),
-                sqlop(optype=SQLOpType.select, opval=f"DATE_DIFF('DAY', notif_max_ts, '{str(cut_date)}') as time_since_notif")
-                ],
-            #do_post_join_filters_ops=[
-            #    sqlop(optype=SQLOpType.where, opval="notifs_per_order >= 2")
-            #    ],
-            do_post_join_annotate_requires=[orders,notif]
-            #do_post_join_annotate_requires=[notif],#,notif],
-            #do_post_join_filters_requires=[orders, notif]
-            )
+        fpath=f"'{os.path.join(data_path, 'cust.csv')}'",
+        prefix="cust",
+        pk="id",
+        columns=["id", "name"],
+        table_name="customer",
+        do_post_join_annotate_ops=[
+            sqlop(optype=SQLOpType.select, opval="*"),
+            sqlop(
+                optype=SQLOpType.select,
+                opval="case when ord_num_orders > 2 then 1 else 0 end as had_prior_orders",
+            ),
+            sqlop(
+                optype=SQLOpType.select,
+                opval=f"DATE_DIFF('DAY', ord_max_ts, '{str(cut_date)}') as time_since_order",
+            ),
+            sqlop(
+                optype=SQLOpType.select,
+                opval=f"DATE_DIFF('DAY', notif_max_ts, '{str(cut_date)}') as time_since_notif",
+            ),
+        ],
+        # do_post_join_filters_ops=[
+        #    sqlop(optype=SQLOpType.where, opval="notifs_per_order >= 2")
+        #    ],
+        do_post_join_annotate_requires=[orders, notif],
+        # do_post_join_annotate_requires=[notif],#,notif],
+        # do_post_join_filters_requires=[orders, notif]
+    )
     gr = GraphReduce(
-        name='duckdb test',
+        name="duckdb test",
         parent_node=cust,
         compute_period_val=365,
         compute_period_unit=PeriodUnit.day,
@@ -3093,22 +3807,34 @@ def test_date_filters_on_agg():
         auto_features=True,
         auto_labels=True,
         label_node=orders,
-        label_field='id',
-        label_operation='count',
+        label_field="id",
+        label_operation="count",
         label_period_val=90,
         label_period_unit=PeriodUnit.day,
         compute_layer=ComputeLayerEnum.duckdb,
         sql_client=con,
-        date_filters_on_agg=True
-        )
+        date_filters_on_agg=True,
+    )
     ic(gr.params)
     gr.add_node(cust)
     gr.add_node(orders)
     gr.add_node(notif)
-    gr.add_entity_edge(parent_node=cust,relation_node=orders,parent_key='id',relation_key='customer_id',reduce=True)
-    gr.add_entity_edge(parent_node=cust,relation_node=notif,parent_key='id',relation_key='customer_id',reduce=True)
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=orders,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
+    gr.add_entity_edge(
+        parent_node=cust,
+        relation_node=notif,
+        parent_key="id",
+        relation_key="customer_id",
+        reduce=True,
+    )
     gr.do_transformations_sql()
     res = con.sql(f"select * from {gr.parent_node._cur_data_ref}").to_df()
     ic(res)
-    assert res[res['cust_id'] == 1].time_since_order.values[0] == 30
-    assert res[res['cust_id'] == 2].time_since_order.values[0] == 181
+    assert res[res["cust_id"] == 1].time_since_order.values[0] == 30
+    assert res[res["cust_id"] == 2].time_since_order.values[0] == 181

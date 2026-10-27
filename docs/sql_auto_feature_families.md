@@ -12,6 +12,7 @@ Only `base` is enabled by default. Every other family is opt-in.
 | --- | --- | --- |
 | `base` | How much activity occurred, and what are its basic summaries? | None |
 | `temporal` | How did numeric values differ across lookback windows? | `date_key` and `ts_periods` |
+| `state` | What were the latest values and the last N events? | `date_key` |
 | `sequence` | Was activity steady, recent, or bursty? | `date_key` and `ts_periods` |
 | `conditional` | What kinds of activity occurred? | Eligible categories or predicate annotations |
 | `episode` | How many rows and distinct events occurred? | A primary key for distinct-event counts |
@@ -33,8 +34,10 @@ events = DuckdbNode(
     prefix="evt",
     date_key="event_time",
     compute_layer=ComputeLayerEnum.duckdb,
-    feature_families=("base", "temporal", "sequence", "conditional"),
+    feature_families=("base", "temporal", "state", "sequence", "conditional"),
     ts_periods=(7, 30, 90, 365),
+    state_lags=(1, 2, 3, 5),
+    state_windows=(3, 5, 10),
     feature_family_max_columns=4,
     categorical_cardinality_threshold=20,
     categorical_top_k=5,
@@ -104,6 +107,47 @@ eligible values. Higher-cardinality columns are skipped.
 Text summaries are controlled independently by `auto_text_features`. They do
 not tokenize, embed, or call a language model.
 
+### Bounded numeric distributions in `base`
+
+SQL `base` now also emits numeric empirical-CDF summaries automatically. This
+does **not** add another family or another graph-search dimension. For each
+selected numeric payload it adds finite-value coverage and up to seven fractions
+of observed rows at or below frozen historical quantile thresholds. Unlike a
+mean, these summaries retain where mass lies within the value range.
+
+- At most `min(feature_family_max_columns, 16)` source columns are considered,
+  in the existing source/annotation order. Constant, binary, unobserved and
+  identifier-like inputs, declared keys/dates/context keys, and already reduced
+  features are skipped. This prevents CDF-of-CDF or CDF-of-aggregate expansion.
+- At most eight columns are added per eligible input: 128 per reduction at the
+  hard ceiling, or 32 with a four-column budget. Existing base operations take
+  priority within `feature_family_max_features_per_column`; the CDF extension
+  uses only the remaining allowance. Ordinary propagation of these fractions
+  still follows `feature_propagation_max_functions_per_column`.
+- Calibration reads at most 20,000 historical rows and the selected numeric
+  columns, using the **same cutoff and lookback predicates as reduction, before
+  LIMIT**, including per-example date-node boundaries. Key/date/value ordering
+  makes this sample deterministic. It is bounded, not an exact whole-table
+  quantile computation. It uses observed-value (lower) quantiles at eighths.
+- Thresholds are embedded as numeric SQL literals. Freeze the training graph
+  with `freeze_execution_plan()` and apply that plan to validation/prediction;
+  replay does not recalibrate thresholds or add columns to an old plan.
+- NaN, infinities and NULL do not enter CDF denominators. All-missing groups have
+  zero finite coverage and NULL CDFs. Missing child groups remain NULL after
+  the parent join.
+
+Feature names end in `__cdf_coverage_avg` and `__cdf_q0_avg`, etc. Their `avg`
+suffix preserves bounded aggregation through deeper paths; an average of child
+CDFs is a summary of child summaries, **not** an exact pooled leaf distribution.
+
+For a compatibility ablation, set `base_distribution_features=False` on the
+node or graph. The default is `True` on SQL nodes; graph-level `None` preserves
+node settings. Direct low-level `sql_auto_features(sample, ...)` callers must
+provide a historical training sample, optionally through `distribution_sample`.
+Normal `auto_features`/graph execution performs the historical SQL calibration.
+This extension does not yet change the Pandas/Spark/Daft auto-aggregation paths
+or automatically create semantic text embeddings or parent-only annotations.
+
 ## `temporal`: windowed numeric values
 
 For each selected numeric column and lookback period, `temporal` generates
@@ -131,6 +175,23 @@ generate:
 
 These features help distinguish steady activity, recent bursts, and dormant
 entities with similar lifetime counts.
+
+## `state`: ordered event state
+
+`state` ranks each entity's rows after point-in-time filtering and before
+reduction. For selected numeric values it emits the latest value, configured
+lags, latest change, and mean/min/max/count/variance/trend summaries over
+configured trailing row counts. For categorical and relationship identifiers
+it preserves the latest and previous values, a change flag, and recent
+diversity.
+
+Unlike day-based `temporal` windows, `state_windows` counts observations. The
+last five races, purchases, visits, or treatments therefore remain available
+across irregular event cadences and long inactive periods. `state_lags` and
+`state_windows` default to `(1, 2, 3, 5)` and `(3, 5, 10)` respectively.
+
+The rank is computed inside a filtered derived table, so rows on or after a
+strict cutoff cannot become latest-state features.
 
 ## `conditional`: activity composition
 
@@ -207,6 +268,8 @@ The most important controls are:
 | --- | --- |
 | `feature_families` | Families enabled on a node |
 | `ts_periods` | Count and duration of time windows |
+| `state_lags` | Ordered event positions retained by `state` |
+| `state_windows` | Trailing row counts summarized by `state` |
 | `feature_family_max_columns` | Source columns or conditions used by expanding families |
 | `feature_family_max_features_per_column` | Derived features emitted per selected column |
 | `categorical_cardinality_threshold` | Maximum observed cardinality for automatic categories |
@@ -219,11 +282,12 @@ A practical rollout is:
 
 1. Establish a baseline with `("base",)`.
 2. Add `temporal` for meaningful numeric measurements.
-3. Add `sequence` when cadence or burstiness may matter.
-4. Add `conditional` for important statuses or categories.
-5. Add `episode` when rows and logical events differ.
-6. Add `semantic` for known domain concepts.
-7. Add `context` only when the peer group is unambiguous.
+3. Add `state` when the latest event or last-N observations describe current state.
+4. Add `sequence` when cadence or burstiness may matter.
+5. Add `conditional` for important statuses or categories.
+6. Add `episode` when rows and logical events differ.
+7. Add `semantic` for known domain concepts.
+8. Add `context` only when the peer group is unambiguous.
 
 Feature counts multiply across columns, periods, relations, and graph hops.
 Enable a family where its signal is plausible instead of applying a maximal
