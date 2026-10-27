@@ -7,7 +7,7 @@ from graphreduce.feature_schema import (
 from graphreduce.predicates import EqualityPredicate
 from graphreduce.learned_messages import extract_path, pool_messages
 
-__version__ = '1.10.18rc1'
+__version__ = '1.10.18'
 
 __all__ = [
     "FeatureColumn",

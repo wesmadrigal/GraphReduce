@@ -4,7 +4,7 @@ Notable changes to GraphReduce are documented here. The package build appends
 this file to the README shown on PyPI, and the same notes should be copied into
 the corresponding GitHub Release.
 
-## [1.10.18rc1] - 2026-10-22
+## [1.10.18] - 2026-10-27
 
 ### Added
 
@@ -21,9 +21,18 @@ the corresponding GitHub Release.
   avoiding repeated sample materialization. Cold inference and custom node sample
   overrides retain their original behavior.
 
-This is a release candidate, not a published stable release. The metadata-only
-execution change passed exact classification and regression pipeline checks;
-complete benchmark coverage remains outstanding in the downstream submission.
+### Fixed
+
+- Scope wide eager DuckDB reductions with many distinct aggregates to one SQL
+  worker, then restore the caller's thread setting on success or failure. This
+  avoids multiplying aggregation state without changing expressions or rows.
+- Keep cold semantic inference, user sampling overrides and ordinary queries
+  on their existing paths; schema inspection does not replace value discovery.
+
+This release is prepared in the review branch. The downstream KurveRSC campaign
+has 20 of 21 tasks completed at the October 27 snapshot; final performance and
+resource tables will follow the last task. Release metadata is separate from
+PyPI publication.
 
 ## [1.10.14] - 2026-09-01
 

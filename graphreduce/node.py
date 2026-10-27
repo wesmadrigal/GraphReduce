@@ -5727,10 +5727,30 @@ class DuckdbNode(SQLNode):
         Execute a query and get back a dataframe.
         """
 
-        if not ret_df:
-            self.get_client().sql(qry)
-        else:
-            return self.get_client().sql(qry).to_df()
+        # Many independent DISTINCT states multiply per-worker aggregation
+        # memory. Budget the eager reduction only, preserving parallel sample
+        # discovery and its schema/column choices. No SQL expression or row is
+        # changed, and the caller's setting is restored even after an error.
+        wide_aggregate = (
+            not ret_df
+            and re.match(r"(?is)^\s*CREATE\s+(?:OR\s+REPLACE\s+)?TEMP(?:ORARY)?\s+TABLE\b", qry)
+            and re.search(r"(?is)\bGROUP\s+BY\b", qry)
+            and len(re.findall(r"(?is)\bCOUNT\s*\(\s*DISTINCT\b", qry)) >= 16
+        )
+        client = self.get_client()
+        previous_threads = None
+        if wide_aggregate:
+            previous_threads = int(client.sql("SELECT current_setting('threads')").fetchone()[0])
+            if previous_threads > 1:
+                client.sql("SET threads=1")
+        try:
+            if not ret_df:
+                client.sql(qry)
+            else:
+                return client.sql(qry).to_df()
+        finally:
+            if previous_threads is not None and previous_threads > 1:
+                client.sql(f"SET threads={previous_threads}")
 
     def get_schema_frame(self) -> pd.DataFrame:
         """Avoid decoding rows when join planning only needs column names.

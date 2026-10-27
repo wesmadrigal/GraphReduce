@@ -71,7 +71,7 @@ def test_cdf_distinguishes_equal_moments_and_handles_missingness(backend):
     try:
         node = node_for(frame, conn)
         ops = operations(node)
-        result = node.execute_query(node.build_query(ops)).set_index("evt_entity")
+        result = node.execute_query(node.build_query(ops)).set_index("evt_entity").sort_index()
         sketches = [c for c in result if "__cdf_q" in c]
         assert sketches and len(sketches) <= 7
         assert (result.loc[1, sketches] != result.loc[2, sketches]).any()
