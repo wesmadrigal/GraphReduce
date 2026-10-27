@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">GraphReduce time leakage control</title>
+  <desc id="desc">Timeline showing feature window before cut date and label window after cut date, mapped to prep_for_features and prep_for_labels.</desc>
+
+  <defs>
+    <style>
+      .title { font: 700 30px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 18px Arial, sans-serif; fill: #334e68; }
+      .label { font: 600 17px Arial, sans-serif; fill: #102a43; }
+      .small { font: 500 15px Arial, sans-serif; fill: #334e68; }
+      .code { font: 500 15px 'Courier New', monospace; fill: #102a43; }
+      .code-sm { font: 500 14px 'Courier New', monospace; fill: #102a43; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L9,3 L0,6 Z" fill="#243b53"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1200" height="760" fill="#f7fafc"/>
+  <text x="60" y="58" class="title">Time Leakage Safety in GraphReduce</text>
+  <text x="60" y="88" class="subtitle">Base methods enforce non-overlapping windows around cut_date</text>
+
+  <rect x="120" y="200" width="420" height="120" rx="12" fill="#d9f2e6" stroke="#2d6a4f" stroke-width="2"/>
+  <text x="140" y="236" class="label">Feature window (history)</text>
+  <text x="140" y="265" class="code-sm">prep_for_features()</text>
+  <text x="140" y="292" class="code-sm">date_key &lt; cut_date</text>
+  <text x="140" y="314" class="code-sm">AND date_key &gt; cut_date - compute_period</text>
+
+  <rect x="660" y="200" width="420" height="120" rx="12" fill="#dbeafe" stroke="#1d4ed8" stroke-width="2"/>
+  <text x="680" y="236" class="label">Label window (future)</text>
+  <text x="680" y="265" class="code-sm">prep_for_labels()</text>
+  <text x="680" y="292" class="code-sm">date_key &gt; cut_date</text>
+  <text x="680" y="314" class="code-sm">AND date_key &lt; cut_date + label_period</text>
+
+  <line x1="120" y1="420" x2="1080" y2="420" stroke="#243b53" stroke-width="4"/>
+
+  <rect x="120" y="392" width="420" height="56" fill="#a7f3d0" opacity="0.9"/>
+  <rect x="660" y="392" width="420" height="56" fill="#93c5fd" opacity="0.9"/>
+
+  <line x1="600" y1="355" x2="600" y2="488" stroke="#b91c1c" stroke-width="4"/>
+  <text x="563" y="344" class="label" fill="#b91c1c">cut_date</text>
+
+  <line x1="120" y1="420" x2="540" y2="420" stroke="#2d6a4f" stroke-width="6"/>
+  <line x1="660" y1="420" x2="1080" y2="420" stroke="#1d4ed8" stroke-width="6"/>
+
+  <text x="122" y="472" class="small">older history</text>
+  <text x="430" y="472" class="small">cut_date - compute_period</text>
+  <text x="688" y="472" class="small">cut_date + label_period</text>
+  <text x="1004" y="472" class="small">future</text>
+
+  <path d="M330 320 C 330 350, 300 360, 270 390" fill="none" stroke="#2d6a4f" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M870 320 C 870 350, 900 360, 930 390" fill="none" stroke="#1d4ed8" stroke-width="3" marker-end="url(#arrow)"/>
+
+  <rect x="120" y="540" width="960" height="160" rx="12" fill="#fff" stroke="#bcccdc" stroke-width="2"/>
+  <text x="150" y="578" class="label">Leakage guardrails from base definitions</text>
+  <text x="150" y="611" class="code">Features use only pre-cut history:   ts &lt; cut_date  AND  ts &gt; cut_date - compute_period</text>
+  <text x="150" y="641" class="code">Labels use only post-cut outcomes:   ts &gt; cut_date  AND  ts &lt; cut_date + label_period</text>
+  <text x="150" y="671" class="small">Result: training features cannot peek into the label horizon, and labels cannot include pre-cut history.</text>
+</svg>

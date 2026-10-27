@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="900" viewBox="0 0 1480 900">
+  <defs>
+    <style>
+      .title { font: 700 32px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .label { font: 700 14px Arial, sans-serif; fill: #102a43; }
+      .text { font: 12px Arial, sans-serif; fill: #243b53; }
+      .small { font: 11px Arial, sans-serif; fill: #486581; }
+      .mono { font: 12px "Courier New", monospace; fill: #1f2933; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#334e68"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#12734a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="900" fill="#f7fafc"/>
+  <text x="42" y="54" class="title">GraphReduce Example: Preserve Child Grain with Custom Aggregation</text>
+  <text x="42" y="82" class="subtitle">Same cust_data inputs, but custom `GraphReduceNode` classes are used and `notifications` is joined with `reduce=False` to keep 1:n detail.</text>
+
+  <rect x="36" y="112" width="520" height="520" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="56" y="142" class="section">1) Graph Nodes, Prefixes, and FK Edges</text>
+
+  <rect x="190" y="178" width="220" height="128" rx="10" fill="#e7f0ff" stroke="#486581"/>
+  <text x="206" y="202" class="label">Parent: cust.csv</text>
+  <text x="206" y="222" class="text">class: CustNode(GraphReduceNode)</text>
+  <text x="206" y="240" class="text">prefix: cust</text>
+  <text x="206" y="258" class="text">pk: id</text>
+  <text x="206" y="276" class="text">grain baseline: customer</text>
+
+  <rect x="62" y="390" width="210" height="138" rx="10" fill="#fff6df" stroke="#486581"/>
+  <text x="78" y="414" class="label">Child: orders.csv</text>
+  <text x="78" y="434" class="text">class: OrderNode</text>
+  <text x="78" y="452" class="text">prefix: ord</text>
+  <text x="78" y="470" class="text">custom do_reduce(...)</text>
+  <text x="78" y="488" class="text">date_key: ts</text>
+  <text x="78" y="506" class="text">fk: customer_id</text>
+
+  <rect x="322" y="390" width="210" height="138" rx="10" fill="#e8fff1" stroke="#486581"/>
+  <text x="338" y="414" class="label">Child: notifications.csv</text>
+  <text x="338" y="434" class="text">class: NotificationNode</text>
+  <text x="338" y="452" class="text">prefix: not</text>
+  <text x="338" y="470" class="text">no reduction before join</text>
+  <text x="338" y="488" class="text">date_key: ts</text>
+  <text x="338" y="506" class="text">fk: customer_id</text>
+
+  <line x1="250" y1="306" x2="166" y2="390" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <rect x="46" y="314" width="232" height="50" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="58" y="335" class="small">orders edge: id &lt;- customer_id</text>
+  <text x="58" y="352" class="small">reduce=True (aggregated)</text>
+
+  <line x1="350" y1="306" x2="427" y2="390" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <rect x="280" y="314" width="254" height="50" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="292" y="335" class="small">notifications edge: id &lt;- customer_id</text>
+  <text x="292" y="352" class="small">reduce=False (1:n preserved)</text>
+
+  <rect x="62" y="552" width="470" height="62" rx="10" fill="#f2f6fa" stroke="#9fb3c8"/>
+  <text x="78" y="578" class="label">Custom Data Aggregation Implementation</text>
+  <text x="78" y="598" class="text">`OrderNode.do_reduce` defines the aggregation logic explicitly; `NotificationNode` preserves row-level records.</text>
+
+  <rect x="584" y="112" width="430" height="238" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="604" y="142" class="section">2) Time Window for Feature Computation</text>
+
+  <rect x="612" y="168" width="374" height="48" rx="8" fill="#f0f4f8" stroke="#9fb3c8"/>
+  <text x="628" y="198" class="mono">cut_date = 2023-06-30</text>
+
+  <rect x="612" y="228" width="374" height="50" rx="8" fill="#e6fffa" stroke="#2c7a7b"/>
+  <text x="628" y="248" class="label">Feature window (365-day lookback)</text>
+  <text x="628" y="266" class="mono">2022-06-30 to 2023-06-30</text>
+
+  <rect x="612" y="288" width="374" height="50" rx="8" fill="#f7fafc" stroke="#a0aec0"/>
+  <text x="628" y="308" class="label">No label/target window in this example</text>
+  <text x="628" y="326" class="mono">auto_labels=False, label_node=None</text>
+
+  <rect x="584" y="368" width="430" height="264" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="604" y="398" class="section">3) Propagation Rules (Mixed Reduce Strategy)</text>
+  <text x="604" y="428" class="text">A) Orders: filtered in window, aggregated by customer_id, joined to parent.</text>
+  <text x="604" y="452" class="text">B) Notifications: filtered in window, joined without pre-aggregation.</text>
+  <text x="604" y="476" class="text">C) Parent rows can repeat because notification child grain is preserved.</text>
+  <text x="604" y="500" class="text">D) Final dataframe is feature-only (no y column).</text>
+  <text x="604" y="524" class="text">E) Materialized on `gr.parent_node.df` for downstream processing.</text>
+
+  <rect x="606" y="548" width="386" height="66" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
+  <text x="622" y="574" class="mono">Feature set = [cust_*, ord_num_orders, not_*]</text>
+  <text x="622" y="596" class="mono">Output grain may be customer x notifications</text>
+
+  <rect x="1042" y="112" width="402" height="520" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="1062" y="142" class="section">4) Feature-Only Output (Expanded Rows)</text>
+
+  <rect x="1062" y="170" width="362" height="430" rx="10" fill="#f8fafc" stroke="#829ab1"/>
+  <text x="1080" y="198" class="label">Example output shape behavior</text>
+  <text x="1080" y="224" class="mono">cust_id cust_name ord_num_orders not_id not_ts</text>
+  <text x="1080" y="248" class="mono">1       wes       2              101    2022-08-05</text>
+  <text x="1080" y="272" class="mono">1       wes       2              102    2023-01-01</text>
+  <text x="1080" y="296" class="mono">1       wes       2              103    2023-05-05</text>
+  <text x="1080" y="320" class="mono">2       ana       2              107    2022-09-05</text>
+  <text x="1080" y="344" class="mono">...</text>
+
+  <text x="1080" y="386" class="text">rows &gt; 4 is expected due to `reduce=False` on notifications.</text>
+  <text x="1080" y="408" class="text">order aggregates still propagate from `OrderNode.do_reduce`.</text>
+  <text x="1080" y="430" class="text">no label column is produced in this run.</text>
+
+  <rect x="1080" y="456" width="326" height="120" rx="10" fill="#e7fff5" stroke="#2f855a"/>
+  <text x="1098" y="484" class="label">Use Cases</text>
+  <text x="1098" y="508" class="mono">retain child events for later transforms</text>
+  <text x="1098" y="532" class="mono">debug lineage before final aggregation</text>
+  <text x="1098" y="556" class="mono">build multi-stage pipelines</text>
+
+  <line x1="556" y1="380" x2="584" y2="430" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="1014" y1="486" x2="1042" y2="486" stroke="#12734a" stroke-width="2.6" marker-end="url(#arrowGreen)"/>
+
+  <text x="40" y="870" class="small">Specific to docs/end_to_end_examples/preserve_child_grain.md with custom GraphReduceNode subclasses and notifications reduce=False.</text>
+</svg>

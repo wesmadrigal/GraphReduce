@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="920" viewBox="0 0 1480 920">
+  <defs>
+    <style>
+      .title { font: 700 32px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .label { font: 700 14px Arial, sans-serif; fill: #102a43; }
+      .text { font: 12px Arial, sans-serif; fill: #243b53; }
+      .small { font: 11px Arial, sans-serif; fill: #486581; }
+      .mono { font: 12px "Courier New", monospace; fill: #1f2933; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#334e68"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#12734a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="920" fill="#f7fafc"/>
+  <text x="40" y="54" class="title">All Tables Example: Full Reduction with Orders as Label Node</text>
+  <text x="40" y="82" class="subtitle">Five-table graph on cust_data with reduce=True on every edge, implemented in both pandas backend and duckdb backend.</text>
+
+  <rect x="34" y="112" width="560" height="550" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="54" y="142" class="section">1) Five-Table Graph (All Edges Reduced)</text>
+
+  <rect x="212" y="178" width="200" height="116" rx="10" fill="#e7f0ff" stroke="#486581"/>
+  <text x="228" y="202" class="label">Parent: cust.csv</text>
+  <text x="228" y="222" class="text">prefix: cust</text>
+  <text x="228" y="240" class="text">pk: id</text>
+  <text x="228" y="258" class="text">grain: customer</text>
+
+  <rect x="56" y="354" width="210" height="130" rx="10" fill="#fff6df" stroke="#486581"/>
+  <text x="72" y="378" class="label">orders.csv (label node)</text>
+  <text x="72" y="398" class="text">prefix: ord</text>
+  <text x="72" y="416" class="text">pk: id, date_key: ts</text>
+  <text x="72" y="434" class="text">fk to cust: customer_id</text>
+  <text x="72" y="452" class="text">edge reduce=True</text>
+
+  <rect x="330" y="354" width="210" height="130" rx="10" fill="#e8fff1" stroke="#486581"/>
+  <text x="346" y="378" class="label">notifications.csv</text>
+  <text x="346" y="398" class="text">prefix: not</text>
+  <text x="346" y="416" class="text">pk: id, date_key: ts</text>
+  <text x="346" y="434" class="text">fk to cust: customer_id</text>
+  <text x="346" y="452" class="text">edge reduce=True</text>
+
+  <rect x="56" y="520" width="210" height="118" rx="10" fill="#fff9e6" stroke="#486581"/>
+  <text x="72" y="544" class="label">order_products.csv</text>
+  <text x="72" y="564" class="text">prefix: op</text>
+  <text x="72" y="582" class="text">pk: id</text>
+  <text x="72" y="600" class="text">fk to orders: order_id</text>
+  <text x="72" y="618" class="text">edge reduce=True</text>
+
+  <rect x="330" y="520" width="210" height="118" rx="10" fill="#eef2ff" stroke="#486581"/>
+  <text x="346" y="544" class="label">notification_interactions.csv</text>
+  <text x="346" y="564" class="text">prefix: ni</text>
+  <text x="346" y="582" class="text">pk: id, date_key: ts</text>
+  <text x="346" y="600" class="text">fk to notifications: notification_id</text>
+  <text x="346" y="618" class="text">edge reduce=True</text>
+
+  <line x1="246" y1="294" x2="160" y2="354" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="376" y1="294" x2="436" y2="354" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="160" y1="484" x2="160" y2="520" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="436" y1="484" x2="436" y2="520" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+
+  <rect x="206" y="306" width="220" height="36" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="222" y="328" class="small">cust.id &lt;- orders.customer_id / notifications.customer_id</text>
+
+  <rect x="74" y="490" width="172" height="26" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="86" y="507" class="small">orders.id &lt;- order_products.order_id</text>
+
+  <rect x="334" y="490" width="208" height="26" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="346" y="507" class="small">notifications.id &lt;- notification_interactions.notification_id</text>
+
+  <rect x="624" y="112" width="408" height="260" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="644" y="142" class="section">2) Time Semantics + Label Setup</text>
+
+  <rect x="652" y="170" width="352" height="46" rx="8" fill="#f0f4f8" stroke="#9fb3c8"/>
+  <text x="668" y="198" class="mono">cut_date = 2023-06-30</text>
+
+  <rect x="652" y="226" width="352" height="50" rx="8" fill="#e6fffa" stroke="#2c7a7b"/>
+  <text x="668" y="246" class="label">X window (feature history)</text>
+  <text x="668" y="264" class="mono">2022-06-30 to 2023-06-30 (365 days)</text>
+
+  <rect x="652" y="286" width="352" height="50" rx="8" fill="#fffaf0" stroke="#b7791f"/>
+  <text x="668" y="306" class="label">y window (label forward)</text>
+  <text x="668" y="324" class="mono">2023-07-01 to 2023-07-30 (30 days)</text>
+
+  <rect x="624" y="392" width="408" height="270" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="644" y="422" class="section">3) Reduction and Rollup Behavior</text>
+  <text x="644" y="452" class="text">A) Every edge has reduce=True, so each child rolls up before joining upward.</text>
+  <text x="644" y="476" class="text">B) order_products signal first rolls up to orders, then to customer.</text>
+  <text x="644" y="500" class="text">C) notification_interactions rolls up to notifications, then to customer.</text>
+  <text x="644" y="524" class="text">D) orders also provides label target (count of id in 30-day forward window).</text>
+  <text x="644" y="548" class="text">E) Final dataset remains parent grain because all child branches are reduced.</text>
+
+  <rect x="646" y="576" width="364" height="66" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
+  <text x="662" y="602" class="mono">X = [cust_*, ord_agg_*, op_agg_*, not_agg_*, ni_agg_*]</text>
+  <text x="662" y="624" class="mono">y = ord_id_count in label window</text>
+
+  <rect x="1062" y="112" width="388" height="550" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="1082" y="142" class="section">4) Backend Pluggability + Output</text>
+
+  <rect x="1082" y="170" width="348" height="80" rx="10" fill="#eef2ff" stroke="#667eea"/>
+  <text x="1100" y="196" class="label">pandas backend</text>
+  <text x="1100" y="218" class="mono">DynamicNode + gr.do_transformations()</text>
+  <text x="1100" y="238" class="small">same graph, same edge semantics</text>
+
+  <rect x="1082" y="264" width="348" height="80" rx="10" fill="#e6fffa" stroke="#2c7a7b"/>
+  <text x="1100" y="290" class="label">duckdb backend</text>
+  <text x="1100" y="312" class="mono">DuckdbNode + gr.do_transformations_sql()</text>
+  <text x="1100" y="332" class="small">same graph, same edge semantics</text>
+
+  <rect x="1082" y="360" width="348" height="278" rx="10" fill="#f8fafc" stroke="#829ab1"/>
+  <text x="1100" y="388" class="label">Expected output shape</text>
+  <text x="1100" y="414" class="mono">rows: 4 (one row per customer)</text>
+  <text x="1100" y="438" class="mono">columns: cust + aggregated features + y</text>
+  <text x="1100" y="470" class="mono">cust_id cust_name ord_num_orders ... y_ord_id_count</text>
+  <text x="1100" y="494" class="mono">1       wes       ...              ... 1</text>
+  <text x="1100" y="518" class="mono">2       ana       ...              ... 1</text>
+  <text x="1100" y="542" class="mono">3       caleb     ...              ... 0</text>
+  <text x="1100" y="566" class="mono">4       luly      ...              ... 0</text>
+  <text x="1100" y="600" class="text">All reductions propagate signal upward to parent grain.</text>
+
+  <line x1="594" y1="430" x2="624" y2="450" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="1032" y1="490" x2="1062" y2="490" stroke="#12734a" stroke-width="2.6" marker-end="url(#arrowGreen)"/>
+
+  <text x="40" y="890" class="small">Specific to docs/end_to_end_examples/all_tables_reduce_with_labels.md using cust.csv, orders.csv, order_products.csv, notifications.csv, and notification_interactions.csv.</text>
+</svg>

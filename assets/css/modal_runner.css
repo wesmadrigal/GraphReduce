@@ -1,0 +1,67 @@
+.modal-runner {
+  border: 1px solid #d6d8dc;
+  border-radius: 12px;
+  padding: 16px;
+  margin: 16px 0;
+  background: linear-gradient(135deg, #f8fafc 0%, #f3f6fb 100%);
+}
+
+.modal-runner-controls {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.modal-runner-input {
+  flex: 1;
+  min-width: 280px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.modal-runner button {
+  border: 0;
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 600;
+  background: #0f766e;
+  color: #fff;
+}
+
+.modal-runner button:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+.modal-runner-status {
+  font-size: 0.92rem;
+  color: #334155;
+  margin-bottom: 8px;
+}
+
+.modal-runner-log {
+  background: #0b1020;
+  color: #ffffff !important;
+  border-radius: 10px;
+  padding: 12px;
+  min-height: 220px;
+  max-height: 440px;
+  overflow: auto;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  opacity: 1 !important;
+}
+
+.modal-runner-log,
+.modal-runner-log * {
+  color: #ffffff !important;
+  opacity: 1 !important;
+}
