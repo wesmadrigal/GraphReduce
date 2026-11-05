@@ -4,6 +4,25 @@ Notable changes to GraphReduce are documented here. The package build appends
 this file to the README shown on PyPI, and the same notes should be copied into
 the corresponding GitHub Release.
 
+## [1.10.19] - 2026-11-05
+
+### Added
+
+- Added `GraphReduce.run()` and `run_until(node, operation)` for inclusive
+  execution stops at node operations. `ExecutionResult` exposes the dataframe
+  or SQL reference, including reduced output before it joins into its parent.
+- Added `GraphReduce.load_data()` and optional `sample_size` configuration for
+  relational sampling: limit root rows and recursively retain all matching
+  descendants using scalar or composite relationship keys. Shared descendants
+  retain rows matching any sampled parent path without multiplying source rows.
+- Relational sampling supports SQL, pandas, and Dask on acyclic graphs whose
+  ordinary nodes are reachable from the root. SQL applies filters in the query;
+  pandas filters after loading. Independent executions require fresh graphs.
+- Documented [partial execution and relational sampling](docs/tutorial_execution_sampling.md).
+- Added an opt-in Olist pytest benchmark comparing full-data `run_until` with
+  `sample_size=100`, reporting repeated execution timings and validating that
+  sampled aggregates match the corresponding full-data results.
+
 ## [1.10.18] - 2026-10-27
 
 ### Added

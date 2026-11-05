@@ -52,6 +52,7 @@ nav:
   - Guides:
     - Point-in-Time Correctness: tutorial_time.md
     - Custom Node Operations: tutorial_custom_graph.md
+    - Partial Execution and Sampling: tutorial_execution_sampling.md
     - Compute Layers: tutorial_swapping_compute.md
     - SQL Operations: tutorial_sql_dialects.md
     - SQL Backends: tutorial_sql_backends_dynamic_queries.md

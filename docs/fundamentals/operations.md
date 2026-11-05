@@ -63,6 +63,7 @@ matching `ComputeLayerEnum` value.
 
 See:
 
+- [Partial execution and relational samples](../tutorial_execution_sampling.md)
 - [Custom node operations](../tutorial_custom_graph.md)
 - [Post-join dependencies](../tutorial_method_deps.md)
 - [SQL backends and dynamic queries](../tutorial_sql_backends_dynamic_queries.md)

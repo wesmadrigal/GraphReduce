@@ -37,7 +37,10 @@ from graphreduce.node import (
     KeySpec,
     key_parts,
     normalize_key,
+    SQLNode,
 )
+from graphreduce.execution import ExecutionResult
+from graphreduce.sampling import RelationalSample
 from graphreduce.enum import ComputeLayerEnum, PeriodUnit, SQLOpType
 from graphreduce.storage import StorageClient
 from graphreduce.models import sqlop
@@ -229,6 +232,7 @@ class GraphReduce(nx.DiGraph):
         date_node: typing.Optional[GraphReduceNode] = None,
         train: bool = True,
         *args,
+        sample_size: typing.Optional[int] = None,
         # Optional graph-wide overrides for node auto-feature settings.
         feature_families: typing.Optional[typing.Sequence[str]] = None,
         base_distribution_features: typing.Optional[bool] = None,
@@ -282,6 +286,7 @@ class GraphReduce(nx.DiGraph):
             debug: bool whether to run debug logging
             date_filters_on_agg: bool whether or not to automatically filter by dates during custom defined aggregations
             train: bool whether the graph is being built for training. If false, date-node joins are skipped.
+            sample_size: optional root row limit; retain matching descendants recursively.
             feature_families: optional graph-wide override for node SQL auto-feature families
             feature_family_max_columns: optional graph-wide source-column / condition budget for feature families
             feature_family_max_features_per_column: optional graph-wide cap on derived features emitted by each selected source column within a family
@@ -316,6 +321,7 @@ class GraphReduce(nx.DiGraph):
         self.compute_period_val = compute_period_val
         self.compute_period_unit = compute_period_unit
         self.compute_layer = compute_layer
+        self.sample_size = self._validate_sample_size(sample_size)
 
         # Label parameters.
         self.label_node = label_node
@@ -528,6 +534,7 @@ class GraphReduce(nx.DiGraph):
             "compute_period_val": self.compute_period_val,
             "copute_period_unit": self.compute_period_unit,
             "compute_layer": self.compute_layer,
+            "sample_size": self.sample_size,
             "label_node": self.label_node,
             "label_field": self.label_field,
             "label_operation": self.label_operation,
@@ -957,16 +964,177 @@ class GraphReduce(nx.DiGraph):
             raise ValueError("compute period must be greater than zero")
         return int(math.ceil(days))
 
-    def hydrate_graph_data(
+    @staticmethod
+    def _validate_sample_size(size):
+        if size is not None and (
+            isinstance(size, bool) or not isinstance(size, int) or size < 0
+        ):
+            raise ValueError("sample_size must be a non-negative integer or None")
+        return size
+
+    def _sample_loader(self, sample_size=None):
+        size = self.sample_size if sample_size is None else sample_size
+        self._validate_sample_size(size)
+        return RelationalSample(self, size) if size is not None else None
+
+    @staticmethod
+    def _operation_result(node, operation, edge=None):
+        data = node.get_current_ref() if isinstance(node, SQLNode) else node.df
+        return ExecutionResult(node, operation, data, edge)
+
+    def _sql_execution(self):
+        if self.parent_node not in self:
+            raise ValueError("parent_node must belong to the graph before execution")
+        sql_nodes = [isinstance(node, SQLNode) for node in self.nodes()]
+        if any(sql_nodes) and not all(sql_nodes):
+            raise TypeError("A run cannot mix SQL nodes and dataframe nodes")
+        return bool(sql_nodes) and all(sql_nodes)
+
+    def _validate_run_target(self, node, operation, sql):
+        if (node is None) != (operation is None):
+            raise ValueError("until_node and until_operation must be supplied together")
+        if node is None:
+            return None
+        if isinstance(node, str):
+            matches = [item for item in self.nodes() if item.prefix == node]
+            if len(matches) != 1:
+                raise ValueError(f"Expected one node with prefix {node!r}")
+            node = matches[0]
+        if node not in self:
+            raise ValueError("until_node must belong to this graph")
+        local_ops = {"do_data", "do_annotate", "do_filters", "do_normalize"}
+        edge_ops = {
+            "do_reduce",
+            "do_labels",
+            "do_post_join_annotate",
+            "do_post_join_filters",
+            "do_post_join_reduce",
+        }
+        if operation not in local_ops | edge_ops:
+            raise ValueError(f"Unsupported stop operation: {operation!r}")
+        if sql and (node.is_date_node or not nx.has_path(self, self.parent_node, node)):
+            raise ValueError("The target must be a reachable, non-date node")
+        if operation in edge_ops:
+            edges = list(self.depth_first_generator())
+            if operation in {"do_reduce", "do_labels"}:
+                eligible = [
+                    edge for edge in edges if edge[1] is node and not node.is_date_node
+                ]
+                if operation == "do_reduce":
+                    eligible = [
+                        edge
+                        for edge in eligible
+                        if self.get_edge_data(*edge)
+                        .get("keys", self.get_edge_data(*edge))
+                        .get("reduce")
+                    ]
+                elif not self.train:
+                    eligible = []
+            else:
+                eligible = [
+                    edge
+                    for edge in edges
+                    if edge[0] is node and not edge[1].is_date_node
+                ]
+                if operation == "do_post_join_reduce":
+                    eligible = (
+                        []
+                        if sql
+                        else [
+                            edge
+                            for edge in eligible
+                            if self.get_edge_data(*edge)
+                            .get("keys", self.get_edge_data(*edge))
+                            .get("reduce_after_join")
+                        ]
+                    )
+            if not eligible:
+                raise ValueError(
+                    f"{operation} is not scheduled for {node.prefix}; check edges and hop limits"
+                )
+        return node
+
+    def run(
         self,
-    ):
+        *,
+        until_node: typing.Optional[typing.Union[GraphReduceNode, str]] = None,
+        until_operation: typing.Optional[str] = None,
+        sample_size: typing.Optional[int] = None,
+    ) -> ExecutionResult:
+        """Run the pipeline, optionally stopping just after a node operation.
+
+        Targets accept a node instance or its unique prefix. Execution follows
+        the normal pipeline order and stops at the first matching occurrence.
+        Reductions include automatic features and stop before the parent join.
+        The result holds a dataframe or SQL reference. Use a fresh graph for
+        each independent run; this method does not reset or resume old runs.
+        """
+        sql = self._sql_execution()
+        target = self._validate_run_target(until_node, until_operation, sql)
+        steps = (
+            self._iter_transformations_sql(sample_size=sample_size)
+            if sql
+            else self._iter_transformations(sample_size=sample_size)
+        )
+        try:
+            for result in steps:
+                if result.node is target and result.operation == until_operation:
+                    return result
+        finally:
+            steps.close()
+        if target is not None:
+            raise ValueError(f"{until_operation} was not executed for {target.prefix}")
+        return self._operation_result(self.parent_node, "complete")
+
+    def run_until(
+        self,
+        node: typing.Union[GraphReduceNode, str],
+        operation: str,
+        *,
+        sample_size: typing.Optional[int] = None,
+    ) -> ExecutionResult:
+        """Inclusive shorthand for ``run(until_node=..., until_operation=...)``."""
+        return self.run(
+            until_node=node, until_operation=operation, sample_size=sample_size
+        )
+
+    def load_data(self, *, sample_size: typing.Optional[int] = None) -> ExecutionResult:
+        """Load the full graph, optionally as a relational sample, without transforms."""
+        sql = self._sql_execution()
+        sample = self._sample_loader(sample_size)
+        self.hydrate_graph_attrs()
+        self.prefix_uniqueness()
+        if sql:
+            self.executed_op_records = []
+            nodes = (
+                sample.nodes if sample else nx.bfs_tree(self, source=self.parent_node)
+            )
+            for node in nodes:
+                if node.is_date_node and not self.train:
+                    continue
+                for _ in self._iter_sql_data(node, sample):
+                    pass
+        else:
+            for _ in self._iter_graph_data(sample):
+                pass
+        return self._operation_result(self.parent_node, "do_data")
+
+    def hydrate_graph_data(self):
         """
         Hydrate the nodes in the graph with their data
         """
-        for node in self.nodes():
+        for _ in self._iter_graph_data(self._sample_loader()):
+            pass
+
+    def _iter_graph_data(self, sample=None):
+        for node in sample.nodes if sample else self.nodes():
             if self.debug:
                 logger.debug(f"hydrating {node} data")
             node.do_data()
+            if sample:
+                sample.filter_frame(node)
+                sample.remember(node)
+            yield self._operation_result(node, "do_data")
 
     def add_entity_edge(
         self,
@@ -1717,7 +1885,57 @@ class GraphReduce(nx.DiGraph):
                 error=f"{type(exc).__name__}: {exc}",
             )
 
+    def _iter_sql_data(self, node, sample=None):
+        planned_data = self._consume_planned_record(node, "do_data")
+        ops = (
+            list(planned_data["ops"])
+            if planned_data
+            else self._normalize_sqlop_list(node.do_data())
+        )
+        if not ops:
+            raise Exception(
+                f"{node.__class__.__name__}.do_data must be implemented"
+            )
+        data_ops = ops[0] if len(ops) == 1 and ops[0].optype == SQLOpType.custom else ops
+        data_sql = node.build_query(data_ops)
+        if sample:
+            data_sql = sample.sql(node, data_sql)
+        self._record_executed_ops(
+            node=node,
+            method_name="do_data",
+            ops=planned_data["method_ops"] if planned_data else ops,
+            date_filter_ops=planned_data["date_filter_ops"]
+            if planned_data
+            else None,
+            sql=data_sql,
+            auto_generated=planned_data["auto_generated"]
+            if planned_data
+            else False,
+        )
+
+        logger.debug(f"do data: {data_sql}")
+        self.sql_ops.append(data_sql)
+        node.create_ref(
+            data_sql,
+            node.do_data,
+            schema=self._checkpoint_schema,
+            dry=self.dry_run,
+        )
+        # Now append the reference SQL.
+        if node._ref_sql:
+            self.sql_ops.append(node._ref_sql)
+            node._ref_sql = None
+
+        if sample:
+            sample.remember(node)
+        yield self._operation_result(node, "do_data")
+
     def do_transformations_sql(self, dry: bool = False):
+        """Execute the complete SQL pipeline, using the configured sample_size."""
+        for _ in self._iter_transformations_sql(dry=dry):
+            pass
+
+    def _iter_transformations_sql(self, dry: bool = False, sample_size=None):
         """
         Perform all graph transformations
         1) hydrate graph
@@ -1733,6 +1951,7 @@ class GraphReduce(nx.DiGraph):
         7b) post-join annotations and filters (if any)
         8) repeat step 7 on all edges up the hierarchy
         """
+        sample = self._sample_loader(sample_size)
         logger.info("hydrating graph attributes")
         self.hydrate_graph_attrs()
         self.executed_op_records = []
@@ -1741,48 +1960,13 @@ class GraphReduce(nx.DiGraph):
         self.prefix_uniqueness()
 
         # Node-level data prep operations.
-        for node in nx.bfs_tree(self, source=self.parent_node):
+        for node in sample.nodes if sample else nx.bfs_tree(self, source=self.parent_node):
             if node.is_date_node:
                 continue
             # for node in self.nodes():
             # `self.do_data` must always return some `sqlop`
-            planned_data = self._consume_planned_record(node, "do_data")
-            ops = (
-                list(planned_data["ops"])
-                if planned_data
-                else self._normalize_sqlop_list(node.do_data())
-            )
-            if not ops:
-                raise Exception(
-                    f"{node.__class__.__name__}.do_data must be implemented"
-                )
-            data_sql = node.build_query(ops)
-            self._record_executed_ops(
-                node=node,
-                method_name="do_data",
-                ops=planned_data["method_ops"] if planned_data else ops,
-                date_filter_ops=planned_data["date_filter_ops"]
-                if planned_data
-                else None,
-                sql=data_sql,
-                auto_generated=planned_data["auto_generated"]
-                if planned_data
-                else False,
-            )
-
-            logger.debug(f"do data: {data_sql}")
-            self.sql_ops.append(data_sql)
-            node.create_ref(
-                data_sql,
-                node.do_data,
-                schema=self._checkpoint_schema,
-                dry=self.dry_run,
-            )
+            yield from self._iter_sql_data(node, sample)
             self._infer_node_ts_periods(node)
-            # Now append the reference SQL.
-            if node._ref_sql:
-                self.sql_ops.append(node._ref_sql)
-                node._ref_sql = None
 
             planned_annotate = self._consume_planned_record(node, "do_annotate")
             annotate_ops = (
@@ -1817,6 +2001,8 @@ class GraphReduce(nx.DiGraph):
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
 
+            yield self._operation_result(node, "do_annotate")
+
             planned_filters = self._consume_planned_record(node, "do_filters")
             filter_ops = (
                 list(planned_filters["ops"])
@@ -1847,6 +2033,8 @@ class GraphReduce(nx.DiGraph):
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
+
+            yield self._operation_result(node, "do_filters")
 
             planned_normalize = self._consume_planned_record(node, "do_normalize")
             normalize_ops = (
@@ -1879,6 +2067,7 @@ class GraphReduce(nx.DiGraph):
             if node._ref_sql:
                 self.sql_ops.append(node._ref_sql)
                 node._ref_sql = None
+            yield self._operation_result(node, "do_normalize")
             #    node.create_ref(node.build_query(ops), node.do_data, schema=self._checkpoint_schema)
             #    node.create_ref(node.build_query(node.do_annotate()), node.do_annotate, schema=self._checkpoint_schema)
             #    node.create_ref(node.build_query(node.do_filters()), node.do_filters, schema=self._checkpoint_schema)
@@ -1895,14 +2084,7 @@ class GraphReduce(nx.DiGraph):
                 logger.info(f"Found date node {self.date_node}")
                 if node == self.parent_node:
                     # Load the data into the date node.
-                    self.date_node.create_ref(
-                        self.date_node.build_query(self.date_node.do_data()),
-                        self.date_node.do_data,
-                        schema=self._checkpoint_schema,
-                        dry=self.dry_run,
-                    )
-                    if self.date_node._ref_sql:
-                        self.sql_ops.append(self.date_node._ref_sql)
+                    yield from self._iter_sql_data(self.date_node, sample)
                     # Merge the date table with the parent node.
                     self.join_sql(
                         node,
@@ -2154,6 +2336,7 @@ class GraphReduce(nx.DiGraph):
                     if relation_node._ref_sql:
                         self.sql_ops.append(relation_node._ref_sql)
                         relation_node._ref_sql = None
+                yield self._operation_result(relation_node, "do_reduce", edge)
             else:
                 # in this case we will join the entire relation's dataframe
                 logger.info(f"doing nothing with relation node {relation_node}")
@@ -2311,6 +2494,7 @@ class GraphReduce(nx.DiGraph):
                     #        schema=self._checkpoint_schema
                     #        )
 
+                yield self._operation_result(relation_node, "do_labels", edge)
                 logger.info(f"computed labels for {relation_node}")
                 # Since the `SQLNode.build_query` method
                 # updates the `SQLNode._cur_data_ref` attribute
@@ -2368,6 +2552,7 @@ class GraphReduce(nx.DiGraph):
                 # dependencies were merged.
                 overwrite=True,
             )
+            yield self._operation_result(parent_node, "do_post_join_annotate", edge)
             # post-join filters (if any)
             if hasattr(parent_node, "do_post_join_filters"):
                 planned_post_join_filters = self._consume_planned_record(
@@ -2415,11 +2600,18 @@ class GraphReduce(nx.DiGraph):
                     overwrite=True,
                 )
 
+                yield self._operation_result(parent_node, "do_post_join_filters", edge)
+
             # post-join reduce (if any)
             if hasattr(parent_node, "do_post_join_reduce"):
                 pass
 
     def do_transformations(self):
+        """Execute the complete dataframe pipeline with the configured sample_size."""
+        for _ in self._iter_transformations():
+            pass
+
+    def _iter_transformations(self, sample_size=None):
         """
         Perform all graph transformations
         1) hydrate graph
@@ -2433,11 +2625,12 @@ class GraphReduce(nx.DiGraph):
         7) repeat step 6 on all edges up the hierarchy
         """
 
+        sample = self._sample_loader(sample_size)
         # get data, filter data, clip columns, and annotate
         logger.info("hydrating graph attributes")
         self.hydrate_graph_attrs()
         logger.info("hydrating graph data")
-        self.hydrate_graph_data()
+        yield from self._iter_graph_data(sample)
 
         logger.info("checking for prefix uniqueness")
         self.prefix_uniqueness()
@@ -2447,8 +2640,11 @@ class GraphReduce(nx.DiGraph):
             # For SQL dialects this just returns a list of `sqlop`
             # instances, so we need to build the query and execute.
             node.do_annotate()
+            yield self._operation_result(node, "do_annotate")
             node.do_filters()
+            yield self._operation_result(node, "do_filters")
             node.do_normalize()
+            yield self._operation_result(node, "do_normalize")
 
         if self.auto_features:
             for to_node, from_node, level in self.traverse_up(start=self.parent_node):
@@ -2533,6 +2729,8 @@ class GraphReduce(nx.DiGraph):
                                     f"assigned join_df to be {child_df.columns}"
                                 )
 
+                yield ExecutionResult(relation_node, "do_reduce", join_df, edge)
+
             else:
                 # in this case we will join the entire relation's dataframe
                 logger.info(f"doing nothing with relation node {relation_node}")
@@ -2575,6 +2773,7 @@ class GraphReduce(nx.DiGraph):
                 elif isinstance(relation_node, GraphReduceNode):
                     label_df = relation_node.do_labels(edge_data["relation_key"])
 
+                yield ExecutionResult(relation_node, "do_labels", label_df, edge)
                 logger.info(f"computed labels for {relation_node}")
                 if label_df.__class__.__name__ != "NoneType":
                     joined_with_labels = self.join(
@@ -2584,12 +2783,15 @@ class GraphReduce(nx.DiGraph):
 
             # post-join annotations (if any)
             parent_node.do_post_join_annotate()
+            yield self._operation_result(parent_node, "do_post_join_annotate", edge)
             # post-join filters (if any)
             if hasattr(parent_node, "do_post_join_filters"):
                 parent_node.do_post_join_filters()
+                yield self._operation_result(parent_node, "do_post_join_filters", edge)
 
             # post-join aggregation
             if edge_data["reduce_after_join"]:
                 parent_node.do_post_join_reduce(
                     edge_data["relation_key"], type_func_map=self.feature_stype_map
                 )
+                yield self._operation_result(parent_node, "do_post_join_reduce", edge)
