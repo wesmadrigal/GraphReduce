@@ -1,0 +1,116 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1480" height="900" viewBox="0 0 1480 900">
+  <defs>
+    <style>
+      .title { font: 700 32px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 18px Arial, sans-serif; fill: #102a43; }
+      .label { font: 700 14px Arial, sans-serif; fill: #102a43; }
+      .text { font: 12px Arial, sans-serif; fill: #243b53; }
+      .small { font: 11px Arial, sans-serif; fill: #486581; }
+      .mono { font: 12px "Courier New", monospace; fill: #1f2933; }
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#334e68"/>
+    </marker>
+    <marker id="arrowGreen" markerWidth="12" markerHeight="12" refX="10" refY="4" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L11,4 L0,8 z" fill="#12734a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1480" height="900" fill="#f7fafc"/>
+  <text x="42" y="54" class="title">GraphReduce Hello World: Customer Parent Rollup</text>
+  <text x="42" y="82" class="subtitle">`cust.csv` is the parent node. `orders.csv` and `notifications.csv` are child nodes reduced on `customer_id -&gt; id` and joined back to parent grain.</text>
+
+  <rect x="36" y="112" width="520" height="520" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="56" y="142" class="section">1) Graph Nodes, Prefixes, and FK Edges</text>
+
+  <rect x="190" y="178" width="220" height="128" rx="10" fill="#e7f0ff" stroke="#486581"/>
+  <text x="206" y="202" class="label">Parent: cust.csv</text>
+  <text x="206" y="222" class="text">node: cust_node</text>
+  <text x="206" y="240" class="text">prefix: cust</text>
+  <text x="206" y="258" class="text">pk: id</text>
+  <text x="206" y="276" class="text">grain: 1 row per customer</text>
+
+  <rect x="62" y="390" width="210" height="138" rx="10" fill="#fff6df" stroke="#486581"/>
+  <text x="78" y="414" class="label">Child: orders.csv</text>
+  <text x="78" y="434" class="text">node: orders_node</text>
+  <text x="78" y="452" class="text">prefix: ord</text>
+  <text x="78" y="470" class="text">pk: id</text>
+  <text x="78" y="488" class="text">date_key: ts</text>
+  <text x="78" y="506" class="text">fk: customer_id</text>
+
+  <rect x="322" y="390" width="210" height="138" rx="10" fill="#e8fff1" stroke="#486581"/>
+  <text x="338" y="414" class="label">Child: notifications.csv</text>
+  <text x="338" y="434" class="text">node: notifications_node</text>
+  <text x="338" y="452" class="text">prefix: not</text>
+  <text x="338" y="470" class="text">pk: id</text>
+  <text x="338" y="488" class="text">date_key: ts</text>
+  <text x="338" y="506" class="text">fk: customer_id</text>
+
+  <line x1="250" y1="306" x2="166" y2="390" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <rect x="46" y="314" width="232" height="50" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="58" y="335" class="small">orders edge: id &lt;- customer_id</text>
+  <text x="58" y="352" class="small">relation_type=parent_child, reduce=True</text>
+
+  <line x1="350" y1="306" x2="427" y2="390" stroke="#334e68" stroke-width="2.3" marker-end="url(#arrow)"/>
+  <rect x="280" y="314" width="254" height="50" rx="8" fill="#ffffff" stroke="#cbd2d9"/>
+  <text x="292" y="335" class="small">notifications edge: id &lt;- customer_id</text>
+  <text x="292" y="352" class="small">relation_type=parent_child, reduce=True</text>
+
+  <rect x="62" y="552" width="470" height="62" rx="10" fill="#f2f6fa" stroke="#9fb3c8"/>
+  <text x="78" y="578" class="label">Prefix lineage in output columns</text>
+  <text x="78" y="598" class="text">`cust_*` stays parent-native, `ord_*` and `not_*` signal is aggregated and propagated up.</text>
+
+  <rect x="584" y="112" width="430" height="238" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="604" y="142" class="section">2) Time Windows Around Cut Date</text>
+
+  <rect x="612" y="168" width="374" height="48" rx="8" fill="#f0f4f8" stroke="#9fb3c8"/>
+  <text x="628" y="198" class="mono">cut_date = 2023-06-30</text>
+
+  <rect x="612" y="228" width="374" height="50" rx="8" fill="#e6fffa" stroke="#2c7a7b"/>
+  <text x="628" y="248" class="label">X features window (365-day lookback)</text>
+  <text x="628" y="266" class="mono">2022-06-30 to 2023-06-30</text>
+
+  <rect x="612" y="288" width="374" height="50" rx="8" fill="#fffaf0" stroke="#b7791f"/>
+  <text x="628" y="308" class="label">y target window (30-day look-forward)</text>
+  <text x="628" y="326" class="mono">2023-07-01 to 2023-07-30</text>
+
+  <rect x="584" y="368" width="430" height="264" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="604" y="398" class="section">3) Signal Propagation to Parent Grain</text>
+  <text x="604" y="428" class="text">A) Filter child rows by X window for feature computation.</text>
+  <text x="604" y="452" class="text">B) Aggregate each child by customer_id (counts, recency, frequency).</text>
+  <text x="604" y="476" class="text">C) Join aggregated child features to parent (`cust.id`).</text>
+  <text x="604" y="500" class="text">D) Build y from label node (`orders.csv`) in forward window.</text>
+  <text x="604" y="524" class="text">E) Materialize final dataframe on `gr.parent_node.df`.</text>
+
+  <rect x="606" y="548" width="386" height="66" rx="8" fill="#edf2f7" stroke="#a0aec0"/>
+  <text x="622" y="574" class="mono">X = [cust_*, ord_agg_*, not_agg_*]</text>
+  <text x="622" y="596" class="mono">y = ord_id_count over 30-day label window</text>
+
+  <rect x="1042" y="112" width="402" height="520" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="1062" y="142" class="section">4) Feature-Ready Output DataFrame</text>
+
+  <rect x="1062" y="170" width="362" height="430" rx="10" fill="#f8fafc" stroke="#829ab1"/>
+  <text x="1080" y="198" class="label">Example parent-grain output</text>
+  <text x="1080" y="224" class="mono">cust_id cust_name ord_cnt_365d not_cnt_365d y_ord_cnt_30d</text>
+  <text x="1080" y="248" class="mono">1       wes       2           6            1</text>
+  <text x="1080" y="272" class="mono">2       ana       2           3            1</text>
+  <text x="1080" y="296" class="mono">3       caleb     1           0            0</text>
+  <text x="1080" y="320" class="mono">4       luly      0           0            0</text>
+
+  <text x="1080" y="362" class="text">Training split at cut date uses only X window data.</text>
+  <text x="1080" y="384" class="text">Target y uses only post-cut forward label window.</text>
+  <text x="1080" y="406" class="text">This keeps features point-in-time correct.</text>
+
+  <rect x="1080" y="438" width="326" height="138" rx="10" fill="#e7fff5" stroke="#2f855a"/>
+  <text x="1098" y="466" class="label">Modeling Contract</text>
+  <text x="1098" y="490" class="mono">X_train = df[[feature columns]]</text>
+  <text x="1098" y="514" class="mono">y_train = df['y_ord_cnt_30d']</text>
+  <text x="1098" y="538" class="mono">model.fit(X_train, y_train)</text>
+  <text x="1098" y="562" class="small">one row per customer id</text>
+
+  <line x1="556" y1="380" x2="584" y2="430" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="1014" y1="486" x2="1042" y2="486" stroke="#12734a" stroke-width="2.6" marker-end="url(#arrowGreen)"/>
+
+  <text x="40" y="870" class="small">This diagram is specific to docs/end_to_end_examples/hello_world.md and tests/data/cust_data with cut_date=2023-06-30, compute_period=365d, label_period=30d.</text>
+</svg>

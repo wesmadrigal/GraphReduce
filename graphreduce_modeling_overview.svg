@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="820" viewBox="0 0 1400 820">
+  <defs>
+    <style>
+      .title { font: 700 30px Arial, sans-serif; fill: #102a43; }
+      .subtitle { font: 500 16px Arial, sans-serif; fill: #334e68; }
+      .section { font: 700 17px Arial, sans-serif; fill: #102a43; }
+      .label { font: 600 13px Arial, sans-serif; fill: #102a43; }
+      .text { font: 12px Arial, sans-serif; fill: #243b53; }
+      .small { font: 11px Arial, sans-serif; fill: #334e68; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 z" fill="#334e68" />
+    </marker>
+    <marker id="arrowGreen" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 z" fill="#12734a" />
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1400" height="820" fill="#f7fafc" />
+  <text x="44" y="52" class="title">GraphReduce: Multi-Table Graph Modeling to Feature Vector</text>
+  <text x="44" y="78" class="subtitle">Tables/files are modeled as nodes, foreign keys are edges, and all transformed data rolls up to the parent node for ML .fit()</text>
+
+  <rect x="40" y="110" width="500" height="440" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="58" y="138" class="section">1) Graph Model (Nodes + Foreign-Key Edges)</text>
+
+  <rect x="190" y="165" width="200" height="120" rx="10" fill="#e7f0ff" stroke="#486581"/>
+  <text x="205" y="187" class="label">Parent Node: Customer</text>
+  <text x="205" y="207" class="text">prefix: cu</text>
+  <text x="205" y="224" class="text">pk: id</text>
+  <text x="205" y="241" class="text">date_key: signup_ts</text>
+  <text x="205" y="258" class="text">columns: [id, name, ...]</text>
+
+  <rect x="65" y="350" width="200" height="120" rx="10" fill="#fff6df" stroke="#486581"/>
+  <text x="80" y="372" class="label">Child Node: Orders</text>
+  <text x="80" y="392" class="text">prefix: ord</text>
+  <text x="80" y="409" class="text">pk: id</text>
+  <text x="80" y="426" class="text">date_key: ts</text>
+  <text x="80" y="443" class="text">columns: [id, customer_id, ...]</text>
+
+  <rect x="315" y="350" width="200" height="120" rx="10" fill="#e8fff1" stroke="#486581"/>
+  <text x="330" y="372" class="label">Child Node: Notifications</text>
+  <text x="330" y="392" class="text">prefix: notif</text>
+  <text x="330" y="409" class="text">pk: id</text>
+  <text x="330" y="426" class="text">date_key: ts</text>
+  <text x="330" y="443" class="text">columns: [id, customer_id, ...]</text>
+
+  <line x1="250" y1="285" x2="165" y2="350" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <text x="92" y="304" class="small">FK edge: customer_id -&gt; id</text>
+  <text x="106" y="320" class="small">reduce=True / reduce=False</text>
+
+  <line x1="330" y1="285" x2="415" y2="350" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <text x="314" y="304" class="small">FK edge: customer_id -&gt; id</text>
+  <text x="346" y="320" class="small">child relation policy</text>
+
+  <rect x="145" y="484" width="290" height="54" rx="10" fill="#f2f6fa" stroke="#9fb3c8"/>
+  <text x="160" y="507" class="label">Node config: prefix, PK, date key, include-columns, compute layer</text>
+  <text x="160" y="525" class="text">Unique prefixes keep lineage readable after joins and rollups.</text>
+
+  <rect x="570" y="110" width="370" height="180" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="588" y="138" class="section">2) Runtime + Time Semantics</text>
+  <text x="588" y="166" class="text">compute_layer: pandas | databricks sql | snowflake</text>
+  <text x="588" y="188" class="text">cut_date + compute_period: feature history window</text>
+  <text x="588" y="210" class="text">label_period: target look-forward window</text>
+  <text x="588" y="232" class="text">label_node / target node selected in graph config</text>
+  <text x="588" y="254" class="text">point-in-time correctness enforced across nodes</text>
+
+  <rect x="570" y="310" width="370" height="220" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="588" y="338" class="section">3) Upward Propagation Rules</text>
+  <text x="588" y="366" class="text">For each child relation:</text>
+  <text x="608" y="388" class="text">A) reduce/aggregate child -&gt; parent grain</text>
+  <text x="608" y="410" class="text">   (count, min/max, sums, auto-features)</text>
+  <text x="608" y="432" class="text">B) preserve child granularity upward (no reduce)</text>
+  <text x="608" y="454" class="text">Each join keeps lineage using prefixed columns</text>
+  <text x="608" y="476" class="text">Labels computed from label node and merged to parent</text>
+  <text x="608" y="498" class="text">Final result is materialized on parent node dataframe</text>
+
+  <rect x="970" y="110" width="390" height="420" rx="14" fill="#ffffff" stroke="#9fb3c8" stroke-width="1.5"/>
+  <text x="988" y="138" class="section">4) Parent Rollup to Model Input</text>
+
+  <rect x="995" y="172" width="338" height="220" rx="10" fill="#f2f6fa" stroke="#829ab1"/>
+  <text x="1010" y="196" class="label">Parent grain feature matrix (one row per parent)</text>
+  <text x="1010" y="220" class="text">cu_id  cu_name  ord_id_count  notif_id_count  ...  ord_id_label</text>
+  <text x="1010" y="242" class="text">1      wes      8             6               ...  1</text>
+  <text x="1010" y="262" class="text">2      ana      6             7               ...  0</text>
+  <text x="1010" y="282" class="text">3      caleb    2             2               ...  1</text>
+  <text x="1010" y="314" class="text">X = engineered features from multi-table graph</text>
+  <text x="1010" y="334" class="text">y = target from label node / label period</text>
+  <text x="1010" y="364" class="text">model.fit(X_train, y_train)</text>
+
+  <rect x="995" y="418" width="338" height="88" rx="10" fill="#e7fff5" stroke="#2f855a"/>
+  <text x="1010" y="446" class="label" fill="#0f5132">Output</text>
+  <text x="1010" y="468" class="text">Predictive feature vector ready for batch ML/AI and analytics</text>
+
+  <line x1="540" y1="250" x2="570" y2="200" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="540" y1="360" x2="570" y2="420" stroke="#334e68" stroke-width="2.2" marker-end="url(#arrow)"/>
+  <line x1="940" y1="420" x2="970" y2="420" stroke="#12734a" stroke-width="2.6" marker-end="url(#arrowGreen)"/>
+
+  <text x="44" y="790" class="small">Legend: node prefixing preserves source-table lineage after joins; edges encode foreign-key relationships and reduction strategy.</text>
+</svg>
